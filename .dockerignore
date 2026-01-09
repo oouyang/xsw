@@ -1,0 +1,78 @@
+
+# Ignore Python bytecode
+__pycache__/
+*.py[cod]
+
+# Ignore virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env_local
+
+# Ignore distribution / packaging
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+node_modules/
+develop-eggs/
+.installed.cfg
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Ignore Flask specific files
+instance/
+.webassets-cache
+
+# Ignore Pytest cache
+.cache
+.pytest_cache/
+.ruff_cache/
+
+# Ignore coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Ignore environment variables
+.venv*
+ENV/
+env/
+venv/
+env.bak/
+venv.bak/
+
+# Ignore IDEs and editors
+.idea/
+.vscode/
+*.swp
+*~
+.devcontainer/
+
+# Ignore macOS specific files
+.DS_Store
+
+# Ignore Windows specific files
+Thumbs.db
+ehthumbs.db
+
+# Ignore Docker specific files
+Dockerfile*
+docker-compose*
+compose.y*ml
