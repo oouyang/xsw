@@ -1,0 +1,12 @@
+[project]
+name = "xsw"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "bs4>=0.0.2",
+    "fastapi>=0.128.0",
+    "pydantic>=2.12.5",
+    "requests>=2.32.4",
+]
