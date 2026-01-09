@@ -1,4 +1,20 @@
+<!-- src/layouts/MainLayout.vue -->
 <template>
+  <q-layout view="hHh lpR fFf">
+    <q-header elevated>
+      <q-toolbar>
+        <q-btn flat to="/" icon="menu_book" label="Book Viewer" />
+        <q-space />
+        <q-btn flat to="/" icon="dashboard" label="Dashboard" />
+      </q-toolbar>
+    </q-header>
+    <q-page-container>
+      <router-view />
+    </q-page-container>
+  </q-layout>
+</template>
+<script setup lang="ts"></script>
+<!-- <template>
   <q-layout view="lHh Lpr lFf">
     <q-header elevated>
       <q-toolbar>
@@ -78,4 +94,4 @@ const leftDrawerOpen = ref(false);
 function toggleLeftDrawer() {
   leftDrawerOpen.value = !leftDrawerOpen.value;
 }
-</script>
+</script> -->
