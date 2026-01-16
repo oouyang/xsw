@@ -69,13 +69,13 @@ import { getBookInfo, getBookChapters } from 'src/services/bookApi';
 import { useQuasar, useMeta } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppConfig } from 'src/services/useAppConfig';
+import { chapterLink } from 'src/services/utils';
 
 const { config, update } = useAppConfig();
 
 const $q = useQuasar();
 const route = useRoute();
 const router = useRouter();
-
 
 const props = defineProps<{ bookId: string }>();
 const info = ref<BookInfo | null>(null);
@@ -85,13 +85,6 @@ const maxPages = ref(50);
 const error = ref('');
 
 useMeta({ title: `${config.value.name} ${info.value?.name ? ' >> '+ info.value?.name : ''}` });
-
-function chapterLink(num: number, title: string) {
-  return {
-    name: 'Chapter',
-    params: { bookId: props.bookId, chapterNum: Number(num), chapterTitle: title },
-  };
-}
 
 watch(page, (newVal, oldVal) => {
   // $q.localStorage.setItem('chapterPage', page.value)
@@ -172,6 +165,8 @@ onMounted(async () => {
 
   await loadInfo();
   await loadChapters();
+
+  // console.log('route', route, router)
 });
 
 </script>
