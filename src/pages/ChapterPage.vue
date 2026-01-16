@@ -2,7 +2,12 @@
 <template>
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-sm">
-      <div class="text-subtitle1">📜 {{ title }}</div>
+      <q-breadcrumbs>
+        <q-breadcrumbs-el :label="config.name" icon="home" to="/" />
+        <q-breadcrumbs-el :label="'📜' + info?.name || 'Book'" />
+        <q-breadcrumbs-el label="目錄" icon="list" :to="`/book/${info?.book_id}/chapters`" />
+        <q-breadcrumbs-el :label="`${title}`" />
+      </q-breadcrumbs>
       <q-space />
       <q-btn flat label="A-" :disable="fontsize === 7" @click="fontsize += 1" />
       <q-btn flat label="A+" :disable="fontsize === 1" @click="fontsize -= 1" />
@@ -19,8 +24,9 @@
           class="q-pb-lg"
           :class="txtSize"
           style="white-space: pre-wrap"
-          v-html="content"
-        ></div>
+        >
+        <p v-for="value in content" :key="value" class="q-my-xl">{{ value }}</p>
+      </div>
       </q-card-section>
     </q-card>
 
@@ -35,14 +41,19 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import { getChapterContent, getBookInfo } from 'src/services/bookApi';
+import { getChapterContent, getBookInfo, getBookChapters } from 'src/services/bookApi';
 import { useQuasar } from 'quasar';
+import { useAppConfig } from 'src/services/useAppConfig';
+import type { BookInfo, ChapterRef } from 'src/types/book-api';
+import { nextTick } from 'process';
+
+const { config, update } = useAppConfig();
 
 const $q = useQuasar();
 
 const props = defineProps<{ bookId: string; chapterNum: number; chapterTitle?: string }>();
 const title = ref('');
-const content = ref('');
+const content = ref<Array<string>>([]);
 const loading = ref(false);
 const error = ref('');
 const nocache = ref(false);
@@ -67,13 +78,60 @@ const navNext = computed(() => {
   const nextNum = (chapterNum || 1) + 1;
   return { name: 'Chapter', params: { bookId: props.bookId, chapterNum: nextNum } };
 });
+const chapters = computed<ChapterRef[]>(() => 
+{
+  const raw = config.value?.chapters ?? '[]'
+  try {
+    return JSON.parse(raw) as ChapterRef[]
+  } catch {
+    return []
+  }
+})
+async function loadAllChapters() {
+    const requests = []
+    for (let i = 0; i < pages.value; i++) {
+      requests.push(
+        getBookChapters(props.bookId, { page: i+1, all: false })
+      )
+    }
+    const results = await Promise.all(requests)
 
+    // 假設每頁回傳 resp.data 或 resp.chapters（依你的 API 命名調整）
+    update({chapters: JSON.stringify(results.flatMap(r => r)), chapter: JSON.stringify(chapters.value[chapterNum])})
+}
+const info = ref<BookInfo|undefined>(undefined)
+const pages = ref(1)
 async function loadMeta() {
   try {
-    const info = await getBookInfo(props.bookId);
-    lastChapter.value = info.last_chapter_number ?? null;
+    info.value = await getBookInfo(props.bookId);
+    lastChapter.value = info.value.last_chapter_number ?? null;
+    pages.value = ((lastChapter?.value || 1) / 20);
+
+    nextTick(() => {
+      void loadAllChapters()
+    });
   } catch (e) {
     console.log('e', e);
+  }
+}
+function removeTitleWordsFromContent() {
+  const tokens = (title.value ?? '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2) // 只取前兩字
+    .filter(Boolean)
+
+  for (let i = 0; i < 4; i++) {
+    const text = content.value[i]
+    if (!text) continue
+
+    let cleaned = text
+
+    for (const t of tokens) {
+      cleaned = cleaned.replace(t, '')
+    }
+
+    content.value[i] = cleaned.trim()
   }
 }
 async function load() {
@@ -82,9 +140,9 @@ async function load() {
   try {
     const data = await getChapterContent(props.bookId, Number(props.chapterNum), nocache.value);
     title.value = data.title || chapterTitle || `${props.chapterNum}`;
-    // title.value = title.value + ()
-    data.text.replace(title.value, "")
-    content.value = data.text.split(' ').join('<br/><br/>');
+    content.value = data.text.split(' ');
+    removeTitleWordsFromContent()
+    content.value = content.value.filter(Boolean)
   } catch (e) {
     error.value = 'Load content failed';
     console.log('e', e);
@@ -102,3 +160,9 @@ onMounted(async () => {
 });
 watch(() => props.chapterNum, load);
 </script>
+
+<style scoped>
+p {
+  text-indent: 2em;
+}
+</style>
