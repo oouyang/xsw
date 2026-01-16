@@ -17,6 +17,8 @@ export interface AppConfig {
   origin?: string | undefined;
   page?: string | undefined;
   bookId?: string | undefined;
+  chapter?: string | undefined;
+  chapters?: string | undefined;
 }
 
 const DEFAULT_CONFIG: AppConfig = {

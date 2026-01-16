@@ -115,6 +115,7 @@ watch(
       // $q.localStorage.set('bookId', newBookId);
       // $q.localStorage.set('chapterPage', 1);
         update({page: `${page.value},`, bookId: newBookId});
+        update({chapters: undefined});
 
       // ✅ Properly handle the promise
       try {
@@ -152,19 +153,21 @@ async function loadChapters() {
 }
 
 onMounted(async () => {
-  const storedBookId = $q.localStorage.getItem('bookId');
-  const storedPage = Number($q.localStorage.getItem('chapterPage')) || 1;
+  const storedBookId = config.value.bookId; // $q.localStorage.getItem('bookId');
+  const storedPage = Number(config.value.page); // Number($q.localStorage.getItem('chapterPage')) || 1;
 
   if (route.query.page) {
     page.value = Number(route.query.page)
-    $q.localStorage.set('bookId', props.bookId);
-    $q.localStorage.set('chapterPage', page.value);
+    // $q.localStorage.set('bookId', props.bookId);
+    // $q.localStorage.set('chapterPage', page.value);
+    update({page: `${page.value},`, bookId: props.bookId});
   } else if (storedBookId === props.bookId) {
     page.value = storedPage;
   } else {
     page.value = 1;
-    $q.localStorage.set('bookId', props.bookId);
-    $q.localStorage.set('chapterPage', page.value);
+    // $q.localStorage.set('bookId', props.bookId);
+    // $q.localStorage.set('chapterPage', page.value);
+    update({page: `${page.value},`, bookId: props.bookId});
   }
 
   await loadInfo();
