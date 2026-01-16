@@ -2,10 +2,10 @@ FROM node:22-alpine AS builder
 
 WORKDIR /web
 COPY package*.json .
-RUN npm config set strict-ssl false && npm i -g @quasar/cli && npm ci --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
 COPY . .
 # Run quasar prepare only if project config exists
-RUN npm run build && cd dist/spa && tar cvfz ../spa.tgz .
+RUN --mount=type=cache,target=/root/.npm npm run build && cd dist/spa && tar cvfz ../spa.tgz .
 
 FROM python:3-alpine AS app
 

@@ -1,4 +1,5 @@
 import { useAppConfig } from 'src/services/useAppConfig';
+import { Dialog, Dark, type QDialogOptions } from 'quasar';
 
 export function is_production() {
   return process.env.NODE_ENV === 'production';
@@ -33,6 +34,30 @@ interface ScrollToOptionsEx {
   behavior?: ScrollBehavior; // 'auto' | 'smooth'
   offsetX?: number; // 目標 X 方向額外位移（正=向右）
   offsetY?: number; // 目標 Y 方向額外位移（正=向下）
+}
+export function showDialog(opts: QDialogOptions) {
+  return Dialog.create(opts);
+}
+
+export function toggleDark() {
+  Dark.toggle();
+  update({ dark: `${Dark.isActive}` });
+}
+
+export function setDark(val: boolean | 'auto') {
+  Dark.set(val);
+  update({ dark: `${Dark.isActive}` });
+}
+
+export function isDarkActive() {
+  return Dark.isActive;
+}
+
+export function chapterLink(num: number, title: string) {
+  return {
+    name: 'Chapter',
+    params: { bookId: config.value.bookId, chapterNum: Number(num), chapterTitle: title },
+  };
 }
 
 export function scrollToWindow(pos: string, opts: ScrollToOptionsEx = {}) {

@@ -15,6 +15,8 @@ export interface AppConfig {
   me?: string | undefined;
   env?: string | undefined;
   origin?: string | undefined;
+  fontsize?: string | undefined;
+  dark?: string | undefined;
   page?: string | undefined;
   bookId?: string | undefined;
   chapter?: string | undefined;

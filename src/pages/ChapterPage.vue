@@ -9,8 +9,6 @@
         <q-breadcrumbs-el :label="`${title}`" />
       </q-breadcrumbs>
       <q-space />
-      <q-btn flat label="A-" :disable="fontsize === 7" @click="fontsize += 1" />
-      <q-btn flat label="A+" :disable="fontsize === 1" @click="fontsize -= 1" />
       <q-btn flat icon="list" :to="{ name: 'Chapters', params: { bookId } }" label="Chapters" />
     </div>
 
@@ -22,7 +20,7 @@
         <div
           v-else
           class="q-pb-lg"
-          :class="txtSize"
+          :class="`text-h${config.fontsize}`"
           style="white-space: pre-wrap"
         >
         <p v-for="value in content" :key="value" class="q-my-xl">{{ value }}</p>
@@ -42,14 +40,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { getChapterContent, getBookInfo, getBookChapters } from 'src/services/bookApi';
-import { useQuasar } from 'quasar';
 import { useAppConfig } from 'src/services/useAppConfig';
 import type { BookInfo, ChapterRef } from 'src/types/book-api';
 import { nextTick } from 'process';
+import { chapterLink } from 'src/services/utils';
 
 const { config, update } = useAppConfig();
 
-const $q = useQuasar();
 
 const props = defineProps<{ bookId: string; chapterNum: number; chapterTitle?: string }>();
 const title = ref('');
@@ -58,25 +55,18 @@ const loading = ref(false);
 const error = ref('');
 const nocache = ref(false);
 const lastChapter = ref<number | null>(null);
-const fontsize = ref<number>(7);
-const txtSize = computed(() => `text-h${fontsize.value}`);
 const {bookId, chapterNum, chapterTitle} = props
 
-
-fontsize.value = $q.localStorage.getItem('fontsize')||7
-// Watch for changes
-watch(fontsize, (newVal, oldVal) => {
-  $q.localStorage.setItem('fontsize', fontsize.value)
-  console.log(`tsize changed from ${oldVal} to ${newVal}`);
+const chapterIndex = computed(() => chapters.value.findIndex(
+      c => c.number === chapterNum && c.title === chapterTitle
+    ) || 0)
+const navPrev = computed(() => {
+  const index = Math.max(0, chapterIndex.value - 1);
+  return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
 });
-
-const navPrev = computed(() => ({
-  name: 'Chapter',
-  params: { bookId: props.bookId, chapterNum: chapterNum - 1 },
-}));
 const navNext = computed(() => {
-  const nextNum = (chapterNum || 1) + 1;
-  return { name: 'Chapter', params: { bookId: props.bookId, chapterNum: nextNum } };
+  const index = Math.min(chapterIndex.value + 1, chapters.value.length + 1);
+  return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
 });
 const chapters = computed<ChapterRef[]>(() => 
 {
@@ -97,7 +87,13 @@ async function loadAllChapters() {
     const results = await Promise.all(requests)
 
     // 假設每頁回傳 resp.data 或 resp.chapters（依你的 API 命名調整）
-    update({chapters: JSON.stringify(results.flatMap(r => r)), chapter: JSON.stringify(chapters.value[chapterNum])})
+    const chapterIndex = chapters.value.findIndex(
+      c => c.number === chapterNum
+    )
+
+    update({chapters: JSON.stringify(results.flatMap(r => r))});
+    update({chapter: JSON.stringify(chapters.value[chapterIndex])});
+    console.log('chapters.value[chapterIndex])', chapters.value[chapterIndex], chapterNum);
 }
 const info = ref<BookInfo|undefined>(undefined)
 const pages = ref(1)

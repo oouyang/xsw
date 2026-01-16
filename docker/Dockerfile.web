@@ -2,9 +2,9 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm config set strict-ssl false && npm i -g @quasar/cli && npm ci --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm npm config set strict-ssl false && npm i -g @quasar/cli && npm ci --ignore-scripts
 COPY . .
-RUN npm run build # This command generates production-ready files in the 'dist' folder
+RUN --mount=type=cache,target=/root/.npm npm run build # This command generates production-ready files in the 'dist' folder
 
 # Stage 2: Serve the application with NGINX
 FROM nginx:1.16-alpine

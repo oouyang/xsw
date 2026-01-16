@@ -1,21 +1,20 @@
 services:
   web:
     image: ${img}:${tag}-web
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.web
     ports:
-      - 8080
+      - 2345:8080
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.web
   xsw:
     image: ${img}:${tag}
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      args:
-        BASE_URL: $BASE_URL
-        INDEX_URL: $INDEX_URL
-        TRUSTED_HOST: $TRUSTED_HOST
-
     env_file: .env
     ports:
       - 8000:8000
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile
+    #   args:
+    #     BASE_URL: $BASE_URL
+    #     INDEX_URL: $INDEX_URL
+    #     TRUSTED_HOST: $TRUSTED_HOST
