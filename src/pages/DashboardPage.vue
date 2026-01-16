@@ -2,7 +2,7 @@
 <template>
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-md">
-      <div class="text-h6">Book Dashboard</div>
+      <div class="text-h4">{{ config.name }}</div>
       <q-space />
       <q-btn flat icon="refresh" @click="load" />
     </div>
@@ -15,12 +15,9 @@
         <div class="row items-center q-mb-sm">
           <div class="text-h6">{{ cat.name }}</div>
           <q-space />
-          <q-btn
-            outline
-            :to="{ name: 'Category', params: { catId: cat.id } }"
-            label="View Category"
-          />
+          <q-btn flat :to="{ name: 'Category', params: { catId: cat.id } }" label="更多..." />
         </div>
+        <q-separator />
 
         <div class="row q-col-gutter-md">
           <div
@@ -41,11 +38,13 @@ import { ref, onMounted } from 'vue';
 import BookCard from 'components/BookCard.vue';
 import type { Category, BookSummary } from 'src/types/book-api';
 import { getCategories, listBooksInCategory } from 'src/services/bookApi';
+import { useAppConfig } from 'src/services/useAppConfig';
 
 const categories = ref<Category[]>([]);
 const topBooks = ref<Record<string, BookSummary[]>>({});
 const loading = ref(false);
 const error = ref('');
+const { config } = useAppConfig();
 
 async function load() {
   loading.value = true;

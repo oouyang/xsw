@@ -4,6 +4,7 @@
 import { defineConfig } from '#q-app/wrappers';
 import { fileURLToPath } from 'node:url';
 
+const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8000';
 export default defineConfig((ctx) => {
   return {
     // https://v2.quasar.dev/quasar-cli-vite/prefetch-feature
@@ -12,7 +13,7 @@ export default defineConfig((ctx) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: ['i18n', 'axios'],
+    boot: ['i18n', 'axios', 'addressbar-color'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.scss'],
@@ -44,14 +45,14 @@ export default defineConfig((ctx) => {
         // extendTsConfig (tsConfig) {}
       },
 
-      vueRouterMode: 'hash', // available values: 'hash', 'history'
+      vueRouterMode: 'history', // available values: 'hash', 'history'
       // vueRouterBase,
       // vueDevtools,
       // vueOptionsAPI: false,
 
       // rebuildCache: true, // rebuilds Vite/linter/etc cache on startup
 
-      // publicPath: '/',
+      publicPath: '/xsw',
       // analyze: true,
       // env: {},
       // rawDefine: {}
@@ -98,7 +99,61 @@ export default defineConfig((ctx) => {
     // Full list of options: https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#devserver
     devServer: {
       // https: true,
-      open: true, // opens browser window automatically
+      open: false, // opens browser window automatically
+      proxy: {
+        '/xsw/api': {
+          target: '${apiBaseUrl}', // base backend URL
+          changeOrigin: true,
+          secure: false, // skip SSL verification if needed
+          // rewrite: (path) => path.replace(/^\/api/, '/api') // keep /api prefix
+        },
+
+        // '/spa': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/docs': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/openapi.json': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/health': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/categories': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/books': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/search': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/by-url': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+        // '/admin': {
+        //   target: `${apiBaseUrl}`,
+        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   changeOrigin: true,
+        // },
+      },
     },
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#framework
@@ -116,7 +171,17 @@ export default defineConfig((ctx) => {
       // directives: [],
 
       // Quasar plugins
-      plugins: [],
+      plugins: [
+        'AddressbarColor',
+        'Notify',
+        'Loading',
+        'Dialog',
+        'Meta',
+        'AppFullscreen',
+        'LoadingBar',
+        'LocalStorage',
+        'SessionStorage',
+      ],
     },
 
     // animations: 'all', // --- includes all animations

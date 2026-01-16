@@ -2,9 +2,9 @@
 <template>
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-md">
-      <div class="text-h6">Category: {{ catName }}</div>
+      <div class="text-h6">{{ catName }}</div>
       <q-space />
-      <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" label="Dashboard" />
+      <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" />
     </div>
 
     <q-banner v-if="error" class="bg-red-2 text-red-10 q-mb-md">{{ error }}</q-banner>
