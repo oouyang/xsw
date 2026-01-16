@@ -3,17 +3,60 @@
   <q-layout view="hHh lpR fFf">
     <q-header elevated>
       <q-toolbar>
-        <q-btn flat to="/" icon="menu_book" label="Book Viewer" />
+        <q-btn flat to="/" icon="menu_book" />
         <q-space />
-        <q-btn flat to="/" icon="dashboard" label="Dashboard" />
+        <q-btn flat @click="toggleDark()" :label="$q.dark.isActive ? '🌕' : '🖤'" />
+        <q-btn flat to="/" icon="dashboard" label="🏛️" />
       </q-toolbar>
     </q-header>
     <q-page-container>
       <router-view />
     </q-page-container>
   </q-layout>
+  
+  <!-- <q-page-sticky position="bottom-right" :offset="[18, 18]" v-show="showScrollTop">
+    <q-btn
+      round
+      color="primary"
+      icon="keyboard_arrow_up"
+      @click="scrollToTop"
+      title="Back to Top"
+    />
+  </q-page-sticky> -->
 </template>
-<script setup lang="ts"></script>
+<script setup lang="ts">
+import { useQuasar } from 'quasar';
+// import { ref, onMounted, onBeforeUnmount } from 'vue';
+
+// const showScrollTop = ref(false);
+
+// function handleScroll() {
+//   showScrollTop.value = true; //window.scrollY > 200;
+// }
+
+// function scrollToTop() {
+//   window.scrollTo({ top: 0, behavior: 'smooth' });
+// }
+
+// onMounted(() => {
+//   window.addEventListener('scroll', handleScroll);
+// });
+
+// onBeforeUnmount(() => {
+//   window.removeEventListener('scroll', handleScroll);
+// });
+
+const $q = useQuasar();
+let dark = $q.localStorage.getItem('dark') === true
+$q.dark.set(dark)
+function toggleDark() {
+  dark = !dark
+  $q.localStorage.setItem('dark', dark)
+  $q.dark.set(dark)
+}
+const url = process.env.API_BASE_URL;
+console.log('url', url);
+</script>
 <!-- <template>
   <q-layout view="lHh Lpr lFf">
     <q-header elevated>

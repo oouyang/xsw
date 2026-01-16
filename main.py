@@ -8,13 +8,15 @@ from bs4 import BeautifulSoup
 import html as html_unescape
 import re
 import requests
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse
 import os
-
+import urllib3
 import time
 import threading
-
 import logging
+from math import ceil
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configure basic logging (put this near the top of main.py)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -26,6 +28,7 @@ logger = logging.getLogger("book-scraper")
 # -----------------------
 BASE_URL = os.getenv("BASE_URL")
 DEFAULT_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "10"))
+CHAPTERS_PAGE_SIZE = int(os.getenv("CHAPTERS_PAGE_SIZE", "20"))  # server-side pagination size
 
 HEADERS = {
     "User-Agent": (
@@ -38,6 +41,36 @@ HEADERS = {
 session = requests.Session()
 session.headers.update(HEADERS)
 
+
+# -----------------------
+# Domain helpers (m vs www)
+# -----------------------
+def canonical_base() -> str:
+    """Return the canonical scheme+host chosen by BASE_URL."""
+    p = urlparse(BASE_URL)
+    # normalize to scheme://host (no trailing slash)
+    return f"{p.scheme}://{p.netloc}"
+
+def is_mobile_site() -> bool:
+    return "m.xsw.tw" in canonical_base()
+
+def resolve_book_home(book_id: str) -> str:
+    """
+    Book home URL depends on domain:
+      - www.xsw.tw → /book/{id}/
+      - m.xsw.tw   → /{id}/
+    """
+    base = canonical_base()
+    if is_mobile_site():
+        return f"{base}/{book_id}/"
+    else:
+        return f"{base}/book/{book_id}/"
+
+def rewrite_to_canonical(url: str) -> str:
+    """Rewrite any absolute URL to the canonical scheme+host, preserving path/query."""
+    target = urlparse(url)
+    base = urlparse(canonical_base())
+    return urlunparse((base.scheme, base.netloc, target.path, target.params, target.query, target.fragment))
 
 # -----------------------
 # Simple TTL cache
@@ -106,17 +139,9 @@ def fetch_html(url: str) -> str:
     Fetch raw HTML content from URL with robust encoding handling.
     """
     resp = session.get(url, timeout=DEFAULT_TIMEOUT, verify=False)
+    # resp = requests.get(url, verify=False)
     resp.raise_for_status()
     # Prefer server-provided or detected encoding; default to utf-8
-    enc = resp.apparent_encoding or resp.encoding or "utf-8"
-    resp.encoding = enc
-    return resp.text
-
-    """
-    Fetch raw HTML content from a given URL.
-    """
-    resp = requests.get(url, verify=False)
-
     enc = resp.apparent_encoding or resp.encoding or "utf-8"
     resp.encoding = enc
     return resp.text
@@ -272,8 +297,8 @@ def resolve_category_page(cat_id: int, page: int) -> str:
     return f"{BASE_URL}/fenlei{cat_id}_{page}.html"
 
 
-def resolve_book_home(book_id: str) -> str:
-    return f"{BASE_URL}/{book_id}/"
+# def resolve_book_home(book_id: str) -> str:
+#     return f"{BASE_URL}/{book_id}/"
 
 
 def resolve_book_page(book_id: str, page_num: int) -> str:
@@ -308,6 +333,46 @@ def find_categories_from_nav(home_html: str):
             seen.add(c["id"])
     return uniq
 
+
+# -----------------------
+# Liebiao parsing
+# -----------------------
+def chapter_title_to_number(title: str) -> Optional[int]:
+    """
+    Extract numeric chapter index from '第1199章 XXX'.
+    """
+    m = re.search(r"第\s*(\d+)\s*章", title)
+    return int(m.group(1)) if m else None
+
+def fetch_chapters_from_liebiao(html_content: str, page_url: str, base_site: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Parse <div class="liebiao"> chapter list.
+    - `page_url` should be the book HOME URL (so relative hrefs join correctly)
+    - Rewrites final URLs to the canonical site host to avoid mixing m/www
+
+    Returns: [{ 'url': absolute_url, 'title': str, 'number': int|None }, ...]
+    """
+    soup = BeautifulSoup(html_content, "html.parser")
+    container = soup.find("div", class_="liebiao")
+    if not container:
+        return []
+
+    base_site = base_site or canonical_base()
+
+    out: List[Dict[str, Any]] = []
+    for a_tag in container.select("ul li a[href]"):
+        href = a_tag["href"]
+        title = a_tag.get_text(strip=True)
+        # join using the page URL (book home) to keep folder context intact
+        absolute = urljoin(page_url, href)
+        # rewrite host to canonical (prevents mixing m/www)
+        absolute = rewrite_to_canonical(absolute)
+        out.append({
+            "url": absolute,
+            "title": title,
+            "number": chapter_title_to_number(title),
+        })
+    return out
 
 # ------------
 # Data models
@@ -356,7 +421,11 @@ class ChapterContent(BaseModel):
 # -----
 # App
 # -----
-app = FastAPI(title="Book Scraper API", version="1.0.0")
+app = FastAPI(
+    title="小說網 API",
+    version="1.0.0",
+    root_path="/xsw/api"  # This adds /api as a prefix for all routes
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -445,7 +514,73 @@ def get_book_chapters(
     all: bool = Query(False),
     max_pages: int = Query(0, ge=0),
     nocache: bool = Query(False, description="Set true to bypass caches"),
+    www: bool = Query(False),
 ):
+    """
+    Chapters are fetched ONLY from <div class="liebiao"> on the book HOME page.
+    - all=true: return the full list
+    - all=false: return a server-side paginated slice (CHAPTERS_PAGE_SIZE)
+    """
+    if www:
+        try:
+            home_url = resolve_book_home(book_id)
+
+            # Try cached full list
+            all_key = (book_id, "liebiao", "ALL")
+            if not nocache:
+                cached = chapters_all_cache.get(all_key)
+                if cached is not None:
+                    all_chapters: List[ChapterRef] = cached
+                else:
+                    html_content = fetch_html(home_url)
+                    raw = fetch_chapters_from_liebiao(html_content, page_url=home_url)
+                    # warm mapping cache
+                    for item in raw:
+                        if item.get("number") is not None:
+                            chapter_url_cache.set((book_id, item["number"]), item["url"])
+                    all_chapters = [
+                        ChapterRef(number=item.get("number"), title=item["title"], url=item["url"])
+                        for item in raw
+                    ]
+                    chapters_all_cache.set(all_key, all_chapters)
+            else:
+                html_content = fetch_html(home_url)
+                raw = fetch_chapters_from_liebiao(html_content, page_url=home_url)
+                for item in raw:
+                    if item.get("number") is not None:
+                        chapter_url_cache.set((book_id, item["number"]), item["url"])
+                all_chapters = [
+                    ChapterRef(number=item.get("number"), title=item["title"], url=item["url"])
+                    for item in raw
+                ]
+
+            if all:
+                return all_chapters
+
+            # server-side pagination
+            total = len(all_chapters)
+            total_pages = max(1, ceil(total / CHAPTERS_PAGE_SIZE))
+            current_page = min(max(page, 1), total_pages)
+
+            page_key = (book_id, "liebiao", current_page)
+            if not nocache:
+                cached_page = chapters_page_cache.get(page_key)
+                if cached_page is not None:
+                    return cached_page
+
+            start = (current_page - 1) * CHAPTERS_PAGE_SIZE
+            end = start + CHAPTERS_PAGE_SIZE
+            slice_chapters = all_chapters[start:end]
+
+            chapters_page_cache.set(page_key, slice_chapters)
+            return slice_chapters
+
+        except requests.HTTPError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
     """
     Get chapter links.
     - If all=false: returns chapters from the requested page only (cached by (book_id, page)).
@@ -525,10 +660,10 @@ def get_book_chapters(
             for num, ref in chaps.items():
                 chapter_url_cache.set((book_id, num), ref["url"])
 
-        result = [
+        result = {"chapters":[
             ChapterRef(number=k, title=v["title"], url=v["url"])
             for k, v in sorted(merged.items())
-        ]
+        ], "totalPages": effective_pages}
         chapters_all_cache.set(cache_key, result)
         return result
 
@@ -553,7 +688,62 @@ def get_chapter_content(
     book_id: str,
     chapter_num: int,
     nocache: bool = Query(False, description="Set true to bypass caches"),
+    www: bool = Query(False),
 ):
+    """
+    Resolve chapter URL via liebiao list (book HOME).
+    Uses mapping cache for fast lookups. Extracts content with robust id fallbacks.
+    """
+    if www:
+        try:
+            # 1) mapping cache shortcut
+            if not nocache:
+                cached_url = chapter_url_cache.get((book_id, chapter_num))
+                if cached_url:
+                    chapter_html = fetch_html(cached_url)
+                    text = (
+                        extract_text_by_id(chapter_html, "nr1")
+                        or extract_text_by_id(chapter_html, "nr")
+                        or extract_text_by_id(chapter_html, "content")
+                    )
+                    if not text:
+                        raise HTTPException(status_code=404, detail=f"No content found in {cached_url}")
+                    # Recover title from liebiao
+                    home_html = fetch_html(resolve_book_home(book_id))
+                    items = fetch_chapters_from_liebiao(home_html, page_url=resolve_book_home(book_id))
+                    title = next((it["title"] for it in items if it.get("number") == chapter_num), None)
+                    return ChapterContent(book_id=book_id, chapter_num=chapter_num, title=title, url=cached_url, text=text)
+
+            # 2) load liebiao, warm caches, find target
+            home_url = resolve_book_home(book_id)
+            home_html = fetch_html(home_url)
+            items = fetch_chapters_from_liebiao(home_html, page_url=home_url)
+
+            target = next((it for it in items if it.get("number") == chapter_num), None)
+            if not target:
+                raise HTTPException(status_code=404, detail=f"Chapter {chapter_num} not found")
+
+            for it in items:
+                num = it.get("number")
+                if num is not None:
+                    chapter_url_cache.set((book_id, num), it["url"])
+
+            chapter_html = fetch_html(target["url"])
+            text = (
+                extract_text_by_id(chapter_html, "nr1")
+                or extract_text_by_id(chapter_html, "nr")
+                or extract_text_by_id(chapter_html, "content")
+            )
+            if not text:
+                raise HTTPException(status_code=404, detail=f"No content found in {target['url']}")
+
+            return ChapterContent(book_id=book_id, chapter_num=chapter_num, title=target["title"], url=target["url"], text=text)
+
+        except requests.HTTPError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     """
     Resolve chapter URL using the mapping cache or by scanning chapter list pages,
     then extract text (id 'nr1' with fallbacks).

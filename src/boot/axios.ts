@@ -1,5 +1,6 @@
 import { defineBoot } from '#q-app/wrappers';
 import axios, { type AxiosInstance } from 'axios';
+import { useAppConfig } from 'src/services/useAppConfig';
 
 declare module 'vue' {
   interface ComponentCustomProperties {
@@ -7,6 +8,7 @@ declare module 'vue' {
     $api: AxiosInstance;
   }
 }
+const { config } = useAppConfig();
 
 // Be careful when using SSR for cross-request state pollution
 // due to creating a Singleton instance here;
@@ -14,8 +16,9 @@ declare module 'vue' {
 // good idea to move this instance creation inside of the
 // "export default () => {}" function below (which runs individually
 // for each client)
+const baseurl = process.env.API_BASE_URL || config.value.apiBaseUrl || '/xsw/api';
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || '/',
+  baseURL: baseurl,
   timeout: 15000,
 });
 
@@ -29,6 +32,7 @@ export default defineBoot(({ app }) => {
   app.config.globalProperties.$api = api;
   // ^ ^ ^ this will allow you to use this.$api (for Vue Options API form)
   //       so you can easily perform requests against your app's API
+  console.log('[boot] baseurl', baseurl);
 });
 
 export { api };

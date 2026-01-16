@@ -28,6 +28,10 @@ export interface ChapterRef {
   title: string;
   url: string;
 }
+export interface Chapters {
+  chapters: ChapterRef[];
+  totalPages?: number;
+}
 export interface ChapterContent {
   book_id?: string | null;
   chapter_num?: number | null;

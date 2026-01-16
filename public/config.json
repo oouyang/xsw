@@ -1,0 +1,17 @@
+{
+  "apiBaseUrl": "https://kzygravjihwy.us-west-1.clawcloudrun.com/api",
+  "clientId": "0f6178af-fa5b-4fdd-a79f-a7baf3169d69",
+  "tenantId": "f38a5ecd-2813-4862-b11b-ac1d563c806f",
+  "featureFlags": {
+    "border": false,
+    "showInfo": false,
+    "showToggleDark": true,
+    "showHome": false,
+    "showSwitchOrganization": false,
+    "log": true
+  },
+  "admin": "bench_auto_admin",
+  "theme": "light",
+  "cacheTimeout": 90000,
+  "version": "1.0.2026-01-16"
+}

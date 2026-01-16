@@ -1,18 +1,13 @@
 FROM node:22-alpine AS builder
 
-WORKDIR /app
-COPY package*.json ./web/
-RUN npm config set strict-ssl false && npm i -g @quasar/cli && npm ci --prefix ./web --ignore-scripts
-COPY . ./web
+WORKDIR /web
+COPY package*.json .
+RUN npm config set strict-ssl false && npm i -g @quasar/cli && npm ci --ignore-scripts
+COPY . .
 # Run quasar prepare only if project config exists
-RUN if [ -f ./web/quasar.config.js ] || [ -f ./web/quasar.conf.js ]; then \
-      npx --prefix ./web quasar prepare; \
-    else \
-      echo "Skipping quasar prepare: config not found"; \
-    fi 
-RUN npm --prefix ./web run build
+RUN npm run build && cd dist/spa && tar cvfz ../spa.tgz .
 
-FROM python:3.11-slim AS app
+FROM python:3-alpine AS app
 
 # 1) Declare build-time args (can have optional defaults)
 ARG INDEX_URL
@@ -29,14 +24,15 @@ RUN  if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
     else \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
-    pip install --no-cache-dir fastapi uvicorn bs4 requests lxml ruff && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      curl jq && \
-    rm -rf /var/lib/apt/lists/*
+    pip install --no-cache-dir fastapi uvicorn bs4 requests lxml ruff 
+    # && \
+    # apt-get update && \
+    # DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    #   curl jq && \
+    # rm -rf /var/lib/apt/lists/*
 
 COPY . .
-COPY --from=builder /app/web/dist/spa/* /app/dist/spa
+COPY --from=builder /web/dist /app/dist
 ENV BASE_URL=localhost
 RUN ruff check && ruff format && echo $BASE_URL
 

@@ -1,8 +1,8 @@
 {
   "name": "qxsw",
-  "version": "0.0.1",
-  "description": "xsw project",
-  "productName": "xsw viewer",
+  "version": "1.0.1",
+  "description": "看小說",
+  "productName": "看小說",
   "author": "OWEN OUYANG <oouyang@micron.com>",
   "type": "module",
   "private": true,
@@ -12,7 +12,8 @@
     "test": "echo \"No test specified\" && exit 0",
     "dev": "quasar dev",
     "build": "quasar build",
-    "postinstall": "quasar prepare"
+    "postinstall": "quasar prepare",
+    "deploy": "gh-pages -d dist/spa"
   },
   "dependencies": {
     "axios": "^1.2.1",
@@ -25,21 +26,23 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",
-    "eslint": "^9.14.0",
-    "eslint-plugin-vue": "^10.4.0",
-    "globals": "^16.4.0",
-    "vue-tsc": "^3.0.7",
-    "@vue/eslint-config-typescript": "^14.4.0",
-    "vite-plugin-checker": "^0.11.0",
-    "vue-eslint-parser": "^10.2.0",
-    "@vue/eslint-config-prettier": "^10.1.0",
-    "prettier": "^3.3.3",
-    "@types/node": "^20.5.9",
     "@intlify/unplugin-vue-i18n": "^4.0.0",
     "@quasar/app-vite": "^2.1.0",
+    "@types/node": "^20.5.9",
+    "@vue/eslint-config-prettier": "^10.1.0",
+    "@vue/eslint-config-typescript": "^14.4.0",
     "autoprefixer": "^10.4.2",
-    "typescript": "^5.9.2"
+    "eslint": "^9.14.0",
+    "eslint-plugin-vue": "^10.4.0",
+    "gh-pages": "^6.3.0",
+    "globals": "^16.4.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.9.2",
+    "vite-plugin-checker": "^0.11.0",
+    "vue-eslint-parser": "^10.2.0",
+    "vue-tsc": "^3.0.7"
   },
+  "homepage": "https://oouyang.github.io/xsw",
   "engines": {
     "node": "^28 || ^26 || ^24 || ^22 || ^20",
     "npm": ">= 6.13.4",

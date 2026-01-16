@@ -2,8 +2,10 @@
 <template>
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-sm">
-      <div class="text-subtitle1">{{ title }}</div>
+      <div class="text-subtitle1">📜 {{ title }}</div>
       <q-space />
+      <q-btn flat label="A-" :disable="fontsize === 7" @click="fontsize += 1" />
+      <q-btn flat label="A+" :disable="fontsize === 1" @click="fontsize -= 1" />
       <q-btn flat icon="list" :to="{ name: 'Chapters', params: { bookId } }" label="Chapters" />
     </div>
 
@@ -12,7 +14,13 @@
     <q-card>
       <q-card-section>
         <div v-if="loading"><q-skeleton type="text" v-for="i in 8" :key="i" /></div>
-        <div v-else class="q-pb-lg" style="white-space: pre-wrap">{{ content }}</div>
+        <div
+          v-else
+          class="q-pb-lg"
+          :class="txtSize"
+          style="white-space: pre-wrap"
+          v-html="content"
+        ></div>
       </q-card-section>
     </q-card>
 
@@ -28,21 +36,35 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { getChapterContent, getBookInfo } from 'src/services/bookApi';
+import { useQuasar } from 'quasar';
 
-const props = defineProps<{ bookId: string; chapterNum: number }>();
+const $q = useQuasar();
+
+const props = defineProps<{ bookId: string; chapterNum: number; chapterTitle?: string }>();
 const title = ref('');
 const content = ref('');
 const loading = ref(false);
 const error = ref('');
 const nocache = ref(false);
 const lastChapter = ref<number | null>(null);
+const fontsize = ref<number>(7);
+const txtSize = computed(() => `text-h${fontsize.value}`);
+const {bookId, chapterNum, chapterTitle} = props
+
+
+fontsize.value = $q.localStorage.getItem('fontsize')||7
+// Watch for changes
+watch(fontsize, (newVal, oldVal) => {
+  $q.localStorage.setItem('fontsize', fontsize.value)
+  console.log(`tsize changed from ${oldVal} to ${newVal}`);
+});
 
 const navPrev = computed(() => ({
   name: 'Chapter',
-  params: { bookId: props.bookId, chapterNum: props.chapterNum - 1 },
+  params: { bookId: props.bookId, chapterNum: chapterNum - 1 },
 }));
 const navNext = computed(() => {
-  const nextNum = (props.chapterNum || 1) + 1;
+  const nextNum = (chapterNum || 1) + 1;
   return { name: 'Chapter', params: { bookId: props.bookId, chapterNum: nextNum } };
 });
 
@@ -59,8 +81,10 @@ async function load() {
   error.value = '';
   try {
     const data = await getChapterContent(props.bookId, Number(props.chapterNum), nocache.value);
-    title.value = data.title || `Chapter ${props.chapterNum}`;
-    content.value = data.text;
+    title.value = data.title || chapterTitle || `${props.chapterNum}`;
+    // title.value = title.value + ()
+    data.text.replace(title.value, "")
+    content.value = data.text.split(' ').join('<br/><br/>');
   } catch (e) {
     error.value = 'Load content failed';
     console.log('e', e);
