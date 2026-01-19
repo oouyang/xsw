@@ -2,7 +2,7 @@
 <template>
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-md">
-      <div class="text-h6">{{ catName }}</div>
+      <div class="text-h6">{{ displayCatName }}</div>
       <q-space />
       <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" />
     </div>
@@ -28,10 +28,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import BookCard from 'components/BookCard.vue';
 import type { BookSummary, Category } from 'src/types/book-api';
 import { listBooksInCategory, getCategories } from 'src/services/bookApi';
+import { useTextConversion } from 'src/composables/useTextConversion';
+
+const { convertIfNeeded } = useTextConversion();
 
 const props = defineProps<{ catId: string }>();
 const books = ref<BookSummary[]>([]);
@@ -39,6 +42,9 @@ const page = ref(1);
 const maxPages = ref(50); // heuristic; tune if you know the total
 const catName = ref('');
 const error = ref('');
+
+// Convert category name for zh-CN users
+const displayCatName = computed(() => convertIfNeeded(catName.value));
 
 async function load() {
   try {

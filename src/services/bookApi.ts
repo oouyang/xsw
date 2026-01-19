@@ -17,15 +17,24 @@ export async function listBooksInCategory(
   const { data } = await api.get(`/categories/${catId}/books`, { params: { page } });
   return data;
 }
+
+function normalizeBookInfo(b: BookInfo): BookInfo & { last_chapter_number: number | null } {
+  const n = b.last_chapter_number;
+  return {
+    ...b,
+    last_chapter_number: Number.isFinite(n ?? NaN) ? (n as number) : null,
+  };
+}
+
 export async function getBookInfo(bookId: string): Promise<BookInfo> {
   const { data } = await api.get(`/books/${bookId}`);
-  return data;
+  return normalizeBookInfo(data);
 }
 export async function getBookChapters(
   bookId: string,
   opts?: { page?: number; all?: boolean; max_pages?: number; nocache?: boolean },
 ): Promise<Chapters> {
-  const { data } = await api.get(`/books/${bookId}/chapters`, { params: { ...opts } });
+  const { data } = await api.get(`/books/${bookId}/chapters`, { params: { ...opts, www: true } });
   return data;
 }
 export async function getChapterContent(
@@ -34,7 +43,7 @@ export async function getChapterContent(
   nocache = false,
 ): Promise<ChapterContent> {
   const { data } = await api.get(`/books/${bookId}/chapters/${chapterNum}`, {
-    params: { nocache },
+    params: { nocache, www: true },
   });
   return data;
 }

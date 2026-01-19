@@ -2,7 +2,7 @@ services:
   web:
     image: ${img}:${tag}-web
     ports:
-      - 2345:8080
+      - 2345:80
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile.web
