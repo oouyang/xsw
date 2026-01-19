@@ -13,7 +13,7 @@ export default defineConfig((ctx) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: ['i18n', 'axios', 'addressbar-color'],
+    boot: ['i18n', 'axios', 'appSettings', 'addressbar-color'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.scss'],
@@ -52,7 +52,7 @@ export default defineConfig((ctx) => {
 
       // rebuildCache: true, // rebuilds Vite/linter/etc cache on startup
 
-      // publicPath: '/xsw',
+      publicPath: '/xsw',
       // analyze: true,
       // env: {},
       // rawDefine: {}
@@ -298,3 +298,40 @@ export default defineConfig((ctx) => {
     },
   };
 });
+
+/*
+Guidelines for Preparing Test Cases
+To ensure your benchmark runs are reproducible and portable across the farm, uploaded test cases must follow the rules below. Submissions that don’t comply may be rejected or returned for fixes.
+ 
+1) Self-Contained package
+Your upload must include all required inputs: scripts, config files, stimuli, compile/elab/run files, etc.
+Do not depend on files under your home area, local scratch, or personal symlinks unless included in the package.
+ 
+2) Use absolute paths
+All referenced files in scripts/configs must use absolute paths .
+Do not use relative paths (./, ../) or environment-dependent search paths (e.g., $PWD, implicit includes)
+ 
+3) Tool invocation:
+Use tool version name and absolute tool path (or a version-resolved absolute path) to invoke the tool.
+Do not use modulefile, Conf file or site-specific shell init in run script.
+ 
+4) Prefer direct bsub over wrappers
+Submit jobs using LSF bsub and run the EDA binary directly.
+Avoid wrappers/launchers (e.g., runcad, syn, cds) unless absolutely required.
+ 
+5) Run Script Interface
+Your package must include one entry script (run script) that accepts:
+Queue name (LSF queue)
+Tool version (maps to an absolute binary path)
+Number of cores
+ 
+6) LSF + Cores Behavior
+Request resources consistent with cores.
+Do not hardcode queue/tool/cores inside the script.
+Logs/results should go to predictable locations (e.g., ./logs, ./results) without overwriting unrelated runs.
+ 
+7) Portability & Determinism
+Avoid machine-local assumptions (hostnames, mounts, interactive prompts).
+Runs must be non-interactive.
+If environment variables are required, set them inside the run script.
+*/

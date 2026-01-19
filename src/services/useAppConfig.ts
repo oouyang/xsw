@@ -36,6 +36,7 @@ const DEFAULT_CONFIG: AppConfig = {
 
   clientId: '',
   tenantId: '',
+  fontsize: '7', // default font size
 };
 
 // localStorage key

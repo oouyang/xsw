@@ -3,11 +3,14 @@
   <q-layout view="hHh lpR fFf">
     <q-header elevated>
       <q-toolbar>
-        <q-btn flat to="/" icon="menu_book" />
+        <q-btn flat to="/" icon="menu_book" :label="$t('nav.home')" />
         <q-space />
-        <q-btn flat @click="showDialog({ component: ConfigCard, position: 'bottom' }).hide()" icon="settings" />
-        <q-btn v-if="false" flat to="/" icon="dashboard" label="🏛️" />
-        <q-btn v-else flat round dense icon="menu" @click="drawerRight = !drawerRight" />
+        <q-btn flat @click="showDialog({ component: ConfigCard, position: 'bottom' })" icon="settings" :label="$t('common.settings')">
+          <q-tooltip>{{ $t('settings.title') }}</q-tooltip>
+        </q-btn>
+        <q-btn v-if="hasChapters" flat round dense icon="menu" @click="drawerRight = !drawerRight">
+          <q-tooltip>{{ $t('nav.chapterList') }}</q-tooltip>
+        </q-btn>
       </q-toolbar>
     </q-header>
 
@@ -39,28 +42,28 @@
 
       <!-- place QPageSticky at end of page -->
       <q-page-sticky v-if="showScrollTo.topleft" @click="scrollTo('topleft')" position="top-left" :offset="[18, 18]">
-        <q-btn round color="accent" icon="arrow_back" class="rotate-45" />
+        <q-btn round color="accent" icon="arrow_back" class="rotate-45 btn-transparent" />
       </q-page-sticky>
       <q-page-sticky v-if="showScrollTo.top" position="top" :offset="[0, 18]">
-        <q-btn round color="accent" icon="arrow_back" @click="scrollTo('top')" class="rotate-90" />
+        <q-btn round color="accent" icon="arrow_back" @click="scrollTo('top')" class="rotate-90 btn-transparent" />
       </q-page-sticky>
       <q-page-sticky v-if="showScrollTo.topright" @click="scrollTo('topright')" position="top-right" :offset="[18, 18]">
-        <q-btn round color="accent" icon="arrow_upward" class="rotate-45" />
+        <q-btn round color="accent" icon="arrow_upward" class="rotate-45 btn-transparent" />
       </q-page-sticky>
-      <q-page-sticky v-if="route.name === 'Chapter' && chapter.number !== chapters.length + 1" @click="nav('next')" position="right" :offset="[18, 0]">
-        <q-btn round color="accent" icon="arrow_upward" class="rotate-90" />
+      <q-page-sticky v-if="route.name === 'Chapter' && navNext" @click="nav('next')" position="right" :offset="[18, 0]">
+        <q-btn round color="accent" icon="arrow_upward" class="rotate-90 btn-transparent" />
       </q-page-sticky>
-      <q-page-sticky v-if="route.name === 'Chapter' && chapter.number !== 1" @click="nav('prev')" position="left" :offset="[18, 0]">
-        <q-btn round color="accent" icon="arrow_back" />
+      <q-page-sticky v-if="route.name === 'Chapter' && navPrev" @click="nav('prev')" position="left" :offset="[18, 0]">
+        <q-btn round color="accent" icon="arrow_back" class="btn-transparent" />
       </q-page-sticky>
       <q-page-sticky v-if="showScrollTo.bottomleft" @click="scrollTo('bottomleft')"  position="bottom-left" :offset="[18, 18]">
-        <q-btn round color="accent" icon="arrow_forward" class="rotate-135" />
+        <q-btn round color="accent" icon="arrow_forward" class="rotate-135 btn-transparent" />
       </q-page-sticky>
       <q-page-sticky v-if="showScrollTo.bottom" @click="scrollTo('bottom')" position="bottom" :offset="[0, 18]">
-        <q-btn round color="accent" icon="arrow_forward" class="rotate-90" />
+        <q-btn round color="accent" icon="arrow_forward" class="rotate-90 btn-transparent" />
       </q-page-sticky>
       <q-page-sticky v-if="showScrollTo.bottomright" @click="scrollTo('bottomright')" position="bottom-right" :offset="[18, 18]">
-        <q-btn round color="accent" icon="arrow_forward" class="rotate-45" />
+        <q-btn round color="accent" icon="arrow_forward" class="rotate-45 btn-transparent" />
       </q-page-sticky>
     </q-page-container>
   </q-layout>
@@ -70,12 +73,12 @@
 import { useAppConfig } from 'src/services/useAppConfig';
 import type { ChapterRef } from 'src/types/book-api';
 import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue';
-import { chapterLink, scrollToWindow, setDark } from 'src/services/utils';
+import { chapterLink, isDarkActive, scrollToWindow } from 'src/services/utils';
 import { showDialog } from 'src/services/utils';
 import ConfigCard from 'src/components/ConfigCard.vue';
 import { useRoute, useRouter } from 'vue-router';
 
-const { config } = useAppConfig();
+const { config, update } = useAppConfig();
 const route = useRoute()
 const router = useRouter()
 
@@ -111,12 +114,8 @@ function scrollTo(pos: string = 'TOP') {
 }
 onMounted(() => {
   window.addEventListener('scroll', handleScroll);
-  if (config.value.dark === 'true') {
-    setDark(true);
-  } else {
-    setDark(false);
-  }
-  
+  console.log('dark', isDarkActive())
+
   window.addEventListener('keydown', handleKey)
 
   console.log('route to chapter', route.name === 'Chapter', route.name)
@@ -143,6 +142,7 @@ const chapters = computed<ChapterRef[]>(() =>
 })
 const hasChapters = computed(() => chapters.value.length > 0);
 
+// Scroll to current chapter in drawer when drawer opens
 watch(drawerRight, async (open) => {
   if (!open) return
 
@@ -154,9 +154,51 @@ watch(drawerRight, async (open) => {
       behavior: 'smooth',
       block: 'center'
     })
-    // console.log('scroll to ', chapter);
   }
 })
+
+// Scroll to current chapter when chapter changes (while drawer is open)
+watch(chapter, async () => {
+  // Only scroll if drawer is open
+  if (!drawerRight.value) return
+
+  await nextTick()
+
+  const el = document.querySelector('.chapter-btn.current')
+  if (el) {
+    el.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    })
+  }
+})
+
+// Update config.chapter immediately when route changes to Chapter page
+watch(() => route.params, (params) => {
+  if (route.name === 'Chapter' && params.chapterNum && params.chapterTitle) {
+    // Skip if chapters not loaded yet
+    if (chapters.value.length === 0) {
+      console.log('[MainLayout] Skipping chapter update - chapters not loaded yet')
+      return
+    }
+
+    const chapterNum = Number(params.chapterNum)
+    const chapterTitle = String(params.chapterTitle)
+
+    // Find the matching chapter in the chapters list (with type-safe comparison)
+    const matchingChapter = chapters.value.find(
+      c => Number(c.number) === chapterNum && String(c.title) === chapterTitle
+    )
+
+    if (matchingChapter) {
+      // Update config immediately so MainLayout sees the change
+      update({ chapter: JSON.stringify(matchingChapter) })
+      console.log('[MainLayout] Updated chapter from route:', matchingChapter)
+    } else {
+      console.warn('[MainLayout] Chapter not found in list:', chapterNum, chapterTitle)
+    }
+  }
+}, { immediate: true, deep: true })
 
 // const navPrev = computed(() => {
 //   const num = Math.max(1, chapter.value.number - 1);
@@ -177,37 +219,51 @@ watch(drawerRight, async (open) => {
 // }
 
 const total = computed(() => chapters.value.length)
-const chapterIndex = computed(() => chapters.value.findIndex(
-      c => c.number === chapter.value.number && c.title == chapter.value.title
-    ) || 0)
+const chapterIndex = computed(() => {
+  const index = chapters.value.findIndex(
+    c => Number(c.number) === Number(chapter.value.number) && String(c.title) === String(chapter.value.title)
+  )
+  console.log('[MainLayout] chapter index:', index, 'for chapter:', chapter.value.number, chapter.value.title);
+  return index === -1 ? 0 : index
+})
 
 const navPrev = computed(() => {
   if (!chapter.value || total.value === 0) return null
-  const index = Math.max(0, chapterIndex.value - 1)
-  // 1-based → array index (0-based)
-  const title = chapters.value[index - 1]?.title ?? ''
-  return chapterLink(index, title)
+  const prevIndex = chapterIndex.value - 1
+  if (prevIndex < 0) return null
+  const prevChapter = chapters.value[prevIndex]
+  if (!prevChapter) return null
+  return chapterLink(prevChapter.number, prevChapter.title)
 })
 
 const navNext = computed(() => {
   if (!chapter.value || total.value === 0) return null
-  const index = Math.min(chapterIndex.value + 1, total.value-1)
-  const title = chapters.value[index]?.title ?? ''
-  return chapterLink(chapters.value[index]?.number || 1, title)
+  const nextIndex = chapterIndex.value + 1
+  if (nextIndex >= total.value) return null
+  const nextChapter = chapters.value[nextIndex]
+  if (!nextChapter) return null
+  return chapterLink(nextChapter.number, nextChapter.title)
 })
 
 function nav(pos: 'next' | 'prev') {
-  console.debug('[nav] destination for', pos, chapter.value, chapters.value)
+  console.log('[MainLayout] nav called:', pos)
+  console.log('[MainLayout] current chapter:', chapter.value)
+  console.log('[MainLayout] chapterIndex:', chapterIndex.value)
+  console.log('[MainLayout] navNext:', navNext.value)
+  console.log('[MainLayout] navPrev:', navPrev.value)
+
   if (pos === 'next' && navNext.value) {
+    console.log('[MainLayout] Navigating to next:', navNext.value)
     void router.push(navNext.value)
     return
   }
   if (pos === 'prev' && navPrev.value) {
+    console.log('[MainLayout] Navigating to prev:', navPrev.value)
     void router.push(navPrev.value)
     return
   }
-  
-  // Optional: fallback (no-op at boundaries)
+
+  console.warn('[MainLayout] Navigation blocked - at boundary or no valid target')
 }
 
 function handleKey(e: KeyboardEvent) {
@@ -222,3 +278,30 @@ function handleKey(e: KeyboardEvent) {
 }
 
 </script>
+
+<style>
+.btn-transparent {
+  background-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+.chapter-btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 8px 12px;
+  margin: 2px 0;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.chapter-btn:hover {
+  background-color: rgba(var(--q-primary), 0.1);
+}
+
+.chapter-btn.current {
+  background-color: rgba(var(--q-primary), 0.15);
+  font-weight: 500;
+  color: var(--q-primary);
+  border-left: 3px solid var(--q-primary);
+}
+</style>

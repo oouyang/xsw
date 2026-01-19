@@ -4,13 +4,13 @@
       <q-item>
         <q-item-section>
           <q-btn flat :to="bookLink">
-            <span class="text-subtitle1">{{ book.bookname }} </span></q-btn
+            <span class="text-subtitle1">{{ displayBookName }} </span></q-btn
           >
-          <q-item-label caption lines="2" :title="book.intro">{{ book.intro }}</q-item-label>
+          <q-item-label caption lines="2" :title="displayIntro">{{ displayIntro }}</q-item-label>
         </q-item-section>
 
         <q-item-section side top>
-          <q-item-label caption lines="2">👤 {{ book.author }}</q-item-label>
+          <q-item-label caption lines="2">👤 {{ displayAuthor }}</q-item-label>
           <q-btn
             flat
             style="width: 230px"
@@ -29,9 +29,9 @@
     <q-card-section v-if="useItem">
       <div>
         <span class="text-subtitle1">
-          <q-btn flat :to="bookLink">{{ book.bookname }}</q-btn>
+          <q-btn flat :to="bookLink">{{ displayBookName }}</q-btn>
         </span>
-        <span class="text-caption text-grey"> 👤 {{ book.author }}</span>
+        <span class="text-caption text-grey"> 👤 {{ displayAuthor }}</span>
       </div>
       <div v-if="false">
         <span
@@ -51,7 +51,7 @@
       </div>
     </q-card-section>
     <q-card-section v-if="useItem" class="q-pt-none">
-      <div class="ellipsis-3-lines">{{ book.intro }}</div>
+      <div class="ellipsis-3-lines">{{ displayIntro }}</div>
     </q-card-section>
     <q-separator v-if="useItem" />
     <q-card-actions align="between">
@@ -64,11 +64,19 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { BookSummary } from 'src/types/book-api';
+import { useTextConversion } from 'src/composables/useTextConversion';
+
+const { convertIfNeeded } = useTextConversion();
 
 const props = defineProps<{ book: BookSummary }>();
 const bookId = computed(() => props.book.book_id || extractBookIdFromUrl(props.book.bookurl));
 const bookLink = computed(() => ({ name: 'Chapters', params: { bookId: bookId.value } }));
 const useItem = true;
+
+// Computed properties for text conversion
+const displayBookName = computed(() => convertIfNeeded(props.book.bookname));
+const displayAuthor = computed(() => convertIfNeeded(props.book.author));
+const displayIntro = computed(() => convertIfNeeded(props.book.intro));
 
 const lastChapterNum = computed<number | null>(() => {
   const text = props.book.lastchapter ?? '';
@@ -92,7 +100,8 @@ const lastLink = computed(() => {
 
 const lastLabel = computed(() => {
   const lc = props.book.lastchapter?.trim();
-  return lc ? `⚡ ${lc}` : '⚡ —';
+  const converted = lc ? convertIfNeeded(lc) : '—';
+  return `⚡ ${converted}`;
 });
 
 function extractBookIdFromUrl(url: string): string {

@@ -150,3 +150,170 @@ export function scrollToWindow(pos: string, opts: ScrollToOptionsEx = {}) {
   // 可選：除錯訊息
   // console.log(`scroll to ${p}: (${x}, ${y})`)
 }
+
+export function toArr<T>(x: T | T[] | null | undefined): T[] {
+  if (!x) return [];
+  return Array.isArray(x) ? x : [x];
+}
+export function dedupeBy<T, K extends PropertyKey>(arr: T[], keyFn: (x: T) => K): T[] {
+  const seen = new Set<K>();
+  const out: T[] = [];
+  for (const item of arr) {
+    const k = keyFn(item);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(item);
+    }
+  }
+  return out;
+}
+export function normalizeNum(x: string | number) {
+  return String(x);
+}
+
+// ===== Chinese Character Conversion =====
+
+/**
+ * Lazy-loaded OpenCC converter instance
+ * Only initialized when needed to avoid loading the library unnecessarily
+ */
+let converterInstance: ((text: string) => string) | null = null;
+
+/**
+ * Initialize the OpenCC converter (Traditional to Simplified Chinese)
+ * Uses lazy loading to improve initial load performance
+ */
+async function initConverter() {
+  if (converterInstance) return converterInstance;
+
+  try {
+    // Dynamic import to avoid loading opencc-js unless needed
+    const OpenCC = await import('opencc-js');
+    // tw2cn = Traditional Chinese (Taiwan) to Simplified Chinese (China)
+    converterInstance = OpenCC.Converter({ from: 'tw', to: 'cn' });
+    return converterInstance;
+  } catch (error) {
+    console.error('[Utils] Failed to initialize OpenCC converter:', error);
+    // Fallback: return identity function if conversion fails
+    converterInstance = (text: string) => text;
+    return converterInstance;
+  }
+}
+
+/**
+ * Convert Traditional Chinese (TW) text to Simplified Chinese (CN)
+ * Uses OpenCC (Open Chinese Convert) for accurate conversion
+ *
+ * NOTE: Source data from web is already in Traditional Chinese (TW)
+ * This function converts to Simplified Chinese for zh-CN users
+ *
+ * @param text - Text to convert (Traditional Chinese from API)
+ * @returns Converted text (Simplified Chinese, or original if conversion failed)
+ *
+ * @example
+ * convertTWtoCN('繁體中文') // Returns: '繁体中文'
+ * convertTWtoCN('Hello 世界') // Returns: 'Hello 世界' (preserves non-Chinese)
+ * convertTWtoCN('簡體中文') // Returns: '简体中文'
+ */
+export async function convertTWtoCN(text: string | null | undefined): Promise<string> {
+  // Handle null/undefined
+  if (!text) return '';
+
+  try {
+    const converter = await initConverter();
+    if (!converter) {
+      console.warn('[Utils] Converter not initialized');
+      return text;
+    }
+    return converter(text);
+  } catch (error) {
+    console.error('[Utils] Error during TW to CN conversion:', error);
+    return text; // Return original text if conversion fails
+  }
+}
+
+/**
+ * Synchronous version of convertTWtoCN for use in computed properties
+ * NOTE: May return original text on first call if converter not yet loaded
+ * For guaranteed conversion, use the async version
+ */
+export function convertTWtoCNSync(text: string | null | undefined): string {
+  if (!text) return '';
+
+  // Check if converter is already initialized
+  if (!converterInstance) {
+    // Trigger initialization for next time (non-blocking)
+    void initConverter();
+    // Return original text for now
+    return text;
+  }
+
+  try {
+    return converterInstance(text);
+  } catch (error) {
+    console.error('[Utils] Error during sync TW to CN conversion:', error);
+    return text;
+  }
+}
+
+// ===== Book Info Sync =====
+
+/**
+ * Sync book info's last chapter with actual last chapter from chapter list
+ * Always trusts the chapter list as the source of truth
+ * Updates book info if it differs from the actual last chapter
+ *
+ * ⚠️ IMPORTANT: Only call this with chapters from the LAST PAGE or with ALL chapters
+ * Do NOT call with arbitrary page chapters (e.g., page 1 of 100) or it will incorrectly
+ * set the last chapter to the last chapter of that page!
+ *
+ * @param bookInfo - Current book info (may be outdated or incorrect)
+ * @param chapters - Array of chapters from LAST PAGE or ALL chapters (source of truth)
+ * @returns Updated book info with synced last chapter
+ *
+ * @example
+ * // ✅ CORRECT: Syncing with last page
+ * const lastPageChapters = await getBookChapters(bookId, { page: maxPages });
+ * info.value = syncLastChapter(info.value, lastPageChapters);
+ *
+ * @example
+ * // ✅ CORRECT: Syncing with all chapters
+ * const allChapters = getAllChaptersFromCache();
+ * info.value = syncLastChapter(info.value, allChapters);
+ *
+ * @example
+ * // ❌ WRONG: Syncing with page 1 (will set last chapter to chapter 20!)
+ * const page1Chapters = await getBookChapters(bookId, { page: 1 });
+ * info.value = syncLastChapter(info.value, page1Chapters); // DON'T DO THIS!
+ */
+export function syncLastChapter<T extends { last_chapter_number?: number | null; last_chapter_title?: string; last_chapter_url?: string }>(
+  bookInfo: T,
+  chapters: Array<{ number: number; title: string; url: string }>
+): T {
+  if (!chapters || chapters.length === 0) {
+    return bookInfo;
+  }
+
+  // Find the actual last chapter (highest number) - this is the source of truth
+  const actualLastChapter = chapters.reduce<{ number: number; title: string; url: string }>((max, chapter) => {
+    return chapter.number > max.number ? chapter : max;
+  }, chapters[0]!);
+
+  // Check if book info differs from actual chapter list
+  const currentLastChapterNum = bookInfo.last_chapter_number ?? 0;
+  if (actualLastChapter && actualLastChapter.number !== currentLastChapterNum) {
+    const direction = actualLastChapter.number > currentLastChapterNum ? '↑' : '↓';
+    console.log(
+      `[syncLastChapter] ${direction} Syncing last chapter: ${currentLastChapterNum} → ${actualLastChapter.number}`
+    );
+
+    return {
+      ...bookInfo,
+      last_chapter_number: actualLastChapter.number,
+      last_chapter_title: actualLastChapter.title,
+      last_chapter_url: actualLastChapter.url,
+    };
+  }
+
+  return bookInfo;
+}

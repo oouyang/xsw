@@ -11,11 +11,11 @@
 
     <q-skeleton v-if="loading" type="rect" height="36px" class="q-mb-md" />
     <div class="column q-gutter-xl">
-      <div v-for="cat in categories" :key="cat.id">
+      <div v-for="cat in displayCategories" :key="cat.id">
         <div class="row items-center q-mb-sm">
           <div class="text-h6">{{ cat.name }}</div>
           <q-space />
-          <q-btn flat :to="{ name: 'Category', params: { catId: cat.id } }" label="更多..." />
+          <q-btn flat :to="{ name: 'Category', params: { catId: cat.id } }" :label="$t('category.viewAll')" />
         </div>
         <q-separator />
 
@@ -34,17 +34,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import BookCard from 'components/BookCard.vue';
 import type { Category, BookSummary } from 'src/types/book-api';
 import { getCategories, listBooksInCategory } from 'src/services/bookApi';
 import { useAppConfig } from 'src/services/useAppConfig';
+import { useTextConversion } from 'src/composables/useTextConversion';
+
+const { convertIfNeeded } = useTextConversion();
 
 const categories = ref<Category[]>([]);
 const topBooks = ref<Record<string, BookSummary[]>>({});
 const loading = ref(false);
 const error = ref('');
 const { config } = useAppConfig();
+
+// Convert category names for zh-CN users
+const displayCategories = computed(() =>
+  categories.value.map(cat => ({
+    ...cat,
+    name: convertIfNeeded(cat.name)
+  }))
+);
 
 async function load() {
   loading.value = true;
