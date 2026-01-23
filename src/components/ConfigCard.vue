@@ -24,7 +24,7 @@
                 :outline="locale !== 'en-US'"
                 :color="locale === 'en-US' ? 'primary' : (isDarkActive() ? 'grey-7' : 'grey-5')"
                 :text-color="locale === 'en-US' ? 'white' : (isDarkActive() ? 'grey-3' : 'grey-8')"
-                label="English"
+                :label="$t('language.enUS')"
                 class="full-width"
                 @click="changeLocale('en-US')"
               />
@@ -36,7 +36,7 @@
                 :outline="locale !== 'zh-TW'"
                 :color="locale === 'zh-TW' ? 'primary' : (isDarkActive() ? 'grey-7' : 'grey-5')"
                 :text-color="locale === 'zh-TW' ? 'white' : (isDarkActive() ? 'grey-3' : 'grey-8')"
-                label="繁體中文"
+                :label="$t('language.zhTW')"
                 class="full-width"
                 @click="changeLocale('zh-TW')"
               />
@@ -48,7 +48,7 @@
                 :outline="locale !== 'zh-CN'"
                 :color="locale === 'zh-CN' ? 'primary' : (isDarkActive() ? 'grey-7' : 'grey-5')"
                 :text-color="locale === 'zh-CN' ? 'white' : (isDarkActive() ? 'grey-3' : 'grey-8')"
-                label="简体中文"
+                :label="$t('language.zhCN')"
                 class="full-width"
                 @click="changeLocale('zh-CN')"
               />
@@ -123,7 +123,7 @@
         </div>
 
         <!-- Preview -->
-        <div class="setting-group">
+        <div class="setting-group q-mb-lg">
           <div class="setting-label row items-center q-mb-sm">
             <q-icon name="visibility" size="20px" class="q-mr-xs" />
             <span class="text-subtitle2">{{ $t('settings.preview') }}</span>
@@ -133,6 +133,19 @@
               {{ $t('settings.previewText') }}
             </p>
           </q-card>
+        </div>
+
+        <!-- Admin Section -->
+        <div class="setting-group">
+          <q-separator class="q-my-md" />
+          <q-btn
+            unelevated
+            color="primary"
+            icon="admin_panel_settings"
+            label="Admin Panel"
+            class="full-width"
+            @click="showAdminDialog = true"
+          />
         </div>
       </q-card-section>
 
@@ -148,14 +161,18 @@
       </q-card-actions>
     </q-card>
   </q-dialog>
+
+  <!-- Admin Dialog -->
+  <AdminDialog v-model="showAdminDialog" />
 </template>
 
 <script setup lang="ts">
 import { useDialogPluginComponent } from 'quasar';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { isDarkActive, toggleDark } from 'src/services/utils';
+import AdminDialog from 'src/components/AdminDialog.vue';
 import { useLocale } from 'boot/i18n';
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 defineEmits([...useDialogPluginComponent.emits]);
@@ -191,6 +208,9 @@ function changeLocale(newLocale: string) {
   // Type assertion: newLocale comes from language buttons with known values
   storeLocale(newLocale as 'en-US' | 'zh-TW' | 'zh-CN');
 }
+
+// Admin dialog
+const showAdminDialog = ref(false);
 </script>
 
 <style scoped>
@@ -226,5 +246,25 @@ function changeLocale(newLocale: string) {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.admin-panel {
+  animation: fadeIn 0.4s ease-in;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(33, 150, 243, 0.05);
+}
+
+.q-dark .admin-panel {
+  background: rgba(33, 150, 243, 0.1);
+}
+
+.admin-panel .text-body2 {
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.admin-panel .text-body2 > div {
+  padding: 2px 0;
 }
 </style>

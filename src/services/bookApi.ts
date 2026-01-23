@@ -34,7 +34,12 @@ export async function getBookChapters(
   bookId: string,
   opts?: { page?: number; all?: boolean; max_pages?: number; nocache?: boolean },
 ): Promise<Chapters> {
-  const { data } = await api.get(`/books/${bookId}/chapters`, { params: { ...opts, www: true } });
+  // Use extended timeout for fetching all chapters (up to 5 minutes)
+  const timeout = opts?.all ? 300000 : 15000;
+  const { data } = await api.get(`/books/${bookId}/chapters`, {
+    params: opts,
+    timeout
+  });
   return data;
 }
 export async function getChapterContent(
@@ -42,8 +47,10 @@ export async function getChapterContent(
   chapterNum: number,
   nocache = false,
 ): Promise<ChapterContent> {
+  // Use extended timeout for chapter content (up to 2 minutes for slow networks/scraping)
   const { data } = await api.get(`/books/${bookId}/chapters/${chapterNum}`, {
-    params: { nocache, www: true },
+    params: { nocache },
+    timeout: 120000, // 2 minutes
   });
   return data;
 }

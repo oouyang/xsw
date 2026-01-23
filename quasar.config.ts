@@ -13,7 +13,7 @@ export default defineConfig((ctx) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: ['i18n', 'axios', 'appSettings', 'addressbar-color'],
+    boot: ['app', 'i18n', 'axios', 'appSettings', 'books', 'addressbar-color'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.scss'],
@@ -52,7 +52,7 @@ export default defineConfig((ctx) => {
 
       // rebuildCache: true, // rebuilds Vite/linter/etc cache on startup
 
-      publicPath: '/xsw',
+      // publicPath: '/xsw',
       // analyze: true,
       // env: {},
       // rawDefine: {}
@@ -102,10 +102,10 @@ export default defineConfig((ctx) => {
       open: false, // opens browser window automatically
       proxy: {
         '/xsw/api': {
-          target: '${apiBaseUrl}', // base backend URL
+          target: `${apiBaseUrl}/xsw/api`, // base backend URL with path
           changeOrigin: true,
           secure: false, // skip SSL verification if needed
-          // rewrite: (path) => path.replace(/^\/api/, '/api') // keep /api prefix
+          rewrite: (path) => path.replace(/^\/xsw\/api/, ''), // Strip /xsw/api prefix, add it to target
         },
 
         // '/spa': {

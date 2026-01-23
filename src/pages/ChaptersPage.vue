@@ -5,268 +5,551 @@
       <q-breadcrumbs>
         <q-breadcrumbs-el :label="config.name" icon="home" to="/" />
         <q-breadcrumbs-el :label="'📜' + displayBookName || 'Book'" />
-        <q-breadcrumbs-el label="目錄"  :to="`/book/${info?.book_id}/chapters`" />
-        <q-breadcrumbs-el :label="`${page}`" />
+        <q-breadcrumbs-el :label="$t('nav.chapters')"  :to="`/book/${book.info?.book_id}/chapters`" />
+        <q-breadcrumbs-el :label="`第 ${book.page} 頁`" />
       </q-breadcrumbs>
       <q-space />
-      <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" label="🏛️" />
+      <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" :label="$t('nav.goBack')" />
     </div>
 
     <q-card class="q-mb-md">
       <q-card-section>
-        <div class="text-subtitle2">👤 {{ displayAuthor }}</div>
-        <div class="text-caption">
+        <div class="text-h6 q-mb-sm">📚 {{ displayBookName }}</div>
+        <div class="text-subtitle2 text-grey-7">👤 {{ displayAuthor }}</div>
+        <div class="text-caption text-grey-6 q-mt-xs">
           🏷️ {{ displayType }} | 🚨 {{ displayStatus }} | 🗓️ {{ displayUpdate }}
         </div>
-        <div class="text-caption">⚡ {{ displayLastChapterTitle }}</div>
+        <q-separator class="q-my-sm" />
+        <div class="row items-center">
+          <div class="col text-caption text-grey-7">
+            {{ $t('book.latestPrefix') }}: {{ displayLastChapterTitle }}
+          </div>
+          <div class="col-auto">
+            <q-chip dense size="sm" color="primary" text-color="white">
+              共 {{ book.info?.last_chapter_number || 0 }} 章
+            </q-chip>
+          </div>
+        </div>
       </q-card-section>
+      <q-card-actions align="right">
+        <q-btn flat dense icon="refresh" :label="$t('chapter.reloadChapters')" @click="reload" :loading="loading" />
+      </q-card-actions>
     </q-card>
 
-    <q-banner v-if="error" class="bg-red-2 text-red-10 q-mb-md">{{ error }}</q-banner>
+    <!-- Context-aware error banner -->
+    <q-banner
+      v-if="loadError"
+      :class="loadError.phase === 'phase2' ? 'bg-orange-2 text-orange-10' : 'bg-red-2 text-red-10'"
+      class="q-mb-md"
+    >
+      <template v-slot:avatar>
+        <q-icon :name="loadError.phase === 'phase2' ? 'warning' : 'error'" />
+      </template>
+      <div>
+        <div class="text-body2">{{ loadError.message }}</div>
+        <div v-if="loadError.technicalDetails" class="text-caption q-mt-xs">
+          {{ loadError.technicalDetails }}
+        </div>
+      </div>
+      <template v-slot:action>
+        <q-btn
+          v-if="loadError.retryable"
+          flat
+          :color="loadError.phase === 'phase2' ? 'orange-10' : 'red-10'"
+          :label="$t('common.retry')"
+          icon="refresh"
+          @click="retryPhase(loadError.phase)"
+        />
+        <q-btn
+          flat
+          dense
+          icon="close"
+          :color="loadError.phase === 'phase2' ? 'orange-10' : 'red-10'"
+          @click="loadError = null"
+        />
+      </template>
+    </q-banner>
 
-    <div class="row justify-center q-my-lg">
+    <!-- Legacy error banner (fallback) -->
+    <q-banner v-if="error && !loadError" class="bg-red-2 text-red-10 q-mb-md">
+      <div class="row items-center">
+        <div class="col">{{ error }}</div>
+        <q-btn flat color="red-10" :label="$t('common.retry')" icon="refresh" @click="reload" />
+      </div>
+    </q-banner>
+
+    <div class="row items-center justify-between q-mb-md" v-if="book.info">
+      <div class="text-caption text-grey-7">
+        <span v-if="displayChapters.length > 0">
+          顯示第 {{ startChapterNum }}-{{ endChapterNum }} 章
+        </span>
+        <span v-if="book.info.last_chapter_number">
+          (共 {{ book.info.last_chapter_number }} 章)
+        </span>
+      </div>
       <q-pagination
-        v-model="page"
-        :max="maxPages"
-        @update:model-value="loadChapters"
+        v-model="book.page"
+        :max="book.maxPages"
+        @update:model-value="p => switchPage(p)"
         color="primary"
-        max-pages="12"
+        max-pages="9"
+        size="sm"
+        :disable="loading || book.maxPages <= 1"
       />
     </div>
 
-    <q-list bordered separator>
-      <q-item
-        v-for="c in displayChapters"
-        :key="c.number"
-        clickable
-        :to="chapterLink(c.number, c.title)"
+    <!-- Phase 2 background loading banner -->
+    <transition name="slide-down">
+      <q-banner
+        v-if="isPhase2Loading"
+        dense
+        class="bg-blue-1 text-blue-9 q-mb-md phase2-banner"
       >
-        <q-item-section>
-          <div class="text-body2">{{ c.title }}</div>
-        </q-item-section>
-        <q-item-section side>
-          <q-icon name="chevron_right" />
-        </q-item-section>
-      </q-item>
-    </q-list>
+        <template v-slot:avatar>
+          <q-spinner-dots color="blue-9" size="sm" />
+        </template>
+        <div class="text-caption">
+          {{ phase2Message || $t('chapter.loadingRemainingInBackground') }}
+        </div>
+        <template v-slot:action>
+          <q-btn flat dense size="sm" icon="close" @click="isPhase2Loading = false" />
+        </template>
+      </q-banner>
+    </transition>
 
-    <div class="row justify-center q-my-lg">
+    <!-- Skeleton loading during Phase 1 -->
+    <q-card v-if="loading && displayChapters.length === 0" class="q-mb-md skeleton-card">
+      <q-list bordered separator>
+        <q-item v-for="n in 20" :key="n" class="skeleton-item">
+          <q-item-section avatar>
+            <q-skeleton type="QAvatar" size="32px" />
+          </q-item-section>
+          <q-item-section>
+            <q-skeleton type="text" :width="`${60 + Math.random() * 20}%`" />
+          </q-item-section>
+          <q-item-section side>
+            <q-skeleton type="circle" size="20px" />
+          </q-item-section>
+        </q-item>
+      </q-list>
+      <q-card-section class="text-center q-py-sm">
+        <div class="text-caption text-grey-7">
+          {{ loadingMessage }}
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <!-- Chapters with transition -->
+    <transition name="fade" mode="out-in">
+      <q-list
+        v-if="displayChapters.length > 0"
+        :key="`page-${book.page}`"
+        bordered
+        separator
+      >
+        <q-item
+          v-for="c in displayChapters"
+          :key="c.number"
+          clickable
+          :to="chapterLink(c.number, c.title)"
+          class="chapter-item"
+        >
+          <q-item-section avatar>
+            <q-avatar color="primary" text-color="white" size="sm">
+              {{ c.number }}
+            </q-avatar>
+          </q-item-section>
+          <q-item-section>
+            <q-item-label class="text-body2">{{ c.title }}</q-item-label>
+          </q-item-section>
+          <q-item-section side>
+            <q-icon name="chevron_right" color="grey-5" />
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </transition>
+
+    <q-banner v-if="!loading && displayChapters.length === 0" class="bg-grey-2 q-my-md">
+      <div class="text-center text-grey-7">
+        <q-icon name="info" size="md" class="q-mb-sm" />
+        <div>{{ $t('chapter.noChaptersOnPage') }}</div>
+      </div>
+    </q-banner>
+
+    <div class="row items-center justify-between q-my-lg">
+      <div class="text-caption text-grey-7">
+        第 {{ book.page }} / {{ book.maxPages }} 頁
+      </div>
       <q-pagination
-        v-model="page"
-        :max="maxPages"
-        @update:model-value="loadChapters"
+        v-model="book.page"
+        :max="book.maxPages"
+        @update:model-value="p => switchPage(p)"
         color="primary"
-        max-pages="12"
+        max-pages="9"
+        size="sm"
+        :disable="loading"
       />
     </div>
   </q-page>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue';
-import type { BookInfo, ChapterRef, Chapters } from 'src/types/book-api';
+import { ref, onMounted, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+import type { ChapterRef, Chapters } from 'src/types/book-api';
 import { getBookInfo, getBookChapters } from 'src/services/bookApi';
-import { useQuasar, useMeta } from 'quasar';
+import { useMeta } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppConfig } from 'src/services/useAppConfig';
-import { chapterLink, dedupeBy, normalizeNum, toArr, syncLastChapter } from 'src/services/utils';
+import { chapterLink, dedupeBy, normalizeNum, toArr } from 'src/services/utils';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { useBookStore } from 'src/stores/books';
 
-const { config, update } = useAppConfig();
+const { t } = useI18n();
+const { config,
+  // update
+} = useAppConfig();
 const { convertIfNeeded } = useTextConversion();
+const book = useBookStore();
 
-const $q = useQuasar();
+
+// const $q = useQuasar();
 const route = useRoute();
 const router = useRouter();
 
 const props = defineProps<{ bookId: string }>();
-const info = ref<BookInfo | null>(null);
+// const info = ref<BookInfo | null>(null);
 const chapters = ref<Chapters>({} as Chapters);
-const page = ref(Number(config.value?.page) || 1);
-const maxPages = ref(50);
+// const page = ref(Number(config.value?.page) || 1);
+// const maxPages = ref(50);
 const error = ref('');
+const loading = ref(false);
+const loadingMessage = ref(t('common.loading'));
+
+// Loading state machine
+type LoadingPhase = 'idle' | 'phase1' | 'phase2' | 'complete' | 'error';
+const loadingPhase = ref<LoadingPhase>('idle');
+
+// Phase 2 loading tracking (kept for compatibility)
+const isPhase2Loading = ref(false);
+const phase2Message = ref('');
+
+// Smart error tracking with context
+interface LoadError {
+  phase: 'phase1' | 'phase2' | 'info';
+  message: string;
+  retryable: boolean;
+  technicalDetails?: string;
+}
+
+const loadError = ref<LoadError | null>(null);
 
 // Computed properties for CN to TW conversion
-const displayBookName = computed(() => convertIfNeeded(info.value?.name));
-const displayAuthor = computed(() => convertIfNeeded(info.value?.author));
-const displayType = computed(() => convertIfNeeded(info.value?.type));
-const displayStatus = computed(() => convertIfNeeded(info.value?.status));
-const displayUpdate = computed(() => convertIfNeeded(info.value?.update));
-const displayLastChapterTitle = computed(() => convertIfNeeded(info.value?.last_chapter_title));
-const displayChapters = computed(() =>
-  chapters.value.chapters?.map(c => ({
-    ...c,
-    title: convertIfNeeded(c.title)
-  })) || []
-);
+const displayBookName = computed(() => convertIfNeeded(book.info?.name));
+const displayAuthor = computed(() => convertIfNeeded(book.info?.author));
+const displayType = computed(() => convertIfNeeded(book.info?.type));
+const displayStatus = computed(() => convertIfNeeded(book.info?.status));
+const displayUpdate = computed(() => convertIfNeeded(book.info?.update));
+const displayLastChapterTitle = computed(() => convertIfNeeded(book.info?.last_chapter_title));
+const displayChapters = computed(() => {
+  const chapters = book.pageChapters;
+  console.log('[displayChapters] page:', book.page, 'pageChapters:', chapters.length, 'allChapters:', book.allChapters.length);
+  return chapters;
+});
 
-useMeta({ title: `${config.value.name} ${info.value?.name ? ' >> '+ info.value?.name : ''}` });
+// Calculate start and end chapter numbers for current page
+const startChapterNum = computed(() => {
+  if (displayChapters.value.length === 0) return 0;
+  return displayChapters.value[0]?.number || 0;
+});
 
-watch(page, (newVal, oldVal) => {
-  // Validate page number
-  if (!Number.isFinite(newVal) || newVal < 1) {
-    console.warn(`[ChaptersPage] Invalid page value: ${newVal}, resetting to 1`);
-    page.value = 1;
-    return;
+const endChapterNum = computed(() => {
+  if (displayChapters.value.length === 0) return 0;
+  return displayChapters.value[displayChapters.value.length - 1]?.number || 0;
+});
+
+useMeta({ title: `${config.value.name} ${book.info?.name ? ' >> '+ book.info?.name : ''}` });
+
+async function switchPage(page: number) {
+  book.setPage(page);
+  console.log(`page changed to ${page} -`, book.page);
+
+  // If allChapters is empty, we need to load them first
+  if (book.allChapters.length === 0) {
+    console.log('[switchPage] allChapters is empty, loading...');
+    loading.value = true;
+    loadingMessage.value = t('chapter.loadingChapters');
+    loadingPhase.value = 'phase1';
+
+    try {
+      await book.loadAllChapters({
+        onProgress: (msg: string) => {
+          loadingMessage.value = msg;
+
+          // Track Phase 2 loading
+          if (msg.includes('背景')) {
+            loadingPhase.value = 'phase2';
+            isPhase2Loading.value = true;
+            phase2Message.value = msg;
+          } else if (msg === '') {
+            loadingPhase.value = 'complete';
+            isPhase2Loading.value = false;
+            phase2Message.value = '';
+          }
+        }
+      });
+
+      // Ensure we're in complete state
+      loadingPhase.value = 'complete';
+    } catch (e) {
+      console.error('[switchPage] Error loading chapters:', e);
+      const err = e as { response?: { data?: { detail?: string } }; message?: string };
+      const errorMsg = err?.response?.data?.detail || err?.message || 'Unknown error';
+
+      // Set state machine to error
+      loadingPhase.value = 'error';
+
+      // Determine which phase failed
+      const hasLoadedChapters = book.pageChapters.length > 0;
+
+      if (hasLoadedChapters) {
+        loadError.value = {
+          phase: 'phase2',
+          message: '背景載入未完成（前3頁已可用）',
+          retryable: true,
+          technicalDetails: errorMsg
+        };
+      } else {
+        loadError.value = {
+          phase: 'phase1',
+          message: t('chapter.loadChaptersFailed'),
+          retryable: true,
+          technicalDetails: errorMsg
+        };
+      }
+    } finally {
+      loading.value = false;
+    }
   }
 
-  // $q.localStorage.setItem('chapterPage', page.value)
-  update({page: `${page.value}`});
   void router.replace({
     query: {
       ...route.query,
-      page: newVal
+      page
     }
   })
-  console.log(`page changed from ${oldVal} to ${newVal} -`, $q.localStorage.getItem('chapterPage'));
-});
+}
+// watch(page, (newVal, oldVal) => {
+//   // Validate page number
+//   if (!Number.isFinite(newVal) || newVal < 1) {
+//     console.warn(`[ChaptersPage] Invalid page value: ${newVal}, resetting to 1`);
+//     page.value = 1;
+//     return;
+//   }
+
+//   // $q.localStorage.setItem('chapterPage', page.value)
+  // update({page: `${page.value}`});
+//   book.setPage(newVal);
+//   void router.replace({
+//     query: {
+//       ...route.query,
+//       page: newVal
+//     }
+//   })
+//   console.log(`page changed from ${oldVal} to ${newVal} -`, $q.localStorage.getItem('chapterPage'));
+// });
 
 
-watch(
-  () => props.bookId,
-  async (newBookId, oldBookId) => {
-    if (newBookId !== oldBookId) {
-      // Reset page for a new book
-      page.value = 1;
-      // $q.localStorage.set('bookId', newBookId);
-      // $q.localStorage.set('chapterPage', 1);
-        update({page: `${page.value}`, bookId: newBookId});
+// watch(
+//   () => props.bookId,
+//   async (newBookId, oldBookId) => {
+//     if (newBookId !== oldBookId) {
+//       // Reset page for a new book
+//       page.value = 1;
+//       // $q.localStorage.set('bookId', newBookId);
+//       // $q.localStorage.set('chapterPage', 1);
+//         // update({page: `${page.value}`, bookId: newBookId});
+//         book.setBookId(newBookId);
+//         book.setPage(1);
+        
 
-      // ✅ Properly handle the promise
-      try {
-        await loadChapters(); // reload chapters for page 1
-      } catch (err) {
-        console.error('Failed to reload chapters:', err);
-        error.value = 'Load chapters failed';
-      }
-    }
-  }
-);
+//       // ✅ Properly handle the promise
+//       try {
+//         await loadChapters(); // reload chapters for page 1
+//       } catch (err) {
+//         console.error('Failed to reload chapters:', err);
+//         error.value = 'Load chapters failed';
+//       }
+//     }
+//   }
+// );
 
 
 async function loadInfo() {
   try {
-    info.value = await getBookInfo(props.bookId);
+    loading.value = true;
+    error.value = '';
+    loadError.value = null;
+    const data = await getBookInfo(props.bookId);
+    // info.value = data;
+    book.setInfo(data);
     // Calculate max pages: divide last chapter by page size (20) and round up
-    maxPages.value = Math.ceil((info.value?.last_chapter_number || 100) / 20);
+    // maxPages.value = Math.ceil((info.value?.last_chapter_number || 100) / 20);
+    // book.setMaxPages(Math.ceil((book.info?.last_chapter_number || 100) / 20));
 
     // Update browser title with book name
-    if (info.value?.name) {
-      document.title = `${config.value.name} - ${info.value.name}`;
+    if (book.info?.name) {
+      document.title = `${config.value.name} - ${book.info.name}`;
     }
 
-    // Fetch last page to sync actual last chapter (non-blocking)
-    void syncLastPageInBackground();
+    // if (info.value?.name) {
+    //   document.title = `${config.value.name} - ${info.value.name}`;
+    // }
+
+    // Note: Backend now automatically syncs last chapter when fetching all chapters
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { detail?: string } }; message?: string };
+    const errorMsg = err?.response?.data?.detail || err?.message || 'Unknown error';
+
+    // Set context-aware error for book info loading
+    loadError.value = {
+      phase: 'info',
+      message: t('book.loadInfoFailed'),
+      retryable: true,
+      technicalDetails: errorMsg
+    };
+
+    console.error('[loadInfo] Error:', e);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function reload() {
+  error.value = '';
+  loadError.value = null;
+  loading.value = true;
+  loadingMessage.value = t('common.loading');
+  try {
+    await book.loadAllChapters({
+      force: true,
+      onProgress: (msg: string) => {
+        loadingMessage.value = msg;
+      }
+    });
+    await loadInfo();
+    await loadChapters();
   } catch (e) {
-    error.value = 'Load book info failed';
-    console.log('e', e);
+    error.value = 'Reload failed';
+    console.error('Reload error:', e);
+  } finally {
+    loading.value = false;
+    loadingMessage.value = t('common.loading');
   }
 }
 
 /**
- * Fetch the last page of chapters in the background to sync last chapter info
- * This ensures book info shows the actual latest chapter, not outdated/incorrect info
- *
- * IMPORTANT: This is the ONLY place where syncing should happen to prevent cascade.
- * This function explicitly fetches the calculated last page to verify actual data.
+ * Retry a specific phase that failed
  */
-async function syncLastPageInBackground() {
+async function retryPhase(phase: 'phase1' | 'phase2' | 'info') {
+  loadError.value = null;
+  error.value = '';
+  loadingPhase.value = 'phase1'; // Reset to initial state
+
   try {
-    // Skip if we're already on the last page - no need for background fetch
-    if (page.value === maxPages.value) {
-      console.log('[syncLastPage] Already on last page, skipping background sync');
-      return;
-    }
+    if (phase === 'info') {
+      // Retry loading book info
+      await loadInfo();
+      loadingPhase.value = 'complete';
+    } else if (phase === 'phase1') {
+      // Retry Phase 1: Load pages around current position
+      loading.value = true;
+      loadingMessage.value = t('chapter.loadingFirstPages');
+      await book.loadAllChapters({
+        force: true,
+        onProgress: (msg: string) => {
+          loadingMessage.value = msg;
 
-    // Check if we have complete cached data
-    const cachedChapters: ChapterRef[] = (() => {
-      try {
-        return JSON.parse(config.value.chapters || '[]') as ChapterRef[];
-      } catch {
-        return [];
-      }
-    })();
+          // Track Phase 2 loading
+          if (msg.includes('背景')) {
+            loadingPhase.value = 'phase2';
+            isPhase2Loading.value = true;
+            phase2Message.value = msg;
+          } else if (msg === '') {
+            loadingPhase.value = 'complete';
+            isPhase2Loading.value = false;
+            phase2Message.value = '';
+          }
+        }
+      });
 
-    // Only trust cache if it's substantial AND has MORE chapters than book info
-    // Never reduce based on cache - only increase
-    if (cachedChapters.length > 50 && info.value) {
-      const cachedLastChapter = cachedChapters.reduce((max, ch) =>
-        ch.number > max ? ch.number : max, 0
-      );
-      const bookInfoLastChapter = info.value.last_chapter_number || 0;
+      // Ensure we're in complete state
+      loadingPhase.value = 'complete';
+    } else if (phase === 'phase2') {
+      // Retry Phase 2: Load remaining chapters
+      // This is handled automatically by book.loadAllChapters
+      // We just trigger a full reload
+      loading.value = true;
+      loadingMessage.value = t('chapter.loadingRemainingInBackground');
+      loadingPhase.value = 'phase2';
+      await book.loadAllChapters({
+        force: true,
+        onProgress: (msg: string) => {
+          loadingMessage.value = msg;
 
-      // ONLY sync if cache has MORE than book info (upward sync only)
-      if (cachedLastChapter > bookInfoLastChapter) {
-        const oldLastChapter = info.value.last_chapter_number;
-        info.value = syncLastChapter(info.value, cachedChapters);
+          if (msg.includes('背景')) {
+            loadingPhase.value = 'phase2';
+            isPhase2Loading.value = true;
+            phase2Message.value = msg;
+          } else if (msg === '') {
+            loadingPhase.value = 'complete';
+            isPhase2Loading.value = false;
+            phase2Message.value = '';
+          }
+        }
+      });
 
-        console.log(
-          `[syncLastPage] ✅ Synced UP from cache (${cachedChapters.length} chapters, last: ${cachedLastChapter}): ${oldLastChapter} → ${info.value.last_chapter_number}`
-        );
-        // Update maxPages based on actual chapter count
-        maxPages.value = Math.ceil(info.value.last_chapter_number! / 20);
-        return;
-      } else if (cachedLastChapter < bookInfoLastChapter) {
-        console.log(
-          `[syncLastPage] Cache outdated (has ${cachedLastChapter}, expected ${bookInfoLastChapter}), fetching from API`
-        );
-        // Don't return - continue to fetch from API to get complete data
-      } else {
-        // Cache matches book info, no sync needed
-        console.log('[syncLastPage] Cache matches book info, no sync needed');
-        return;
-      }
-    }
-
-    // Fetch last page from API to verify
-    console.log(`[syncLastPage] Fetching last page (${maxPages.value}) in background`);
-    const lastPageChapters = await getBookChapters(props.bookId, {
-      page: maxPages.value,
-      all: false
-    });
-
-    const chaptersArray = Array.isArray(lastPageChapters)
-      ? lastPageChapters
-      : lastPageChapters.chapters;
-
-    if (info.value && chaptersArray && chaptersArray.length > 0) {
-      const oldLastChapter = info.value.last_chapter_number ?? 1;
-      const fetchedLastChapter = chaptersArray.reduce((max, ch) =>
-        ch.number > max ? ch.number : max, 0
-      );
-
-      // ONLY sync if fetched data has MORE chapters (upward sync only)
-      // Never reduce based on a single page - book info might be more accurate
-      if (fetchedLastChapter > oldLastChapter) {
-        info.value = syncLastChapter(info.value, chaptersArray);
-
-        console.log(
-          `[syncLastPage] ✅ Synced UP from API (page ${maxPages.value}): ${oldLastChapter} → ${info.value.last_chapter_number}`
-        );
-        // Recalculate maxPages based on actual last chapter
-        maxPages.value = Math.ceil((info.value.last_chapter_number || 100) / 20);
-        console.log(`[syncLastPage] Updated maxPages: ${maxPages.value}`);
-      } else if (fetchedLastChapter < oldLastChapter) {
-        console.log(
-          `[syncLastPage] ⚠️ Fetched page ${maxPages.value} has less chapters (${fetchedLastChapter}) than expected (${oldLastChapter}), NOT syncing down. Book info might be more accurate.`
-        );
-        // Don't sync down - might be incomplete data or wrong page
-      } else {
-        console.log('[syncLastPage] Fetched data matches book info');
-      }
-    } else if (chaptersArray && chaptersArray.length === 0) {
-      // Empty last page - this is expected if book info's last chapter is accurate
-      // Don't backtrack and sync down - just log it
-      console.log(
-        `[syncLastPage] Page ${maxPages.value} is empty, which is expected if book info (${info.value?.last_chapter_number}) is accurate. Not syncing.`
-      );
-      // The book info is the source of truth here - don't reduce it
+      // Ensure we're in complete state
+      loadingPhase.value = 'complete';
     }
   } catch (e) {
-    console.warn('[syncLastPage] Failed to sync last page:', e);
-    // Non-critical error, don't show to user
+    const err = e as { response?: { data?: { detail?: string } }; message?: string };
+    const errorMsg = err?.response?.data?.detail || err?.message || 'Unknown error';
+
+    // Set state machine to error
+    loadingPhase.value = 'error';
+
+    // Set context-aware error
+    if (phase === 'info') {
+      loadError.value = {
+        phase: 'info',
+        message: t('book.loadInfoFailed'),
+        retryable: true,
+        technicalDetails: errorMsg
+      };
+    } else if (phase === 'phase1') {
+      loadError.value = {
+        phase: 'phase1',
+        message: t('chapter.loadChaptersFailed'),
+        retryable: true,
+        technicalDetails: errorMsg
+      };
+    } else if (phase === 'phase2') {
+      loadError.value = {
+        phase: 'phase2',
+        message: '背景載入未完成（前3頁已可用）',
+        retryable: true,
+        technicalDetails: errorMsg
+      };
+    }
+
+    console.error(`[retryPhase] Failed to retry ${phase}:`, e);
+  } finally {
+    loading.value = false;
+    loadingMessage.value = t('common.loading');
   }
 }
+
 
 async function loadChapters() {
   const storedchapters = await loadPageChapters() // JSON.parse(config.value.chapters||'[]')
@@ -275,7 +558,7 @@ async function loadChapters() {
   }
   try {
     error.value = '';
-    const resp = await getBookChapters(props.bookId, { page: page.value, all: false });
+    const resp = await getBookChapters(props.bookId, { page: book.page, all: false });
     chapters.value.chapters = Array.isArray(resp) ? resp : resp.chapters;
     // maxPages.value = Array.isArray(resp) ? 50 : chapters.value.totalPages||0;
     console.log('chapters is array ', Array.isArray(resp));
@@ -287,9 +570,11 @@ async function loadChapters() {
     // The issue: if maxPages is wrong (e.g., 356 but actual is 355), and we visit
     // page 355, we sync with page 355's data, reduce last chapter to 7092,
     // maxPages becomes 355, then next visit we sync again, creating infinite reduction.
-  } catch (e) {
-    error.value = 'Load chapters failed';
-    console.log('e', e);
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { detail?: string } }; message?: string };
+    const errorMsg = err?.response?.data?.detail || err?.message || 'Unknown error';
+    error.value = `${t('chapter.loadChaptersFailed')}: ${errorMsg}`;
+    console.error('[loadChapters] Error:', e);
   }
   console.log('stored chapters ', storedchapters?.length)
 }
@@ -304,7 +589,7 @@ async function loadPageChapters() {
     error.value = ''
 
     const currentBookId = String(props.bookId ?? '')
-    const currentPage = Number(page.value ?? 1)
+    const currentPage = Number(book.page ?? 1)
 
     if (!currentBookId) {
       error.value = 'Missing bookId'
@@ -345,7 +630,7 @@ async function loadPageChapters() {
         // chapters.value.chapters = slice
         // Optional: compute totalPages if you want pagination UI to be stable from cache
         const totalPages =
-          Math.ceil(cachedChapters.length / pageSize) || chapters.value.totalPages || 0
+          Math.ceil(cachedChapters.length / pageSize) ||  0
         // chapters.value.totalPages = totalPages
 
         // ⚠️ DO NOT sync with cached data here!
@@ -400,6 +685,9 @@ async function loadPageChapters() {
     //   bookId: currentBookId,
     //   chapters: JSON.stringify(nextCache)
     // })
+            book.setBookId(currentBookId);
+      // book.replaceChapters(nextCache);
+
 
     console.log('[loadPageChapters] fetched page', {
       page: currentPage,
@@ -420,25 +708,173 @@ onMounted(async () => {
   const storedBookId = config.value.bookId; // $q.localStorage.getItem('bookId');
   const storedPage = Number(config.value.page) || 1; // Default to 1 if NaN
 
+  // IMPORTANT: Always set bookId FIRST to clear old book's data if switching books
+  book.setBookId(props.bookId);
+
   if (route.query.page) {
     const queryPage = Number(route.query.page);
-    page.value = Number.isFinite(queryPage) && queryPage > 0 ? queryPage : 1;
-    // $q.localStorage.set('bookId', props.bookId);
-    // $q.localStorage.set('chapterPage', page.value);
-    update({page: `${page.value}`, bookId: props.bookId});
+    const currentPage = Number.isFinite(queryPage) && queryPage > 0 ? queryPage : 1;
+    book.setPage(currentPage);
   } else if (storedBookId === props.bookId && Number.isFinite(storedPage) && storedPage > 0) {
-    page.value = storedPage;
+    book.setPage(storedPage);
   } else {
-    page.value = 1;
-    // $q.localStorage.set('bookId', props.bookId);
-    // $q.localStorage.set('chapterPage', page.value);
-    update({page: `${page.value}`, bookId: props.bookId});
+    book.setPage(1);
   }
 
+  // Load book info first
   await loadInfo();
-  await loadChapters();
+
+  // Then load all chapters in the background with progress tracking
+  loading.value = true;
+  loadingMessage.value = t('common.loading');
+  loadingPhase.value = 'phase1';
+
+  try {
+    await book.loadAllChapters({
+      onProgress: (msg: string) => {
+        loadingMessage.value = msg;
+
+        // Track Phase 2 loading
+        if (msg.includes('背景')) {
+          loadingPhase.value = 'phase2';
+          isPhase2Loading.value = true;
+          phase2Message.value = msg;
+        } else if (msg === '') {
+          // Phase 2 complete
+          loadingPhase.value = 'complete';
+          isPhase2Loading.value = false;
+          phase2Message.value = '';
+        }
+      }
+    });
+
+    // After loading all chapters, ensure pageChapters is set for current page
+    if (book.allChapters.length > 0 && book.pageChapters.length === 0) {
+      console.log('[onMounted] pageChapters is empty after loading, re-slicing...');
+      book.setPage(book.page); // Force re-slice
+    }
+
+    console.log(`[onMounted] Loaded ${book.allChapters.length} chapters, showing page ${book.page} with ${book.pageChapters.length} chapters`);
+
+    // Mark loading as complete
+    loadingPhase.value = 'complete';
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }; message?: string };
+    const errorMsg = err?.response?.data?.detail || err?.message || 'Unknown error';
+
+    // Set state machine to error
+    loadingPhase.value = 'error';
+
+    // Determine which phase failed based on whether we have any chapters loaded
+    // If pageChapters has content, Phase 1 succeeded but Phase 2 failed
+    const hasLoadedChapters = book.pageChapters.length > 0;
+
+    if (hasLoadedChapters) {
+      // Phase 2 failed - less critical since first 3 pages are available
+      loadError.value = {
+        phase: 'phase2',
+        message: '背景載入未完成（前3頁已可用）',
+        retryable: true,
+        technicalDetails: errorMsg
+      };
+    } else {
+      // Phase 1 failed - critical error
+      loadError.value = {
+        phase: 'phase1',
+        message: t('chapter.loadChaptersFailed'),
+        retryable: true,
+        technicalDetails: errorMsg
+      };
+    }
+
+    console.error('[onMounted] Error loading chapters:', e);
+  } finally {
+    loading.value = false;
+    loadingMessage.value = t('common.loading');
+  }
 
   // console.log('route', route, router)
 });
 
 </script>
+
+<style scoped>
+.chapter-item {
+  transition: all 0.2s ease;
+}
+
+.chapter-item:hover {
+  background-color: rgba(25, 118, 210, 0.08);
+  transform: translateX(4px);
+}
+
+.chapter-item:active {
+  background-color: rgba(25, 118, 210, 0.15);
+}
+
+/* Fade transition for chapter list */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Slide down transition for Phase 2 banner */
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all 0.3s ease;
+}
+
+.slide-down-enter-from,
+.slide-down-leave-to {
+  transform: translateY(-20px);
+  opacity: 0;
+}
+
+/* Skeleton card styling */
+.skeleton-card {
+  animation: fadeIn 0.3s ease-in;
+}
+
+.skeleton-item {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Phase 2 banner subtle animation */
+.phase2-banner {
+  animation: slideInDown 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes slideInDown {
+  from {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+</style>

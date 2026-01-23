@@ -9,8 +9,13 @@ services:
   xsw:
     image: ${img}:${tag}
     env_file: .env
+    restart: always
     ports:
       - 8000:8000
+    volumes:
+      - xsw_data:/app/data
+    environment:
+      - no_proxy=.micron.com,127.0.0.0/8,localhost,10.38.138.123
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile
@@ -18,3 +23,7 @@ services:
     #     BASE_URL: $BASE_URL
     #     INDEX_URL: $INDEX_URL
     #     TRUSTED_HOST: $TRUSTED_HOST
+
+volumes:
+  xsw_data:
+    driver: local

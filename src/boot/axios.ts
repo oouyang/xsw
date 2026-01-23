@@ -8,23 +8,26 @@ declare module 'vue' {
     $api: AxiosInstance;
   }
 }
-const { config } = useAppConfig();
 
-// Be careful when using SSR for cross-request state pollution
-// due to creating a Singleton instance here;
-// If any client changes this (global) instance, it might be a
-// good idea to move this instance creation inside of the
-// "export default () => {}" function below (which runs individually
-// for each client)
-const baseurl = process.env.API_BASE_URL || config.value.apiBaseUrl || '/xsw/api';
-const api = axios.create({
-  baseURL: baseurl,
-  timeout: 15000,
-});
+// Create axios instance inside boot to use loaded config
+let api: AxiosInstance;
 
 export default defineBoot(({ app }) => {
-  // for use inside Vue files (Options API) through this.$axios and this.$api
+  const { config, loaded } = useAppConfig();
 
+  // Wait for config to be loaded (should be loaded by app boot, but double-check)
+  console.log('[boot] [axios] Config loaded status:', loaded.value);
+  console.log('[boot] [axios] Config apiBaseUrl before:', config.value.apiBaseUrl);
+
+  // Use config.json apiBaseUrl (loaded by app boot), fallback to relative path
+  const baseurl = config.value.apiBaseUrl || '/xsw/api';
+
+  api = axios.create({
+    baseURL: baseurl,
+    timeout: 15000,
+  });
+
+  // for use inside Vue files (Options API) through this.$axios and this.$api
   app.config.globalProperties.$axios = axios;
   // ^ ^ ^ this will allow you to use this.$axios (for Vue Options API form)
   //       so you won't necessarily have to import axios in each vue file
@@ -32,7 +35,17 @@ export default defineBoot(({ app }) => {
   app.config.globalProperties.$api = api;
   // ^ ^ ^ this will allow you to use this.$api (for Vue Options API form)
   //       so you can easily perform requests against your app's API
-  console.log('[boot] baseurl', baseurl);
+  console.log('[boot] [axios] baseURL:', baseurl);
+  console.log('[boot] [axios] Full config:', JSON.stringify(config.value, null, 2));
+
+  // Check if there are localStorage overrides
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const lsKey = 'app.config.overrides';
+    const overrides = window.localStorage.getItem(lsKey);
+    if (overrides) {
+      console.log('[boot] [axios] localStorage overrides found:', overrides);
+    }
+  }
 });
 
 export { api };

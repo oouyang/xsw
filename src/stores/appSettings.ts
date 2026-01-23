@@ -1,6 +1,7 @@
 // src/stores/appSettings.ts
 import { defineStore } from 'pinia';
-import { LocalStorage, Dark } from 'quasar';
+import { Dark } from 'quasar';
+import { useAppConfig } from 'src/services/useAppConfig';
 
 export type SupportedLocale = 'en-US' | 'zh-TW' | 'zh-CN';
 
@@ -10,28 +11,36 @@ export interface AppSettingsState {
   dark: boolean;
 }
 
-const STORAGE_KEY = 'app:settings:v1';
-
+const defaultFontsize = 5;
+const defaultDark = true;
+const defaultLocale = 'zh-TW';
 export const useAppSettings = defineStore('appSettings', {
   state: (): AppSettingsState => ({
-    locale: 'en-US',
-    fontsize: 7,
-    dark: Dark.isActive,
+    locale: defaultLocale,
+    fontsize: defaultFontsize,
+    dark: defaultDark,
   }),
 
   actions: {
     load(): void {
-      const fromLS = LocalStorage.getItem<AppSettingsState>(STORAGE_KEY);
-      if (fromLS) this.$patch(fromLS);
+      // const fromLS = LocalStorage.getItem<AppSettingsState>(STORAGE_KEY);
+      // if (fromLS) this.$patch(fromLS);
+      // Dark.set(this.dark);
+      const { config } = useAppConfig();
+      this.locale = config.value.locale ?? defaultLocale;
+      this.fontsize = Number(config.value.fontsize) || defaultFontsize;
+      this.dark = config.value.dark === 'true';
       Dark.set(this.dark);
     },
 
     save(): void {
-      LocalStorage.set(STORAGE_KEY, {
-        locale: this.locale,
-        fontsize: this.fontsize,
-        dark: this.dark,
-      });
+      // LocalStorage.set(STORAGE_KEY, {
+      //   locale: this.locale,
+      //   fontsize: this.fontsize,
+      //   dark: this.dark,
+      // });
+      const { update } = useAppConfig();
+      update({ locale: this.locale, fontsize: `${this.fontsize}`, dark: `${this.dark}` });
     },
 
     update(p: Partial<AppSettingsState>): void {

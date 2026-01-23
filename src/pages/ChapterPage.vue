@@ -1,56 +1,146 @@
 <!-- src/pages/ChapterPage.vue -->
 <template>
   <q-page class="q-pa-md">
-    <div class="row items-center q-mb-sm">
-      <q-breadcrumbs>
-        <q-breadcrumbs-el :label="config.name" icon="home" to="/" />
-        <q-breadcrumbs-el :label="'📜' + (displayBookName || 'Book')" />
-        <q-breadcrumbs-el :label="$t('nav.chapters')" icon="list" :to="`/book/${info?.book_id}/chapters`" />
-        <q-breadcrumbs-el :label="displayChapterTitle || displayTitle || `${$t('chapter.chapter')} ${chapterNum}`" />
-      </q-breadcrumbs>
-      <q-space />
-      <q-btn flat icon="list" :to="{ name: 'Chapters', params: { bookId } }" :label="$t('nav.chapters')" />
-    </div>
-
     <q-banner v-if="error" class="bg-red-2 text-red-10 q-mb-md">
       <div class="row items-center">
         <div class="col">{{ error }}</div>
-        <q-btn flat color="red-10" :label="$t('common.retry')" icon="refresh" @click="reload" />
+        <q-btn flat color="red-10" :label="$t('common.retry')" icon="refresh" @click="load" />
       </div>
     </q-banner>
 
     <q-card>
+      <q-card-section class="bg-primary text-white">
+        <div class="row items-center">
+          <div class="col">
+            <div class="text-h6">{{ displayChapterTitle || displayTitle }}</div>
+            <div class="text-caption q-mt-xs">
+              第 {{ props.chapterNum }} / {{ book.info?.last_chapter_number || '?' }} 章
+            </div>
+          </div>
+          <div class="col-auto">
+            <q-chip dense size="sm" :color="loading ? 'grey-7' : 'white'" :text-color="loading ? 'white' : 'primary'">
+              {{ loading ? $t('common.loading') : `${content.length} 段` }}
+            </q-chip>
+          </div>
+        </div>
+      </q-card-section>
+
+      <q-separator />
+
+      <!-- Top Navigation -->
+      <q-card-section class="q-py-sm">
+        <div class="row q-gutter-sm justify-center">
+          <q-btn
+            outline
+            color="primary"
+            size="sm"
+            :disable="!book.prevChapter || props.chapterNum <= 1"
+            :to="chapterLink(book.prevChapter?.number??0, book.prevChapter?.title??'')"
+            icon="chevron_left"
+            :label="$t('nav.prevChapter')"
+          >
+            <q-tooltip v-if="book.prevChapter">{{ book.prevChapter.title }}</q-tooltip>
+          </q-btn>
+          <q-btn
+            outline
+            color="secondary"
+            size="sm"
+            :to="`/book/${props.bookId}/chapters`"
+            icon="list"
+            :label="$t('nav.chapterList')"
+          >
+            <q-tooltip>{{ $t('nav.backToChapterList') }}</q-tooltip>
+          </q-btn>
+          <q-btn
+            outline
+            color="primary"
+            size="sm"
+            :disable="!book.nextChapter || Boolean(book.info?.last_chapter_number && props.chapterNum >= book.info.last_chapter_number)"
+            :to="chapterLink(book.nextChapter?.number??0, book.nextChapter?.title??'')"
+            icon-right="chevron_right"
+            :label="$t('nav.nextChapter')"
+          >
+            <q-tooltip v-if="book.nextChapter">{{ book.nextChapter.title }}</q-tooltip>
+          </q-btn>
+        </div>
+      </q-card-section>
+
+      <q-separator />
+
       <q-card-section>
-        <div v-if="loading"><q-skeleton type="text" v-for="i in 8" :key="i" /></div>
+        <div v-if="loading" class="q-pa-lg">
+          <q-skeleton type="text" v-for="i in 8" :key="i" class="q-mb-md" />
+        </div>
         <div
           v-else
-          class="q-pb-lg"
+          class="q-pb-lg chapter-content"
           :class="`text-h${fontsize}`"
           style="white-space: pre-wrap"
         >
-        <p v-for="(value, index) in displayContent" :key="index" class="q-my-xl">{{ value }}</p>
-      </div>
+          <p v-for="(value, index) in displayContent" :key="index" class="q-my-xl">{{ value }}</p>
+        </div>
       </q-card-section>
     </q-card>
 
-    <div class="row q-my-md q-gutter-sm">
-      <q-btn outline :disable="chapterNum <= 1" :to="navPrev" icon="chevron_left" :label="$t('chapter.prev')" />
-      <q-btn outline :to="navNext" icon-right="chevron_right" :label="$t('chapter.next')" />
-      <q-space />
-      <q-toggle v-model="nocache" :label="$t('chapter.bypassCache')" @update:model-value="reload" />
+    <!-- Bottom Navigation -->
+    <div class="row q-my-md q-gutter-sm justify-center">
+      <q-btn
+        outline
+        color="primary"
+        :disable="!book.prevChapter || props.chapterNum <= 1"
+        :to="chapterLink(book.prevChapter?.number??0, book.prevChapter?.title??'')"
+        icon="chevron_left"
+        :label="$t('nav.prevChapter')"
+      >
+        <q-tooltip v-if="book.prevChapter">{{ book.prevChapter.title }}</q-tooltip>
+      </q-btn>
+      <q-btn
+        outline
+        color="secondary"
+        :to="`/book/${props.bookId}/chapters`"
+        icon="list"
+        :label="$t('nav.chapterList')"
+      >
+        <q-tooltip>{{ $t('nav.backToChapterList') }}</q-tooltip>
+      </q-btn>
+      <q-btn
+        outline
+        color="primary"
+        :disable="!book.nextChapter || Boolean(book.info?.last_chapter_number && props.chapterNum >= book.info.last_chapter_number)"
+        :to="chapterLink(book.nextChapter?.number??0, book.nextChapter?.title??'')"
+        icon-right="chevron_right"
+        :label="$t('nav.nextChapter')"
+      >
+        <q-tooltip v-if="book.nextChapter">{{ book.nextChapter.title }}</q-tooltip>
+      </q-btn>
+    </div>
+
+    <!-- Progress indicator -->
+    <div v-if="book.info?.last_chapter_number" class="q-mt-md">
+      <q-linear-progress
+        :value="props.chapterNum / (book.info.last_chapter_number || 1)"
+        color="primary"
+        size="8px"
+        rounded
+      />
+      <div class="text-caption text-center text-grey-7 q-mt-xs">
+        {{ $t('chapter.readingProgress') }}: {{ Math.round((props.chapterNum / (book.info.last_chapter_number || 1)) * 100) }}%
+      </div>
     </div>
   </q-page>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
-import { getChapterContent, getBookInfo, getBookChapters } from 'src/services/bookApi';
+import { useI18n } from 'vue-i18n';
+import { getChapterContent } from 'src/services/bookApi';
 import { useAppConfig } from 'src/services/useAppConfig';
-import type { BookInfo, ChapterRef } from 'src/types/book-api';
 import { nextTick } from 'process';
-import { chapterLink, syncLastChapter } from 'src/services/utils';
+import { chapterLink } from 'src/services/utils';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { useBookStore } from 'src/stores/books';
 
+const { t } = useI18n();
 const { config, update } = useAppConfig();
 const fontsize = computed(() => Number(config.value.fontsize) || 7)
 const { convertIfNeeded } = useTextConversion();
@@ -60,147 +150,121 @@ const title = ref('');
 const content = ref<Array<string>>([]);
 const loading = ref(false);
 const error = ref('');
-const nocache = ref(false);
-const lastChapter = ref<number | null>(null);
-const {bookId, chapterNum, chapterTitle} = props
+// const lastChapterNum = ref<number | null>(null);
 
-const chapterIndex = computed(() => {
-  const index = chapters.value.findIndex(
-    c => c.number === chapterNum && c.title === chapterTitle
-  )
-  return index === -1 ? 0 : index
-})
-const navPrev = computed(() => {
-  const index = Math.max(0, chapterIndex.value - 1);
-  return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
-});
-const navNext = computed(() => {
-  const index = Math.min(chapterIndex.value + 1, chapters.value.length + 1);
-  return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
-});
-const chapters = computed<ChapterRef[]>(() => 
-{
-  const raw = config.value?.chapters ?? '[]'
-  try {
-    return JSON.parse(raw) as ChapterRef[]
-  } catch {
-    return []
-  }
-})
-async function loadAllChapters() {
-  try {
-    const storedchapters = JSON.parse(config.value.chapters||'[]')
+const book = useBookStore();
+// const chapterIndex = computed(() => {
+//   const index = chapters.value.findIndex(
+//     c => c.number === chapterNum && c.title === chapterTitle
+//   )
+//   return index === -1 ? 0 : index
+// })
+// const navPrev = computed(() => {
+//   const index = Math.max(0, chapterIndex.value - 1);
+//   return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
+// });
+// const navNext = computed(() => {
+//   const index = Math.min(chapterIndex.value + 1, chapters.value.length + 1);
+//   return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
+// });
 
-    // Check if cache is outdated by comparing with expected last chapter
-    const cachedLastChapter = storedchapters.length > 0
-      ? storedchapters.reduce((max: number, ch: ChapterRef) => ch.number > max ? ch.number : max, 0)
-      : 0;
-    const expectedLastChapter = lastChapter.value || 0;
-    const isCacheOutdated = cachedLastChapter < expectedLastChapter;
+// const chapters = computed<ChapterRef[]>(() => 
+// {
+//   const raw = config.value?.chapters ?? '[]'
+//   try {
+//     return JSON.parse(raw) as ChapterRef[]
+//   } catch {
+//     return []
+//   }
+// })
+// async function loadAllChapters() {
+//   try {
+//     const storedchapters = JSON.parse(config.value.chapters||'[]')
 
-    // Re-fetch if: bookId changed, no cache, OR cache is outdated/incomplete
-    if (props.bookId !== config.value.bookId || storedchapters.length === 0 || isCacheOutdated) {
-      if (isCacheOutdated) {
-        console.log(
-          `[loadAllChapters] Cache outdated (has ${cachedLastChapter}, expected ${expectedLastChapter}), re-fetching all chapters`
-        );
-      }
+//     // Check if cache is outdated by comparing with expected last chapter
+//     const cachedLastChapter = storedchapters.length > 0
+//       ? storedchapters.reduce((max: number, ch: ChapterRef) => ch.number > max ? ch.number : max, 0)
+//       : 0;
+//     const expectedLastChapter = lastChapterNum.value || 0;
+//     const isCacheOutdated = cachedLastChapter < expectedLastChapter;
 
-      const requests = []
-      for (let i = 0; i < pages.value; i++) {
-        requests.push(
-          getBookChapters(props.bookId, { page: i+1, all: false })
-        )
-      }
-      const results = await Promise.all(requests)
+//     // Re-fetch if: bookId changed, no cache, OR cache is outdated/incomplete
+//     if (props.bookId !== config.value.bookId || storedchapters.length === 0 || isCacheOutdated) {
+//       if (isCacheOutdated) {
+//         console.log(
+//           `[loadAllChapters] Cache outdated (has ${cachedLastChapter}, expected ${expectedLastChapter}), re-fetching all chapters`
+//         );
+//       }
 
-      // 假設每頁回傳 resp.data 或 resp.chapters（依你的 API 命名調整）
+//       const requests = []
+//       for (let i = 0; i < pages.value; i++) {
+//         requests.push(
+//           getBookChapters(props.bookId, { page: i+1, all: false })
+//         )
+//       }
+//       const results = await Promise.all(requests)
 
-      update({bookId: props.bookId});
-      update({chapters: JSON.stringify(results.flatMap(r => r))});
-      update({chapter: JSON.stringify(chapters.value[chapterIndex.value])});
+//       // 假設每頁回傳 resp.data 或 resp.chapters（依你的 API 命名調整）
 
-      console.log(`[loadAllChapters] Fetched ${results.flatMap(r => r).length} chapters across ${pages.value} pages`);
-    } else {
-      console.log(`[loadAllChapters] Using cached chapters (${storedchapters.length} chapters, last: ${cachedLastChapter})`);
-    }
+//       update({bookId: props.bookId});
+//       update({chapters: JSON.stringify(results.flatMap(r => r))});
+//       update({chapter: JSON.stringify(chapters.value[chapterIndex.value])});
+//       // update({chapter: JSON.stringify(chapters.value[chapterIndex.value])});
 
-    // Sync last chapter info with loaded chapters
-    if (info.value && chapters.value.length > 0) {
-      info.value = syncLastChapter(info.value, chapters.value);
-    }
+//       console.log(`[loadAllChapters] Fetched ${results.flatMap(r => r).length} chapters across ${pages.value} pages`);
+//     } else {
+//       console.log(`[loadAllChapters] Using cached chapters (${storedchapters.length} chapters, last: ${cachedLastChapter})`);
+//     }
 
-    console.log('chapters.value[chapterIndex])', chapters.value[chapterIndex.value], chapterNum);
-  } catch (e) {
-    console.error('Failed to load chapters list:', e);
-    throw e; // Re-throw to let caller handle it
-  }
-}
-const info = ref<BookInfo|undefined>(undefined)
-const pages = ref(1)
+//     // Sync last chapter info with loaded chapters
+//     if (info.value && chapters.value.length > 0) {
+//       info.value = syncLastChapter(info.value, chapters.value);
+//     }
+
+//     console.log('chapters.value[chapterIndex])', chapters.value[chapterIndex.value], chapterNum);
+//   } catch (e) {
+//     console.error('Failed to load chapters list:', e);
+//     throw e; // Re-throw to let caller handle it
+//   }
+// }
+// const info = ref<BookInfo|undefined>(undefined)
+// const pages = ref(1)
 
 // Computed properties for CN to TW conversion
-const displayBookName = computed(() => convertIfNeeded(info.value?.name));
 const displayTitle = computed(() => convertIfNeeded(title.value));
-const displayChapterTitle = computed(() => convertIfNeeded(chapterTitle));
+const displayChapterTitle = computed(() => convertIfNeeded(props.chapterTitle));
 const displayContent = computed(() =>
   content.value.map(paragraph => convertIfNeeded(paragraph))
 );
 
+
 async function loadMeta() {
   try {
-    info.value = await getBookInfo(props.bookId);
-    lastChapter.value = info.value.last_chapter_number ?? null;
+    if (!book.info || book.info?.book_id !== props.bookId) {
+      await book.loadInfo(props.bookId);
+    }
+    // lastChapterNum.value = book.info?.last_chapter_number ?? null;
     // Calculate number of pages: divide by page size (20) and round up
-    pages.value = Math.ceil((lastChapter?.value || 1) / 20);
+    // pages.value = Math.ceil((lastChapterNum?.value || 1) / 20);
 
+    // Load all chapters in background (don't await, just start the process)
+    // This will be checked again in load() if needed
     nextTick(() => {
-      void loadAllChapters()
+      if (book.allChapters.length === 0) {
+        void book.loadAllChapters({
+          onProgress: (msg: string) => {
+            console.log('[ChapterPage] Background loading progress:', msg);
+          }
+        });
+      }
     });
 
-    // Sync last chapter in background by loading last page
-    void syncLastPageInBackground();
+    // Note: Backend now automatically syncs last chapter when fetching all chapters
   } catch (e) {
     console.log('e', e);
   }
 }
 
-/**
- * Fetch the last page of chapters in the background to sync last chapter info
- * This ensures book info shows the actual latest chapter, not outdated cached info
- */
-async function syncLastPageInBackground() {
-  try {
-    // Calculate last page number
-    const lastPageNum = Math.ceil((lastChapter.value || 100) / 20);
-
-    console.log(`[ChapterPage] Fetching last page (${lastPageNum}) in background to sync last chapter`);
-    const lastPageChapters = await getBookChapters(props.bookId, {
-      page: lastPageNum,
-      all: false
-    });
-
-    const chaptersArray = Array.isArray(lastPageChapters)
-      ? lastPageChapters
-      : lastPageChapters.chapters;
-
-    if (info.value && chaptersArray && chaptersArray.length > 0) {
-      const oldLastChapter = info.value.last_chapter_number;
-      info.value = syncLastChapter(info.value, chaptersArray);
-
-      if (info.value.last_chapter_number !== oldLastChapter) {
-        console.log(
-          `[ChapterPage] ✅ Synced last chapter: ${oldLastChapter} → ${info.value.last_chapter_number}`
-        );
-        // Update lastChapter ref
-        lastChapter.value = info.value.last_chapter_number ?? null;
-      }
-    }
-  } catch (e) {
-    console.warn('[ChapterPage] Failed to sync last page:', e);
-    // Non-critical error, don't show to user
-  }
-}
 function removeTitleWordsFromContent() {
   const tokens = (title.value ?? '')
     .trim()
@@ -227,58 +291,87 @@ async function load() {
 
   try {
     // Ensure metadata is loaded first
-    if (!info.value) {
+    if (!book.info) {
       console.log('Waiting for metadata to load...');
       await loadMeta();
     }
 
     // Ensure chapters are loaded
-    if (chapters.value.length === 0) {
+    if (book.allChapters.length === 0) {
       console.log('Loading chapters list...');
-      await loadAllChapters();
+      await book.loadAllChapters({
+        onProgress: (msg: string) => {
+          console.log('[ChapterPage] Loading progress:', msg);
+        }
+      });
+      console.log(`[ChapterPage] All chapters loaded: ${book.allChapters.length} chapters`);
+      // await loadAllChapters();
     }
 
-    console.log(`Loading chapter ${props.chapterNum}: ${chapterTitle}`);
-    const data = await getChapterContent(props.bookId, Number(props.chapterNum), nocache.value);
+    console.log(`Loading chapter ${props.chapterNum}: ${props.chapterTitle}`);
+    const data = await getChapterContent(props.bookId, Number(props.chapterNum));
 
     if (!data || !data.text) {
       throw new Error('No content returned from API');
     }
 
-    title.value = data.title || chapterTitle || `${props.chapterNum}`;
+    title.value = data.title || props.chapterTitle || `${props.chapterNum}`;
     content.value = data.text.split(' ');
     removeTitleWordsFromContent()
     content.value = content.value.filter(Boolean)
 
+    // Set the current chapter in the store for prev/next navigation
+    book.setChapter({
+      number: props.chapterNum,
+      title: title.value,
+      url: data.url || ''
+    });
+
     // Update browser title with book name and chapter title
-    if (info.value?.name && title.value) {
-      document.title = `${config.value.name} - ${info.value.name} - ${title.value}`;
+    if (book.info?.name && title.value) {
+      document.title = `${config.value.name} - ${book.info?.name} - ${title.value}`;
     } else if (title.value) {
       document.title = `${config.value.name} - ${title.value}`;
     }
 
-    console.log(`Successfully loaded chapter ${props.chapterNum}`);
+    console.log(`Successfully loaded chapter ${props.chapterNum}, index: ${book.currentChapterIndex}`);
   } catch (e: unknown) {
     let errorMsg = 'Unknown error';
 
     // Extract detailed error information from axios error
-    if (typeof e === 'object' && e !== null && 'response' in e) {
-      const axiosError = e as { response?: { status?: number; statusText?: string; data?: { message?: string; error?: string } } };
-      const status = axiosError.response?.status || 'Unknown';
-      const statusText = axiosError.response?.statusText || '';
-      const serverMsg = axiosError.response?.data?.message || axiosError.response?.data?.error || '';
-      errorMsg = `${status} ${statusText}${serverMsg ? ': ' + serverMsg : ''}`;
+    if (typeof e === 'object' && e !== null) {
+      const axiosError = e as {
+        response?: { status?: number; statusText?: string; data?: { message?: string; error?: string } };
+        message?: string;
+        code?: string;
+      };
+
+      // Check if it's a timeout error
+      if (axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout')) {
+        errorMsg = t('chapter.loadTimeout');
+      } else if ('response' in axiosError && axiosError.response) {
+        const status = axiosError.response?.status || 'Unknown';
+        const statusText = axiosError.response?.statusText || '';
+        const serverMsg = axiosError.response?.data?.message || axiosError.response?.data?.error || '';
+        errorMsg = `${status} ${statusText}${serverMsg ? ': ' + serverMsg : ''}`;
+      } else if (axiosError.message) {
+        errorMsg = axiosError.message;
+      } else {
+        errorMsg = JSON.stringify(e);
+      }
     } else if (e instanceof Error) {
       errorMsg = e.message;
+    } else if (typeof e === 'string') {
+      errorMsg = e;
     } else {
-      errorMsg = String(e);
+      errorMsg = JSON.stringify(e);
     }
 
-    error.value = `Load content failed: ${errorMsg}`;
+    error.value = `${t('chapter.loadContentFailed')}: ${errorMsg}`;
     console.error('Failed to load chapter content:', {
       bookId: props.bookId,
       chapterNum: props.chapterNum,
-      chapterTitle: chapterTitle,
+      chapterTitle: props.chapterTitle,
       error: e,
       response: typeof e === 'object' && e !== null && 'response' in e ? (e as { response?: unknown }).response : undefined,
       responseData: typeof e === 'object' && e !== null && 'response' in e ? (e as { response?: { data?: unknown } }).response?.data : undefined
@@ -287,24 +380,13 @@ async function load() {
     loading.value = false;
   }
 }
-async function reload() {
-  // Force bypass cache on manual retry
-  const originalNocache = nocache.value;
-  nocache.value = true;
-  try {
-    await load();
-  } finally {
-    // Restore original nocache setting after retry
-    nocache.value = originalNocache;
-  }
-}
 
 onMounted(async () => {
   await loadMeta();
   await load();
 
   // Update the current chapter in config for breadcrumbs
-  const currentChapter = chapters.value[chapterIndex.value];
+  const currentChapter = book.allChapters[book.currentChapterIndex??0] //chapters.value[chapterIndex.value];
   if (currentChapter) {
     update({ chapter: JSON.stringify(currentChapter) });
   }
@@ -337,7 +419,7 @@ watch(() => [props.chapterNum, props.chapterTitle], () => {
         // Only update config if this is still the latest request
         if (thisRequest === currentLoadRequest) {
           // Update the current chapter in config for breadcrumbs
-          const currentChapter = chapters.value[chapterIndex.value];
+          const currentChapter = book.allChapters[book.currentChapterIndex??0] //chapters.value[chapterIndex.value];
           if (currentChapter) {
             update({ chapter: JSON.stringify(currentChapter) });
           }
@@ -360,5 +442,25 @@ onBeforeUnmount(() => {
 <style scoped>
 p {
   text-indent: 2em;
+  line-height: 1.8;
+}
+
+.chapter-content {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* Smooth transitions for buttons */
+.q-btn {
+  transition: all 0.2s ease;
+}
+
+.q-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.q-btn:active:not(:disabled) {
+  transform: translateY(0);
 }
 </style>

@@ -24,7 +24,7 @@ RUN  if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
     else \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
-    pip install --no-cache-dir fastapi uvicorn bs4 requests lxml ruff 
+    pip install --no-cache-dir fastapi uvicorn bs4 requests lxml ruff sqlalchemy opencc-python-reimplemented 
     # && \
     # apt-get update && \
     # DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -33,8 +33,13 @@ RUN  if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
 
 COPY . .
 COPY --from=builder /web/dist /app/dist
-ENV BASE_URL=localhost
-RUN ruff check && ruff format && echo $BASE_URL
+ARG BASE_URL
+ENV BASE_URL=$BASE_URL
+ENV DB_PATH=/app/data/xsw_cache.db
+
+# Create data directory for database persistence
+RUN mkdir -p /app/data && \
+    ruff check && ruff format && echo $BASE_URL
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main_optimized:app", "--host", "0.0.0.0", "--port", "8000"]

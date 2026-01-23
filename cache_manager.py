@@ -4,13 +4,14 @@ Hybrid cache manager: Database-first with in-memory TTL cache.
 Strategy: Check memory → Check DB → Fetch from web → Store to DB → Cache in memory
 """
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import threading
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from db_models import Book, Chapter, Category, get_db_session, db_manager
+import db_models
+from db_models import Book, Chapter
 from pydantic import BaseModel
 
 
@@ -100,7 +101,7 @@ class CacheManager:
 
     def _get_session(self) -> Session:
         """Get database session."""
-        return db_manager.get_session()
+        return db_models.db_manager.get_session()
 
     # ===== Book Info Methods =====
 
@@ -174,14 +175,18 @@ class CacheManager:
 
             session.commit()
 
-            # Cache in memory
-            book_info = BookInfo(**info, book_id=book_id)
+            # Cache in memory - merge book_id into info dict to avoid duplicate argument error
+            info_with_id = {**info, "book_id": book_id}
+            book_info = BookInfo(**info_with_id)
             cache_key = f"book:{book_id}"
             self.memory_cache.set(cache_key, book_info)
 
             print(f"[Cache] Stored book {book_id} to DB and memory")
         except SQLAlchemyError as e:
-            session.rollback()
+            try:
+                session.rollback()
+            except Exception:
+                pass  # Ignore rollback errors when no transaction is active
             print(f"[Cache] Error storing book {book_id}: {e}")
         finally:
             session.close()
@@ -274,7 +279,10 @@ class CacheManager:
 
             print(f"[Cache] Stored chapter {book_id}:{chapter_num} to DB and memory")
         except SQLAlchemyError as e:
-            session.rollback()
+            try:
+                session.rollback()
+            except Exception:
+                pass  # Ignore rollback errors when no transaction is active
             print(f"[Cache] Error storing chapter {book_id}:{chapter_num}: {e}")
         finally:
             session.close()
@@ -303,39 +311,70 @@ class CacheManager:
     def store_chapter_refs(self, book_id: str, chapters: List[Dict[str, Any]]) -> None:
         """Store chapter references (metadata only, no content) to database."""
         session = self._get_session()
+        stored_count = 0
+        updated_count = 0
+        skipped_count = 0
+        batch_size = 100  # Commit every 100 chapters for better performance
+        pending_commit = False
+
         try:
-            for ch_data in chapters:
+            for idx, ch_data in enumerate(chapters):
                 chapter_num = ch_data.get("number")
                 if chapter_num is None:
+                    skipped_count += 1
                     continue
 
-                # Check if exists
-                chapter = (
-                    session.query(Chapter)
-                    .filter(Chapter.book_id == book_id, Chapter.chapter_num == chapter_num)
-                    .first()
-                )
-
-                if chapter:
-                    # Update metadata only (don't overwrite text)
-                    chapter.title = ch_data.get("title", chapter.title)
-                    chapter.url = ch_data.get("url", chapter.url)
-                else:
-                    # Create new (no text yet)
-                    chapter = Chapter(
-                        book_id=book_id,
-                        chapter_num=chapter_num,
-                        title=ch_data.get("title"),
-                        url=ch_data.get("url", ""),
-                        text=None,  # Will be filled when content is fetched
+                try:
+                    # Check if exists
+                    chapter = (
+                        session.query(Chapter)
+                        .filter(Chapter.book_id == book_id, Chapter.chapter_num == chapter_num)
+                        .first()
                     )
-                    session.add(chapter)
 
-            session.commit()
-            print(f"[Cache] Stored {len(chapters)} chapter refs for book {book_id}")
-        except SQLAlchemyError as e:
-            session.rollback()
-            print(f"[Cache] Error storing chapter refs for {book_id}: {e}")
+                    if chapter:
+                        # Update metadata only (don't overwrite text if it exists)
+                        chapter.title = ch_data.get("title", chapter.title)
+                        chapter.url = ch_data.get("url", chapter.url)
+                        updated_count += 1
+                        pending_commit = True
+                    else:
+                        # Create new (no text yet)
+                        chapter = Chapter(
+                            book_id=book_id,
+                            chapter_num=chapter_num,
+                            title=ch_data.get("title"),
+                            url=ch_data.get("url", ""),
+                            text=None,  # Will be filled when content is fetched
+                        )
+                        session.add(chapter)
+                        stored_count += 1
+                        pending_commit = True
+
+                except SQLAlchemyError as e:
+                    print(f"[Cache] Warning: Failed to prepare chapter {book_id}:{chapter_num}: {e}")
+                    skipped_count += 1
+                    continue
+
+                # Batch commit every N chapters or at the end
+                if pending_commit and ((idx + 1) % batch_size == 0 or (idx + 1) == len(chapters)):
+                    try:
+                        session.commit()
+                        pending_commit = False
+                    except SQLAlchemyError as e:
+                        try:
+                            session.rollback()
+                        except Exception:
+                            pass
+                        print(f"[Cache] Warning: Failed to commit batch at chapter {idx + 1}: {e}")
+
+            print(f"[Cache] Stored {stored_count} new, updated {updated_count}, skipped {skipped_count} chapter refs for book {book_id}")
+        except Exception as e:
+            print(f"[Cache] Error storing chapter refs for book {book_id}: {e}")
+            try:
+                session.rollback()
+            except Exception:
+                pass
         finally:
             session.close()
 

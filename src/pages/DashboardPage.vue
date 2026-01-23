@@ -50,18 +50,29 @@ const error = ref('');
 const { config } = useAppConfig();
 
 // Convert category names for zh-CN users
-const displayCategories = computed(() =>
-  categories.value.map(cat => ({
+const displayCategories = computed(() => {
+  if (!Array.isArray(categories.value)) {
+    return [];
+  }
+  return categories.value.map(cat => ({
     ...cat,
     name: convertIfNeeded(cat.name)
-  }))
-);
+  }));
+});
 
 async function load() {
   loading.value = true;
   error.value = '';
   try {
-    categories.value = await getCategories();
+    const result = await getCategories();
+    // Ensure we have an array
+    categories.value = Array.isArray(result) ? result : [];
+
+    if (categories.value.length === 0) {
+      error.value = 'No categories found';
+      return;
+    }
+
     // For each category, fetch page 1 and keep top 10
     const promises = categories.value.map(async (cat: Category) => {
       const books = await listBooksInCategory(Number(cat.id), 1);

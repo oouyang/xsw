@@ -1,4 +1,5 @@
 import { is_production } from 'src/services/utils';
+import type { SupportedLocale } from 'src/stores/appSettings';
 import { ref, computed } from 'vue';
 
 export interface AppConfig {
@@ -21,22 +22,26 @@ export interface AppConfig {
   bookId?: string | undefined;
   chapter?: string | undefined;
   chapters?: string | undefined;
+  locale?: SupportedLocale;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
   name: '看小說',
-  apiBaseUrl: '/api/',
+  apiBaseUrl: '/xsw/api', // Use relative path as default fallback
   featureFlags: {
     isLoading: false,
     prefersDark: true,
   },
 
-  theme: 'light', // default UI theme
+  theme: 'dark', // default UI theme
   cacheTimeout: 30 * 60 * 1000, // 30 minutes
 
   clientId: '',
   tenantId: '',
-  fontsize: '7', // default font size
+  fontsize: '5', // default font size
+
+  locale: 'zh-TW',
+  dark: 'true',
 };
 
 // localStorage key
@@ -138,7 +143,7 @@ function toTheme(v: unknown): AppConfig['theme'] {
 }
 
 export function useAppConfig() {
-  async function load(signal: AbortSignal | null = null) {
+  async function load(signal: AbortSignal | null = null, envOverrides?: Partial<AppConfig>) {
     // Prevent duplicate loads
     if (_loaded.value || _loading.value) return;
 
@@ -157,20 +162,31 @@ export function useAppConfig() {
       };
       const fetched: Partial<AppConfig> = { ...fetchedBase };
 
-      // ✅ only add optional props when they’re defined
+      // ✅ only add optional props when they're defined
       assignIfDefined(fetched, 'version', stringOrUndefined(raw.version));
       assignIfDefined(fetched, 'clientId', stringOrUndefined(raw.clientId));
       assignIfDefined(fetched, 'tenantId', stringOrUndefined(raw.tenantId));
       assignIfDefined(fetched, 'aadRedirectUriBase', stringOrUndefined(raw.aadRedirectUriBase));
 
-      const overrides = loadOverridesOnce();
+      const userOverrides = loadOverridesOnce();
 
-      // precedence: DEFAULTS <- fetched <- overrides
-      _config.value = mergeConfig({ ...DEFAULT_CONFIG, ...fetched }, overrides);
+      // Priority: DEFAULTS <- envOverrides <- config.json <- userOverrides
+      // This ensures config.json takes precedence over env vars, but user overrides take precedence over everything
+      let merged = { ...DEFAULT_CONFIG };
+      if (envOverrides) {
+        merged = mergeConfig(merged, envOverrides);
+      }
+      merged = mergeConfig(merged, fetched);
+      _config.value = mergeConfig(merged, userOverrides);
       _loaded.value = true;
     } catch (e) {
-      const overrides = loadOverridesOnce();
-      _config.value = mergeConfig({ ...DEFAULT_CONFIG }, overrides);
+      // Fallback: DEFAULTS <- envOverrides <- userOverrides
+      const userOverrides = loadOverridesOnce();
+      let merged = { ...DEFAULT_CONFIG };
+      if (envOverrides) {
+        merged = mergeConfig(merged, envOverrides);
+      }
+      _config.value = mergeConfig(merged, userOverrides);
       _error.value = e;
       _loaded.value = true;
 
@@ -240,20 +256,38 @@ const {
 export async function initAppConfig() {
   const appConfig = useAppConfig();
 
+  // Migration: Remove old apiBaseUrl from localStorage if no env var is set
+  // This allows config.json to take precedence
+  if (!api_base && isBrowser()) {
+    const currentOverrides = loadOverridesOnce();
+    if (currentOverrides?.apiBaseUrl) {
+      console.log(
+        '[initAppConfig] Removing old apiBaseUrl override to let config.json take precedence:',
+        currentOverrides.apiBaseUrl,
+      );
+      const { ...rest } = currentOverrides;
+      saveOverrides(rest);
+      // Force reload overrides cache
+      _overridesCache = rest;
+    }
+  }
+
   const env = is_production() ? 'production' : 'development';
-  // Build overrides without undefineds
-  const runtimeOverrides: Partial<AppConfig> = {
+  // Build environment overrides (NOT saved to localStorage)
+  // These have lower priority than config.json
+  const envOverrides: Partial<AppConfig> = {
     env, // required value; not undefined
-    apiBaseUrl: stringOrUndefined(api_base) ?? DEFAULT_CONFIG.apiBaseUrl,
   };
-  assignIfDefined(runtimeOverrides, 'hash', stringOrUndefined(hash));
-  assignIfDefined(runtimeOverrides, 'clientId', stringOrUndefined(client_id));
-  assignIfDefined(runtimeOverrides, 'tenantId', stringOrUndefined(tenant_id));
-  assignIfDefined(runtimeOverrides, 'aadRedirectUriBase', stringOrUndefined(base));
 
-  appConfig.update(runtimeOverrides);
+  // Add compile-time environment variables if provided
+  assignIfDefined(envOverrides, 'apiBaseUrl', stringOrUndefined(api_base));
+  assignIfDefined(envOverrides, 'hash', stringOrUndefined(hash));
+  assignIfDefined(envOverrides, 'clientId', stringOrUndefined(client_id));
+  assignIfDefined(envOverrides, 'tenantId', stringOrUndefined(tenant_id));
+  assignIfDefined(envOverrides, 'aadRedirectUriBase', stringOrUndefined(base));
 
-  // Load remote config.json with an AbortController (optional)
+  // Load remote config.json with environment overrides
+  // Priority: DEFAULTS <- envOverrides <- config.json <- userOverrides (localStorage)
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
-  await appConfig.load(controller?.signal ?? null);
+  await appConfig.load(controller?.signal ?? null, envOverrides);
 }
