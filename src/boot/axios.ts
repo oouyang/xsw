@@ -16,7 +16,7 @@ const { config } = useAppConfig();
 // good idea to move this instance creation inside of the
 // "export default () => {}" function below (which runs individually
 // for each client)
-const baseurl = process.env.API_BASE_URL || config.value.apiBaseUrl || '/xsw/api';
+const baseurl = config.value.apiBaseUrl || '/xsw/api'; // || process.env.API_BASE_URL || config.value.apiBaseUrl || '/xsw/api';
 const api = axios.create({
   baseURL: baseurl,
   timeout: 15000,

@@ -1,4 +1,5 @@
 import { is_production } from 'src/services/utils';
+import type { SupportedLocale } from 'src/stores/appSettings';
 import { ref, computed } from 'vue';
 
 export interface AppConfig {
@@ -21,11 +22,12 @@ export interface AppConfig {
   bookId?: string | undefined;
   chapter?: string | undefined;
   chapters?: string | undefined;
+  locale?: SupportedLocale;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
   name: '看小說',
-  apiBaseUrl: '/api/',
+  apiBaseUrl: 'https://boleai02/xsw/api',
   featureFlags: {
     isLoading: false,
     prefersDark: true,
@@ -145,7 +147,7 @@ export function useAppConfig() {
     _loading.value = true;
     _error.value = null;
     try {
-      const res = await fetch('/config.json', { cache: 'no-store', signal });
+      const res = await fetch('/xsw/config.json', { cache: 'no-store', signal });
       if (!res.ok) throw new Error(`Failed to fetch /config.json: ${res.status}`);
       const raw = await res.json();
       const fetchedBase = {

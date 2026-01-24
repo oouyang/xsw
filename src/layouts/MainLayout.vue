@@ -8,14 +8,14 @@
         <q-btn flat @click="showDialog({ component: ConfigCard, position: 'bottom' })" icon="settings" :label="$t('common.settings')">
           <q-tooltip>{{ $t('settings.title') }}</q-tooltip>
         </q-btn>
-        <q-btn v-if="hasChapters" flat round dense icon="menu" @click="drawerRight = !drawerRight">
+        <q-btn v-if="book.allChapters.length" flat round dense icon="menu" @click="drawerRight = !drawerRight">
           <q-tooltip>{{ $t('nav.chapterList') }}</q-tooltip>
         </q-btn>
       </q-toolbar>
     </q-header>
 
       <q-drawer
-        v-if="hasChapters"
+        v-if="book.allChapters.length"
         side="right"
         v-model="drawerRight"
         bordered
@@ -25,12 +25,12 @@
       >
         <q-scroll-area class="fit">
           <div class="q-pa-sm">
-            <div v-for="c in chapters" :key="c.title">
+            <div v-for="(c,index) in book.allChapters" :key="c.title">
               <q-btn dense 
                       flat :to="chapterLink(c.number, c.title)"
-                      :disable="c.number === chapter.number"
+                      :disable="index === book.getChapterIndex"
                       class="chapter-btn"
-                      :class="{ current: c.number === chapter.number }"
+                      :class="{ current: index === book.getChapterIndex }"
                       >{{ c.title }}</q-btn>
             </div>
           </div>
@@ -71,16 +71,17 @@
 </template>
 <script setup lang="ts">
 import { useAppConfig } from 'src/services/useAppConfig';
-import type { ChapterRef } from 'src/types/book-api';
 import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue';
 import { chapterLink, isDarkActive, scrollToWindow } from 'src/services/utils';
 import { showDialog } from 'src/services/utils';
 import ConfigCard from 'src/components/ConfigCard.vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useBookStore } from 'src/stores/books';
 
-const { config, update } = useAppConfig();
+const { update } = useAppConfig();
 const route = useRoute()
 const router = useRouter()
+const book = useBookStore()
 
 const showScrollTo = ref({top: false, bottom: false, right: false, left: false,
   topleft: false, topright: false, bottomleft: false, bottomright: false
@@ -130,17 +131,17 @@ const url = process.env.API_BASE_URL;
 console.log('url', url);
 
 const drawerRight = ref(false)
-const chapter = computed<ChapterRef>(() => JSON.parse(config.value.chapter || '{"number": "1"}'))
-const chapters = computed<ChapterRef[]>(() => 
-{
-  const raw = config.value?.chapters ?? '[]'
-  try {
-    return JSON.parse(raw) as ChapterRef[]
-  } catch {
-    return []
-  }
-})
-const hasChapters = computed(() => chapters.value.length > 0);
+// const chapter = computed<ChapterRef>(() => JSON.parse(config.value.chapter || '{"number": "1"}'))
+// const chapters = computed<ChapterRef[]>(() => 
+// {
+//   const raw = config.value?.chapters ?? '[]'
+//   try {
+//     return JSON.parse(raw) as ChapterRef[]
+//   } catch {
+//     return []
+//   }
+// })
+// const hasChapters = computed(() => chapters.value.length > 0);
 
 // Scroll to current chapter in drawer when drawer opens
 watch(drawerRight, async (open) => {
@@ -158,26 +159,26 @@ watch(drawerRight, async (open) => {
 })
 
 // Scroll to current chapter when chapter changes (while drawer is open)
-watch(chapter, async () => {
-  // Only scroll if drawer is open
-  if (!drawerRight.value) return
+// watch(chapter, async () => {
+//   // Only scroll if drawer is open
+//   if (!drawerRight.value) return
 
-  await nextTick()
+//   await nextTick()
 
-  const el = document.querySelector('.chapter-btn.current')
-  if (el) {
-    el.scrollIntoView({
-      behavior: 'smooth',
-      block: 'center'
-    })
-  }
-})
+//   const el = document.querySelector('.chapter-btn.current')
+//   if (el) {
+//     el.scrollIntoView({
+//       behavior: 'smooth',
+//       block: 'center'
+//     })
+//   }
+// })
 
 // Update config.chapter immediately when route changes to Chapter page
 watch(() => route.params, (params) => {
   if (route.name === 'Chapter' && params.chapterNum && params.chapterTitle) {
     // Skip if chapters not loaded yet
-    if (chapters.value.length === 0) {
+    if (book.allChapters.length === 0) {
       console.log('[MainLayout] Skipping chapter update - chapters not loaded yet')
       return
     }
@@ -186,7 +187,7 @@ watch(() => route.params, (params) => {
     const chapterTitle = String(params.chapterTitle)
 
     // Find the matching chapter in the chapters list (with type-safe comparison)
-    const matchingChapter = chapters.value.find(
+    const matchingChapter = book.allChapters.find(
       c => Number(c.number) === chapterNum && String(c.title) === chapterTitle
     )
 
@@ -218,37 +219,37 @@ watch(() => route.params, (params) => {
 //   }
 // }
 
-const total = computed(() => chapters.value.length)
-const chapterIndex = computed(() => {
-  const index = chapters.value.findIndex(
-    c => Number(c.number) === Number(chapter.value.number) && String(c.title) === String(chapter.value.title)
-  )
-  console.log('[MainLayout] chapter index:', index, 'for chapter:', chapter.value.number, chapter.value.title);
-  return index === -1 ? 0 : index
-})
+// const total = computed(() => chapters.value.length)
+// const chapterIndex = computed(() => {
+//   const index = chapters.value.findIndex(
+//     c => Number(c.number) === Number(chapter.value.number) && String(c.title) === String(chapter.value.title)
+//   )
+//   console.log('[MainLayout] chapter index:', index, 'for chapter:', chapter.value.number, chapter.value.title);
+//   return index === -1 ? 0 : index
+// })
 
 const navPrev = computed(() => {
-  if (!chapter.value || total.value === 0) return null
-  const prevIndex = chapterIndex.value - 1
-  if (prevIndex < 0) return null
-  const prevChapter = chapters.value[prevIndex]
-  if (!prevChapter) return null
-  return chapterLink(prevChapter.number, prevChapter.title)
+  // if (!chapter.value || total.value === 0) return null
+  // const prevIndex = chapterIndex.value - 1
+  // if (prevIndex < 0) return null
+  // const prevChapter = chapters.value[prevIndex]
+  // if (!prevChapter) return null
+  return chapterLink(book.prevChapter?.number || 0, book.prevChapter?.title || '')
 })
 
 const navNext = computed(() => {
-  if (!chapter.value || total.value === 0) return null
-  const nextIndex = chapterIndex.value + 1
-  if (nextIndex >= total.value) return null
-  const nextChapter = chapters.value[nextIndex]
-  if (!nextChapter) return null
-  return chapterLink(nextChapter.number, nextChapter.title)
+  // if (!chapter.value || total.value === 0) return null
+  // const nextIndex = chapterIndex.value + 1
+  // if (nextIndex >= total.value) return null
+  // const nextChapter = chapters.value[nextIndex]
+  // if (!nextChapter) return null
+  return chapterLink(book.nextChapter?.number || 0, book.nextChapter?.title ||'')
 })
 
 function nav(pos: 'next' | 'prev') {
   console.log('[MainLayout] nav called:', pos)
-  console.log('[MainLayout] current chapter:', chapter.value)
-  console.log('[MainLayout] chapterIndex:', chapterIndex.value)
+  console.log('[MainLayout] current chapter:', book.allChapters[book.getChapterIndex])
+  console.log('[MainLayout] chapterIndex:', book.getChapterIndex)
   console.log('[MainLayout] navNext:', navNext.value)
   console.log('[MainLayout] navPrev:', navPrev.value)
 

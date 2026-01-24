@@ -5,8 +5,8 @@
       <q-breadcrumbs>
         <q-breadcrumbs-el :label="config.name" icon="home" to="/" />
         <q-breadcrumbs-el :label="'📜' + displayBookName || 'Book'" />
-        <q-breadcrumbs-el label="目錄"  :to="`/book/${info?.book_id}/chapters`" />
-        <q-breadcrumbs-el :label="`${page}`" />
+        <q-breadcrumbs-el label="目錄"  :to="`/book/${book.info?.book_id}/chapters`" />
+        <q-breadcrumbs-el :label="`${book.page}`" />
       </q-breadcrumbs>
       <q-space />
       <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" label="🏛️" />
@@ -26,9 +26,9 @@
 
     <div class="row justify-center q-my-lg">
       <q-pagination
-        v-model="page"
-        :max="maxPages"
-        @update:model-value="loadChapters"
+        v-model="book.page"
+        :max="book.maxPages"
+        @update:model-value="p => switchPage(p)"
         color="primary"
         max-pages="12"
       />
@@ -52,9 +52,9 @@
 
     <div class="row justify-center q-my-lg">
       <q-pagination
-        v-model="page"
-        :max="maxPages"
-        @update:model-value="loadChapters"
+        v-model="book.page"
+        :max="book.maxPages"
+        @update:model-value="p => switchPage(p)"
         color="primary"
         max-pages="12"
       />
@@ -63,97 +63,127 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue';
-import type { BookInfo, ChapterRef, Chapters } from 'src/types/book-api';
+import { ref, onMounted, computed } from 'vue';
+import type { ChapterRef, Chapters } from 'src/types/book-api';
 import { getBookInfo, getBookChapters } from 'src/services/bookApi';
-import { useQuasar, useMeta } from 'quasar';
+import { useMeta } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { chapterLink, dedupeBy, normalizeNum, toArr, syncLastChapter } from 'src/services/utils';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { useBookStore } from 'src/stores/books';
+import { nextTick } from 'vue';
 
-const { config, update } = useAppConfig();
+
+const { config, 
+  // update 
+} = useAppConfig();
 const { convertIfNeeded } = useTextConversion();
+const book = useBookStore();
 
-const $q = useQuasar();
+
+// const $q = useQuasar();
 const route = useRoute();
 const router = useRouter();
 
 const props = defineProps<{ bookId: string }>();
-const info = ref<BookInfo | null>(null);
+// const info = ref<BookInfo | null>(null);
 const chapters = ref<Chapters>({} as Chapters);
-const page = ref(Number(config.value?.page) || 1);
-const maxPages = ref(50);
+// const page = ref(Number(config.value?.page) || 1);
+// const maxPages = ref(50);
 const error = ref('');
 
 // Computed properties for CN to TW conversion
-const displayBookName = computed(() => convertIfNeeded(info.value?.name));
-const displayAuthor = computed(() => convertIfNeeded(info.value?.author));
-const displayType = computed(() => convertIfNeeded(info.value?.type));
-const displayStatus = computed(() => convertIfNeeded(info.value?.status));
-const displayUpdate = computed(() => convertIfNeeded(info.value?.update));
-const displayLastChapterTitle = computed(() => convertIfNeeded(info.value?.last_chapter_title));
+const displayBookName = computed(() => convertIfNeeded(book.info?.name));
+const displayAuthor = computed(() => convertIfNeeded(book.info?.author));
+const displayType = computed(() => convertIfNeeded(book.info?.type));
+const displayStatus = computed(() => convertIfNeeded(book.info?.status));
+const displayUpdate = computed(() => convertIfNeeded(book.info?.update));
+const displayLastChapterTitle = computed(() => convertIfNeeded(book.info?.last_chapter_title));
 const displayChapters = computed(() =>
-  chapters.value.chapters?.map(c => ({
-    ...c,
-    title: convertIfNeeded(c.title)
-  })) || []
+
+  // chapters.value.chapters?.map(c => ({
+  //   ...c,
+  //   title: convertIfNeeded(c.title)
+  // })) || []
+  book.pageChapters
 );
 
-useMeta({ title: `${config.value.name} ${info.value?.name ? ' >> '+ info.value?.name : ''}` });
+useMeta({ title: `${config.value.name} ${book.info?.name ? ' >> '+ book.info?.name : ''}` });
 
-watch(page, (newVal, oldVal) => {
-  // Validate page number
-  if (!Number.isFinite(newVal) || newVal < 1) {
-    console.warn(`[ChaptersPage] Invalid page value: ${newVal}, resetting to 1`);
-    page.value = 1;
-    return;
-  }
-
-  // $q.localStorage.setItem('chapterPage', page.value)
-  update({page: `${page.value}`});
+function switchPage(page: number) {
+  book.setPage(page);
+  console.log(`page changed to ${page} -`, book.page);
   void router.replace({
     query: {
       ...route.query,
-      page: newVal
+      page
     }
   })
-  console.log(`page changed from ${oldVal} to ${newVal} -`, $q.localStorage.getItem('chapterPage'));
-});
+}
+// watch(page, (newVal, oldVal) => {
+//   // Validate page number
+//   if (!Number.isFinite(newVal) || newVal < 1) {
+//     console.warn(`[ChaptersPage] Invalid page value: ${newVal}, resetting to 1`);
+//     page.value = 1;
+//     return;
+//   }
+
+//   // $q.localStorage.setItem('chapterPage', page.value)
+  // update({page: `${page.value}`});
+//   book.setPage(newVal);
+//   void router.replace({
+//     query: {
+//       ...route.query,
+//       page: newVal
+//     }
+//   })
+//   console.log(`page changed from ${oldVal} to ${newVal} -`, $q.localStorage.getItem('chapterPage'));
+// });
 
 
-watch(
-  () => props.bookId,
-  async (newBookId, oldBookId) => {
-    if (newBookId !== oldBookId) {
-      // Reset page for a new book
-      page.value = 1;
-      // $q.localStorage.set('bookId', newBookId);
-      // $q.localStorage.set('chapterPage', 1);
-        update({page: `${page.value}`, bookId: newBookId});
+// watch(
+//   () => props.bookId,
+//   async (newBookId, oldBookId) => {
+//     if (newBookId !== oldBookId) {
+//       // Reset page for a new book
+//       page.value = 1;
+//       // $q.localStorage.set('bookId', newBookId);
+//       // $q.localStorage.set('chapterPage', 1);
+//         // update({page: `${page.value}`, bookId: newBookId});
+//         book.setBookId(newBookId);
+//         book.setPage(1);
+        
 
-      // ✅ Properly handle the promise
-      try {
-        await loadChapters(); // reload chapters for page 1
-      } catch (err) {
-        console.error('Failed to reload chapters:', err);
-        error.value = 'Load chapters failed';
-      }
-    }
-  }
-);
+//       // ✅ Properly handle the promise
+//       try {
+//         await loadChapters(); // reload chapters for page 1
+//       } catch (err) {
+//         console.error('Failed to reload chapters:', err);
+//         error.value = 'Load chapters failed';
+//       }
+//     }
+//   }
+// );
 
 
 async function loadInfo() {
   try {
-    info.value = await getBookInfo(props.bookId);
+    const data = await getBookInfo(props.bookId);
+    // info.value = data;
+    book.setInfo(data);
     // Calculate max pages: divide last chapter by page size (20) and round up
-    maxPages.value = Math.ceil((info.value?.last_chapter_number || 100) / 20);
+    // maxPages.value = Math.ceil((info.value?.last_chapter_number || 100) / 20);
+    // book.setMaxPages(Math.ceil((book.info?.last_chapter_number || 100) / 20));
 
     // Update browser title with book name
-    if (info.value?.name) {
-      document.title = `${config.value.name} - ${info.value.name}`;
+    if (book.info?.name) {
+      document.title = `${config.value.name} - ${book.info.name}`;
     }
+
+    // if (info.value?.name) {
+    //   document.title = `${config.value.name} - ${info.value.name}`;
+    // }
 
     // Fetch last page to sync actual last chapter (non-blocking)
     void syncLastPageInBackground();
@@ -173,7 +203,7 @@ async function loadInfo() {
 async function syncLastPageInBackground() {
   try {
     // Skip if we're already on the last page - no need for background fetch
-    if (page.value === maxPages.value) {
+    if (book.page === book.maxPages) {
       console.log('[syncLastPage] Already on last page, skipping background sync');
       return;
     }
@@ -189,22 +219,23 @@ async function syncLastPageInBackground() {
 
     // Only trust cache if it's substantial AND has MORE chapters than book info
     // Never reduce based on cache - only increase
-    if (cachedChapters.length > 50 && info.value) {
+    if (cachedChapters.length > 50 && book.info) {
       const cachedLastChapter = cachedChapters.reduce((max, ch) =>
         ch.number > max ? ch.number : max, 0
       );
-      const bookInfoLastChapter = info.value.last_chapter_number || 0;
+      const bookInfoLastChapter = book.info.last_chapter_number || 0;
 
       // ONLY sync if cache has MORE than book info (upward sync only)
       if (cachedLastChapter > bookInfoLastChapter) {
-        const oldLastChapter = info.value.last_chapter_number;
-        info.value = syncLastChapter(info.value, cachedChapters);
+        const oldLastChapter = book.info.last_chapter_number;
+        book.setBookId(props.bookId);
+        // info.value = syncLastChapter(book.info, cachedChapters);
 
         console.log(
-          `[syncLastPage] ✅ Synced UP from cache (${cachedChapters.length} chapters, last: ${cachedLastChapter}): ${oldLastChapter} → ${info.value.last_chapter_number}`
+          `[syncLastPage] ✅ Synced UP from cache (${cachedChapters.length} chapters, last: ${cachedLastChapter}): ${oldLastChapter} → ${book.info.last_chapter_number}`
         );
         // Update maxPages based on actual chapter count
-        maxPages.value = Math.ceil(info.value.last_chapter_number! / 20);
+        // maxPages.value = Math.ceil(book.info?.last_chapter_number! / 20);
         return;
       } else if (cachedLastChapter < bookInfoLastChapter) {
         console.log(
@@ -219,9 +250,9 @@ async function syncLastPageInBackground() {
     }
 
     // Fetch last page from API to verify
-    console.log(`[syncLastPage] Fetching last page (${maxPages.value}) in background`);
+    console.log(`[syncLastPage] Fetching last page (${book.maxPages}) in background`);
     const lastPageChapters = await getBookChapters(props.bookId, {
-      page: maxPages.value,
+      page: book.maxPages,
       all: false
     });
 
@@ -229,8 +260,8 @@ async function syncLastPageInBackground() {
       ? lastPageChapters
       : lastPageChapters.chapters;
 
-    if (info.value && chaptersArray && chaptersArray.length > 0) {
-      const oldLastChapter = info.value.last_chapter_number ?? 1;
+    if (book.info && chaptersArray && chaptersArray.length > 0) {
+      const oldLastChapter = book.info?.last_chapter_number ?? 1;
       const fetchedLastChapter = chaptersArray.reduce((max, ch) =>
         ch.number > max ? ch.number : max, 0
       );
@@ -238,17 +269,18 @@ async function syncLastPageInBackground() {
       // ONLY sync if fetched data has MORE chapters (upward sync only)
       // Never reduce based on a single page - book info might be more accurate
       if (fetchedLastChapter > oldLastChapter) {
-        info.value = syncLastChapter(info.value, chaptersArray);
+        book.setInfo(syncLastChapter(book.info, chaptersArray));
+        // info.value = syncLastChapter(book.info, chaptersArray);
 
         console.log(
-          `[syncLastPage] ✅ Synced UP from API (page ${maxPages.value}): ${oldLastChapter} → ${info.value.last_chapter_number}`
+          `[syncLastPage] ✅ Synced UP from API (page ${book.maxPages}): ${oldLastChapter} → ${book.info?.last_chapter_number}`
         );
         // Recalculate maxPages based on actual last chapter
-        maxPages.value = Math.ceil((info.value.last_chapter_number || 100) / 20);
-        console.log(`[syncLastPage] Updated maxPages: ${maxPages.value}`);
+        // maxPages.value = Math.ceil((book.info?.last_chapter_number || 100) / 20);
+        console.log(`[syncLastPage] Updated maxPages: ${book.maxPages}`);
       } else if (fetchedLastChapter < oldLastChapter) {
         console.log(
-          `[syncLastPage] ⚠️ Fetched page ${maxPages.value} has less chapters (${fetchedLastChapter}) than expected (${oldLastChapter}), NOT syncing down. Book info might be more accurate.`
+          `[syncLastPage] ⚠️ Fetched page ${book.maxPages} has less chapters (${fetchedLastChapter}) than expected (${oldLastChapter}), NOT syncing down. Book info might be more accurate.`
         );
         // Don't sync down - might be incomplete data or wrong page
       } else {
@@ -258,7 +290,7 @@ async function syncLastPageInBackground() {
       // Empty last page - this is expected if book info's last chapter is accurate
       // Don't backtrack and sync down - just log it
       console.log(
-        `[syncLastPage] Page ${maxPages.value} is empty, which is expected if book info (${info.value?.last_chapter_number}) is accurate. Not syncing.`
+        `[syncLastPage] Page ${book.maxPages} is empty, which is expected if book info (${book.info?.last_chapter_number}) is accurate. Not syncing.`
       );
       // The book info is the source of truth here - don't reduce it
     }
@@ -275,7 +307,7 @@ async function loadChapters() {
   }
   try {
     error.value = '';
-    const resp = await getBookChapters(props.bookId, { page: page.value, all: false });
+    const resp = await getBookChapters(props.bookId, { page: book.page, all: false });
     chapters.value.chapters = Array.isArray(resp) ? resp : resp.chapters;
     // maxPages.value = Array.isArray(resp) ? 50 : chapters.value.totalPages||0;
     console.log('chapters is array ', Array.isArray(resp));
@@ -304,7 +336,7 @@ async function loadPageChapters() {
     error.value = ''
 
     const currentBookId = String(props.bookId ?? '')
-    const currentPage = Number(page.value ?? 1)
+    const currentPage = Number(book.page ?? 1)
 
     if (!currentBookId) {
       error.value = 'Missing bookId'
@@ -345,7 +377,7 @@ async function loadPageChapters() {
         // chapters.value.chapters = slice
         // Optional: compute totalPages if you want pagination UI to be stable from cache
         const totalPages =
-          Math.ceil(cachedChapters.length / pageSize) || chapters.value.totalPages || 0
+          Math.ceil(cachedChapters.length / pageSize) ||  0
         // chapters.value.totalPages = totalPages
 
         // ⚠️ DO NOT sync with cached data here!
@@ -400,6 +432,9 @@ async function loadPageChapters() {
     //   bookId: currentBookId,
     //   chapters: JSON.stringify(nextCache)
     // })
+            book.setBookId(currentBookId);
+      // book.replaceChapters(nextCache);
+
 
     console.log('[loadPageChapters] fetched page', {
       page: currentPage,
@@ -422,18 +457,28 @@ onMounted(async () => {
 
   if (route.query.page) {
     const queryPage = Number(route.query.page);
-    page.value = Number.isFinite(queryPage) && queryPage > 0 ? queryPage : 1;
+    const currentPage = Number.isFinite(queryPage) && queryPage > 0 ? queryPage : 1;
+    // page.value = Number.isFinite(queryPage) && queryPage > 0 ? queryPage : 1;
     // $q.localStorage.set('bookId', props.bookId);
     // $q.localStorage.set('chapterPage', page.value);
-    update({page: `${page.value}`, bookId: props.bookId});
+    // update({page: `${page.value}`, bookId: props.bookId});
+    book.setBookId(props.bookId);
+    book.setPage(currentPage);
+
   } else if (storedBookId === props.bookId && Number.isFinite(storedPage) && storedPage > 0) {
-    page.value = storedPage;
+    // page.value = storedPage;
+    book.setPage(storedPage);
   } else {
-    page.value = 1;
+    // page.value = 1;
+    book.setPage(1);
     // $q.localStorage.set('bookId', props.bookId);
     // $q.localStorage.set('chapterPage', page.value);
-    update({page: `${page.value}`, bookId: props.bookId});
+    // update({page: `${page.value}`, bookId: props.bookId});
   }
+
+  await nextTick(() => {
+    void book.loadAllChapters();
+  });
 
   await loadInfo();
   await loadChapters();

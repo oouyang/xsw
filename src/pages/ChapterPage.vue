@@ -5,7 +5,7 @@
       <q-breadcrumbs>
         <q-breadcrumbs-el :label="config.name" icon="home" to="/" />
         <q-breadcrumbs-el :label="'📜' + (displayBookName || 'Book')" />
-        <q-breadcrumbs-el :label="$t('nav.chapters')" icon="list" :to="`/book/${info?.book_id}/chapters`" />
+        <q-breadcrumbs-el :label="$t('nav.chapters')" icon="list" :to="`/book/${book.info?.book_id}/chapters`" />
         <q-breadcrumbs-el :label="displayChapterTitle || displayTitle || `${$t('chapter.chapter')} ${chapterNum}`" />
       </q-breadcrumbs>
       <q-space />
@@ -34,8 +34,8 @@
     </q-card>
 
     <div class="row q-my-md q-gutter-sm">
-      <q-btn outline :disable="chapterNum <= 1" :to="navPrev" icon="chevron_left" :label="$t('chapter.prev')" />
-      <q-btn outline :to="navNext" icon-right="chevron_right" :label="$t('chapter.next')" />
+      <q-btn outline :disable="chapterNum <= 1" :to="chapterLink(book.prevChapter?.number??0, book.prevChapter?.title??'')" icon="chevron_left" :label="$t('chapter.prev')" />
+      <q-btn outline :to="chapterLink(book.nextChapter?.number??0, book.nextChapter?.title??'')" icon-right="chevron_right" :label="$t('chapter.next')" />
       <q-space />
       <q-toggle v-model="nocache" :label="$t('chapter.bypassCache')" @update:model-value="reload" />
     </div>
@@ -44,12 +44,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
-import { getChapterContent, getBookInfo, getBookChapters } from 'src/services/bookApi';
+import { getChapterContent, getBookChapters } from 'src/services/bookApi';
 import { useAppConfig } from 'src/services/useAppConfig';
-import type { BookInfo, ChapterRef } from 'src/types/book-api';
 import { nextTick } from 'process';
 import { chapterLink, syncLastChapter } from 'src/services/utils';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { useBookStore } from 'src/stores/books';
 
 const { config, update } = useAppConfig();
 const fontsize = computed(() => Number(config.value.fontsize) || 7)
@@ -61,101 +61,107 @@ const content = ref<Array<string>>([]);
 const loading = ref(false);
 const error = ref('');
 const nocache = ref(false);
-const lastChapter = ref<number | null>(null);
+// const lastChapterNum = ref<number | null>(null);
 const {bookId, chapterNum, chapterTitle} = props
 
-const chapterIndex = computed(() => {
-  const index = chapters.value.findIndex(
-    c => c.number === chapterNum && c.title === chapterTitle
-  )
-  return index === -1 ? 0 : index
-})
-const navPrev = computed(() => {
-  const index = Math.max(0, chapterIndex.value - 1);
-  return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
-});
-const navNext = computed(() => {
-  const index = Math.min(chapterIndex.value + 1, chapters.value.length + 1);
-  return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
-});
-const chapters = computed<ChapterRef[]>(() => 
-{
-  const raw = config.value?.chapters ?? '[]'
-  try {
-    return JSON.parse(raw) as ChapterRef[]
-  } catch {
-    return []
-  }
-})
-async function loadAllChapters() {
-  try {
-    const storedchapters = JSON.parse(config.value.chapters||'[]')
+const book = useBookStore();
+// const chapterIndex = computed(() => {
+//   const index = chapters.value.findIndex(
+//     c => c.number === chapterNum && c.title === chapterTitle
+//   )
+//   return index === -1 ? 0 : index
+// })
+// const navPrev = computed(() => {
+//   const index = Math.max(0, chapterIndex.value - 1);
+//   return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
+// });
+// const navNext = computed(() => {
+//   const index = Math.min(chapterIndex.value + 1, chapters.value.length + 1);
+//   return chapterLink(chapters.value[index]?.number || 1, chapters.value[index]?.title || '')
+// });
 
-    // Check if cache is outdated by comparing with expected last chapter
-    const cachedLastChapter = storedchapters.length > 0
-      ? storedchapters.reduce((max: number, ch: ChapterRef) => ch.number > max ? ch.number : max, 0)
-      : 0;
-    const expectedLastChapter = lastChapter.value || 0;
-    const isCacheOutdated = cachedLastChapter < expectedLastChapter;
+// const chapters = computed<ChapterRef[]>(() => 
+// {
+//   const raw = config.value?.chapters ?? '[]'
+//   try {
+//     return JSON.parse(raw) as ChapterRef[]
+//   } catch {
+//     return []
+//   }
+// })
+// async function loadAllChapters() {
+//   try {
+//     const storedchapters = JSON.parse(config.value.chapters||'[]')
 
-    // Re-fetch if: bookId changed, no cache, OR cache is outdated/incomplete
-    if (props.bookId !== config.value.bookId || storedchapters.length === 0 || isCacheOutdated) {
-      if (isCacheOutdated) {
-        console.log(
-          `[loadAllChapters] Cache outdated (has ${cachedLastChapter}, expected ${expectedLastChapter}), re-fetching all chapters`
-        );
-      }
+//     // Check if cache is outdated by comparing with expected last chapter
+//     const cachedLastChapter = storedchapters.length > 0
+//       ? storedchapters.reduce((max: number, ch: ChapterRef) => ch.number > max ? ch.number : max, 0)
+//       : 0;
+//     const expectedLastChapter = lastChapterNum.value || 0;
+//     const isCacheOutdated = cachedLastChapter < expectedLastChapter;
 
-      const requests = []
-      for (let i = 0; i < pages.value; i++) {
-        requests.push(
-          getBookChapters(props.bookId, { page: i+1, all: false })
-        )
-      }
-      const results = await Promise.all(requests)
+//     // Re-fetch if: bookId changed, no cache, OR cache is outdated/incomplete
+//     if (props.bookId !== config.value.bookId || storedchapters.length === 0 || isCacheOutdated) {
+//       if (isCacheOutdated) {
+//         console.log(
+//           `[loadAllChapters] Cache outdated (has ${cachedLastChapter}, expected ${expectedLastChapter}), re-fetching all chapters`
+//         );
+//       }
 
-      // 假設每頁回傳 resp.data 或 resp.chapters（依你的 API 命名調整）
+//       const requests = []
+//       for (let i = 0; i < pages.value; i++) {
+//         requests.push(
+//           getBookChapters(props.bookId, { page: i+1, all: false })
+//         )
+//       }
+//       const results = await Promise.all(requests)
 
-      update({bookId: props.bookId});
-      update({chapters: JSON.stringify(results.flatMap(r => r))});
-      update({chapter: JSON.stringify(chapters.value[chapterIndex.value])});
+//       // 假設每頁回傳 resp.data 或 resp.chapters（依你的 API 命名調整）
 
-      console.log(`[loadAllChapters] Fetched ${results.flatMap(r => r).length} chapters across ${pages.value} pages`);
-    } else {
-      console.log(`[loadAllChapters] Using cached chapters (${storedchapters.length} chapters, last: ${cachedLastChapter})`);
-    }
+//       update({bookId: props.bookId});
+//       update({chapters: JSON.stringify(results.flatMap(r => r))});
+//       update({chapter: JSON.stringify(chapters.value[chapterIndex.value])});
+//       // update({chapter: JSON.stringify(chapters.value[chapterIndex.value])});
 
-    // Sync last chapter info with loaded chapters
-    if (info.value && chapters.value.length > 0) {
-      info.value = syncLastChapter(info.value, chapters.value);
-    }
+//       console.log(`[loadAllChapters] Fetched ${results.flatMap(r => r).length} chapters across ${pages.value} pages`);
+//     } else {
+//       console.log(`[loadAllChapters] Using cached chapters (${storedchapters.length} chapters, last: ${cachedLastChapter})`);
+//     }
 
-    console.log('chapters.value[chapterIndex])', chapters.value[chapterIndex.value], chapterNum);
-  } catch (e) {
-    console.error('Failed to load chapters list:', e);
-    throw e; // Re-throw to let caller handle it
-  }
-}
-const info = ref<BookInfo|undefined>(undefined)
-const pages = ref(1)
+//     // Sync last chapter info with loaded chapters
+//     if (info.value && chapters.value.length > 0) {
+//       info.value = syncLastChapter(info.value, chapters.value);
+//     }
+
+//     console.log('chapters.value[chapterIndex])', chapters.value[chapterIndex.value], chapterNum);
+//   } catch (e) {
+//     console.error('Failed to load chapters list:', e);
+//     throw e; // Re-throw to let caller handle it
+//   }
+// }
+// const info = ref<BookInfo|undefined>(undefined)
+// const pages = ref(1)
 
 // Computed properties for CN to TW conversion
-const displayBookName = computed(() => convertIfNeeded(info.value?.name));
+const displayBookName = computed(() => convertIfNeeded(book.info?.name));
 const displayTitle = computed(() => convertIfNeeded(title.value));
 const displayChapterTitle = computed(() => convertIfNeeded(chapterTitle));
 const displayContent = computed(() =>
   content.value.map(paragraph => convertIfNeeded(paragraph))
 );
 
+
 async function loadMeta() {
   try {
-    info.value = await getBookInfo(props.bookId);
-    lastChapter.value = info.value.last_chapter_number ?? null;
+    if (!book.info || book.info?.book_id !== props.bookId) {
+      await book.loadInfo(props.bookId);
+    }
+    // lastChapterNum.value = book.info?.last_chapter_number ?? null;
     // Calculate number of pages: divide by page size (20) and round up
-    pages.value = Math.ceil((lastChapter?.value || 1) / 20);
+    // pages.value = Math.ceil((lastChapterNum?.value || 1) / 20);
 
     nextTick(() => {
-      void loadAllChapters()
+      void book.loadAllChapters();
     });
 
     // Sync last chapter in background by loading last page
@@ -172,11 +178,12 @@ async function loadMeta() {
 async function syncLastPageInBackground() {
   try {
     // Calculate last page number
-    const lastPageNum = Math.ceil((lastChapter.value || 100) / 20);
+    // const lastPageNum = Math.ceil((lastChapterNum.value || 100) / 20);
 
-    console.log(`[ChapterPage] Fetching last page (${lastPageNum}) in background to sync last chapter`);
+
+    console.log(`[ChapterPage] Fetching last page (${book.maxPages}) in background to sync last chapter`);
     const lastPageChapters = await getBookChapters(props.bookId, {
-      page: lastPageNum,
+      page: book.maxPages,
       all: false
     });
 
@@ -184,16 +191,16 @@ async function syncLastPageInBackground() {
       ? lastPageChapters
       : lastPageChapters.chapters;
 
-    if (info.value && chaptersArray && chaptersArray.length > 0) {
-      const oldLastChapter = info.value.last_chapter_number;
-      info.value = syncLastChapter(info.value, chaptersArray);
+    if (book.info && chaptersArray && chaptersArray.length > 0) {
+      const oldLastChapter = book.info?.last_chapter_number;
+      syncLastChapter(book.info, chaptersArray);
 
-      if (info.value.last_chapter_number !== oldLastChapter) {
+      if (book.info?.last_chapter_number !== oldLastChapter) {
         console.log(
-          `[ChapterPage] ✅ Synced last chapter: ${oldLastChapter} → ${info.value.last_chapter_number}`
+          `[ChapterPage] ✅ Synced last chapter: ${oldLastChapter} → ${book.info?.last_chapter_number}`
         );
         // Update lastChapter ref
-        lastChapter.value = info.value.last_chapter_number ?? null;
+        // lastChapterNum.value = book.info?.last_chapter_number ?? null;
       }
     }
   } catch (e) {
@@ -227,15 +234,16 @@ async function load() {
 
   try {
     // Ensure metadata is loaded first
-    if (!info.value) {
+    if (!book.info) {
       console.log('Waiting for metadata to load...');
       await loadMeta();
     }
 
     // Ensure chapters are loaded
-    if (chapters.value.length === 0) {
+    if (book.allChapters.length === 0) {
       console.log('Loading chapters list...');
-      await loadAllChapters();
+      void book.loadAllChapters();
+      // await loadAllChapters();
     }
 
     console.log(`Loading chapter ${props.chapterNum}: ${chapterTitle}`);
@@ -251,8 +259,8 @@ async function load() {
     content.value = content.value.filter(Boolean)
 
     // Update browser title with book name and chapter title
-    if (info.value?.name && title.value) {
-      document.title = `${config.value.name} - ${info.value.name} - ${title.value}`;
+    if (book.info?.name && title.value) {
+      document.title = `${config.value.name} - ${book.info?.name} - ${title.value}`;
     } else if (title.value) {
       document.title = `${config.value.name} - ${title.value}`;
     }
@@ -304,7 +312,7 @@ onMounted(async () => {
   await load();
 
   // Update the current chapter in config for breadcrumbs
-  const currentChapter = chapters.value[chapterIndex.value];
+  const currentChapter = book.allChapters[book.currentChapterIndex??0] //chapters.value[chapterIndex.value];
   if (currentChapter) {
     update({ chapter: JSON.stringify(currentChapter) });
   }
@@ -337,7 +345,7 @@ watch(() => [props.chapterNum, props.chapterTitle], () => {
         // Only update config if this is still the latest request
         if (thisRequest === currentLoadRequest) {
           // Update the current chapter in config for breadcrumbs
-          const currentChapter = chapters.value[chapterIndex.value];
+          const currentChapter = book.allChapters[book.currentChapterIndex??0] //chapters.value[chapterIndex.value];
           if (currentChapter) {
             update({ chapter: JSON.stringify(currentChapter) });
           }

@@ -2,11 +2,12 @@
 """
 Database utilities for migration, warmup, and maintenance.
 """
+
 from typing import Dict, Any
-from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
-from db_models import Book, Chapter, Category, db_manager
+import db_models
+from db_models import Book, Chapter, Category
 
 
 def migrate_from_old_cache(old_cache_data: Dict[str, Any]) -> None:
@@ -14,10 +15,10 @@ def migrate_from_old_cache(old_cache_data: Dict[str, Any]) -> None:
     Migrate data from old TTL cache format to database.
     Useful for one-time migration if you have existing cached data.
     """
-    if not db_manager:
+    if not db_models.db_manager:
         raise RuntimeError("Database not initialized")
 
-    session = db_manager.get_session()
+    session = db_models.db_manager.get_session()
     try:
         migrated_books = 0
         migrated_chapters = 0
@@ -44,7 +45,9 @@ def migrate_from_old_cache(old_cache_data: Dict[str, Any]) -> None:
                 book_id, chapter_num = key
                 existing = (
                     session.query(Chapter)
-                    .filter(Chapter.book_id == book_id, Chapter.chapter_num == chapter_num)
+                    .filter(
+                        Chapter.book_id == book_id, Chapter.chapter_num == chapter_num
+                    )
                     .first()
                 )
                 if not existing:
@@ -59,9 +62,14 @@ def migrate_from_old_cache(old_cache_data: Dict[str, Any]) -> None:
                     migrated_chapters += 1
 
         session.commit()
-        print(f"[Migration] Migrated {migrated_books} books, {migrated_chapters} chapters")
+        print(
+            f"[Migration] Migrated {migrated_books} books, {migrated_chapters} chapters"
+        )
     except Exception as e:
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:
+            pass  # Ignore rollback errors when no transaction is active
         print(f"[Migration] Error: {e}")
         raise
     finally:
@@ -73,18 +81,16 @@ def cleanup_stale_data(days: int = 30) -> Dict[str, int]:
     Remove chapters that haven't been updated in X days.
     Useful for cleaning up old content that might be outdated.
     """
-    if not db_manager:
+    if not db_models.db_manager:
         raise RuntimeError("Database not initialized")
 
-    session = db_manager.get_session()
+    session = db_models.db_manager.get_session()
     try:
         cutoff_date = datetime.utcnow() - timedelta(days=days)
 
         # Find stale chapters
         stale_chapters = (
-            session.query(Chapter)
-            .filter(Chapter.updated_at < cutoff_date)
-            .all()
+            session.query(Chapter).filter(Chapter.updated_at < cutoff_date).all()
         )
 
         deleted_count = len(stale_chapters)
@@ -96,7 +102,10 @@ def cleanup_stale_data(days: int = 30) -> Dict[str, int]:
 
         return {"deleted_chapters": deleted_count, "cutoff_days": days}
     except Exception as e:
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:
+            pass  # Ignore rollback errors when no transaction is active
         print(f"[Cleanup] Error: {e}")
         raise
     finally:
@@ -105,10 +114,10 @@ def cleanup_stale_data(days: int = 30) -> Dict[str, int]:
 
 def get_database_stats() -> Dict[str, Any]:
     """Get detailed database statistics."""
-    if not db_manager:
+    if not db_models.db_manager:
         raise RuntimeError("Database not initialized")
 
-    session = db_manager.get_session()
+    session = db_models.db_manager.get_session()
     try:
         stats = {
             "total_books": session.query(Book).count(),
@@ -125,14 +134,10 @@ def get_database_stats() -> Dict[str, Any]:
         # Recent activity
         recent_cutoff = datetime.utcnow() - timedelta(hours=24)
         stats["books_scraped_24h"] = (
-            session.query(Book)
-            .filter(Book.last_scraped_at >= recent_cutoff)
-            .count()
+            session.query(Book).filter(Book.last_scraped_at >= recent_cutoff).count()
         )
         stats["chapters_fetched_24h"] = (
-            session.query(Chapter)
-            .filter(Chapter.fetched_at >= recent_cutoff)
-            .count()
+            session.query(Chapter).filter(Chapter.fetched_at >= recent_cutoff).count()
         )
 
         # Top authors by book count
@@ -161,10 +166,10 @@ def vacuum_database() -> None:
     Optimize SQLite database by running VACUUM.
     This rebuilds the database file, reclaiming unused space.
     """
-    if not db_manager:
+    if not db_models.db_manager:
         raise RuntimeError("Database not initialized")
 
-    with db_manager.engine.connect() as conn:
+    with db_models.db_manager.engine.connect() as conn:
         conn.execute("VACUUM")
         print("[Maintenance] Database vacuumed successfully")
 
@@ -174,10 +179,10 @@ def export_book_to_json(book_id: str, include_content: bool = True) -> Dict[str,
     Export a single book with all its chapters to JSON format.
     Useful for backup or analysis.
     """
-    if not db_manager:
+    if not db_models.db_manager:
         raise RuntimeError("Database not initialized")
 
-    session = db_manager.get_session()
+    session = db_models.db_manager.get_session()
     try:
         book = session.query(Book).filter(Book.id == book_id).first()
         if not book:

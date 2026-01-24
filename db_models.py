@@ -3,6 +3,7 @@
 SQLAlchemy models for persistent storage of scraped novel data.
 Database-first caching strategy: check DB before fetching from web.
 """
+
 from datetime import datetime
 from sqlalchemy import (
     create_engine,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
 )
+from sqlalchemy.sql import text as sql_text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -43,10 +45,14 @@ class Book(Base):
     # Metadata
     source_url = Column(String, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    last_scraped_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_scraped_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     # Relationships
-    chapters = relationship("Chapter", back_populates="book", cascade="all, delete-orphan")
+    chapters = relationship(
+        "Chapter", back_populates="book", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Book(id='{self.id}', name='{self.name}', author='{self.author}')>"
@@ -118,6 +124,33 @@ class ScrapeLog(Base):
     )
 
 
+class PendingSyncQueue(Base):
+    """Queue of books that need to be synced at midnight."""
+
+    __tablename__ = "pending_sync_queue"
+
+    book_id = Column(String, primary_key=True)
+    added_at = Column(DateTime, default=datetime.utcnow)
+    accessed_at = Column(
+        DateTime, default=datetime.utcnow
+    )  # Last time book was accessed
+    access_count = Column(Integer, default=1)  # Number of times accessed
+    priority = Column(Integer, default=0)  # Higher = sync sooner
+    last_sync_attempt = Column(DateTime, nullable=True)  # Last time sync was attempted
+    sync_status = Column(
+        String, default="pending"
+    )  # pending, syncing, completed, failed
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_sync_status", "sync_status"),
+        Index("idx_accessed_at", "accessed_at"),
+    )
+
+    def __repr__(self):
+        return f"<PendingSyncQueue(book_id='{self.book_id}', status='{self.sync_status}', access_count={self.access_count})>"
+
+
 # Database connection and session management
 class DatabaseManager:
     """Manages SQLite database connection and session lifecycle."""
@@ -132,19 +165,17 @@ class DatabaseManager:
             db_url,
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
-            echo=os.getenv("DB_ECHO", "false").lower() == "true"
+            echo=os.getenv("DB_ECHO", "false").lower() == "true",
         )
 
         self.SessionLocal = sessionmaker(
-            autocommit=False,
-            autoflush=False,
-            bind=self.engine
+            autocommit=False, autoflush=False, bind=self.engine
         )
 
     def create_tables(self):
         """Create all tables in the database."""
         Base.metadata.create_all(bind=self.engine)
-        print(f"[DB] Tables created successfully")
+        print("[DB] Tables created successfully")
 
     def get_session(self):
         """Get a new database session."""
@@ -153,9 +184,10 @@ class DatabaseManager:
     def enable_wal_mode(self):
         """Enable WAL (Write-Ahead Logging) mode for better concurrency."""
         with self.engine.connect() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
+            conn.execute(sql_text("PRAGMA journal_mode=WAL"))
+            conn.execute(sql_text("PRAGMA synchronous=NORMAL"))
+            conn.execute(sql_text("PRAGMA cache_size=-64000"))  # 64MB cache
+            conn.commit()
             print("[DB] WAL mode enabled")
 
 

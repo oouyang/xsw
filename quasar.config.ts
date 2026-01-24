@@ -13,7 +13,7 @@ export default defineConfig((ctx) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: ['i18n', 'axios', 'appSettings', 'addressbar-color'],
+    boot: ['app', 'i18n', 'axios', 'appSettings', 'books', 'addressbar-color'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.scss'],
@@ -52,7 +52,7 @@ export default defineConfig((ctx) => {
 
       // rebuildCache: true, // rebuilds Vite/linter/etc cache on startup
 
-      publicPath: '/xsw',
+      // publicPath: '/xsw',
       // analyze: true,
       // env: {},
       // rawDefine: {}
@@ -102,55 +102,55 @@ export default defineConfig((ctx) => {
       open: false, // opens browser window automatically
       proxy: {
         '/xsw/api': {
-          target: '${apiBaseUrl}', // base backend URL
+          target: `${apiBaseUrl}/xsw/api`, // base backend URL with path
           changeOrigin: true,
           secure: false, // skip SSL verification if needed
-          // rewrite: (path) => path.replace(/^\/api/, '/api') // keep /api prefix
+          rewrite: (path) => path.replace(/^\/xsw\/api/, ''), // Strip /xsw/api prefix, add it to target
         },
 
         // '/spa': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/docs': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/openapi.json': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/health': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/categories': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/books': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/search': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/by-url': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
         // '/admin': {
         //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
+        //   //   target: 'http://bolpbmadev1.example.com:8080',
         //   changeOrigin: true,
         // },
       },

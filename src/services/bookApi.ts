@@ -34,7 +34,7 @@ export async function getBookChapters(
   bookId: string,
   opts?: { page?: number; all?: boolean; max_pages?: number; nocache?: boolean },
 ): Promise<Chapters> {
-  const { data } = await api.get(`/books/${bookId}/chapters`, { params: { ...opts, www: true } });
+  const { data } = await api.get(`/books/${bookId}/chapters`, { params: { ...opts, www: false } });
   return data;
 }
 export async function getChapterContent(

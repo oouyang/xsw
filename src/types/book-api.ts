@@ -8,6 +8,7 @@ export interface BookSummary {
   bookname: string;
   author: string;
   lastchapter: string;
+  lasturl: string;
   intro: string;
   bookurl: string;
   book_id?: string | null;
