@@ -102,10 +102,10 @@ export default defineConfig((ctx) => {
       open: false, // opens browser window automatically
       proxy: {
         '/xsw/api': {
-          target: `${apiBaseUrl}/xsw/api`, // base backend URL with path
+          target: apiBaseUrl, // Base backend URL (no path)
           changeOrigin: true,
-          secure: false, // skip SSL verification if needed
-          rewrite: (path) => path.replace(/^\/xsw\/api/, ''), // Strip /xsw/api prefix, add it to target
+          secure: false, // Skip SSL verification if needed
+          // No rewrite needed - path /xsw/api will be forwarded as-is
         },
 
         // '/spa': {

@@ -2,9 +2,10 @@ import { defineBoot } from '#q-app/wrappers';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { setDark } from 'src/services/utils';
 
-const { initAppConfig, config } = useAppConfig();
-
 export default defineBoot(async ({ app }) => {
+  // Initialize config inside boot function, not at module level
+  const { initAppConfig, config } = useAppConfig();
+
   await initAppConfig();
   app.config.globalProperties.$cfg = config; // Running in production mode
   console.log(

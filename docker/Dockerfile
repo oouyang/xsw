@@ -24,7 +24,7 @@ RUN  if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
     else \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
-    pip install --no-cache-dir fastapi uvicorn bs4 requests lxml ruff sqlalchemy opencc-python-reimplemented 
+    pip install --no-cache-dir fastapi uvicorn bs4 requests lxml ruff sqlalchemy opencc-python-reimplemented python-multipart
     # && \
     # apt-get update && \
     # DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

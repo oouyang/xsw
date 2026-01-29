@@ -381,10 +381,30 @@ class CacheManager:
     # ===== Utility Methods =====
 
     def invalidate_book(self, book_id: str) -> None:
-        """Invalidate all cache entries for a book."""
+        """Invalidate all cache entries for a book (memory only, DB remains)."""
         self.memory_cache.invalidate(f"book:{book_id}")
         # Also invalidate chapter memory cache (DB remains as source of truth)
         print(f"[Cache] Invalidated memory cache for book {book_id}")
+
+    def delete_book_chapters(self, book_id: str) -> int:
+        """Delete all chapter records for a book from database."""
+        session = self._get_session()
+        try:
+            deleted_count = session.query(Chapter).filter(Chapter.book_id == book_id).delete()
+            session.commit()
+            # Also clear memory cache
+            self.memory_cache.invalidate(f"book:{book_id}")
+            print(f"[Cache] Deleted {deleted_count} chapters from DB for book {book_id}")
+            return deleted_count
+        except SQLAlchemyError as e:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            print(f"[Cache] Error deleting chapters for book {book_id}: {e}")
+            return 0
+        finally:
+            session.close()
 
     def clear_memory_cache(self) -> None:
         """Clear all in-memory cache."""

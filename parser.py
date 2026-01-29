@@ -275,14 +275,16 @@ def chapter_title_to_number(title: str) -> Optional[int]:
 
 
 def fetch_chapters_from_liebiao(
-    html_content: str, page_url: str, canonical_base: str
+    html_content: str, page_url: str, canonical_base: str, start_index: int = 1
 ) -> List[Dict[str, Any]]:
     """
     Parse chapter list from either <div class="liebiao"> or <ul class="chapter">.
     - `page_url` should be the book HOME URL (so relative hrefs join correctly)
     - Rewrites final URLs to the canonical site host to avoid mixing m/www
+    - Uses sequential indices starting from `start_index` instead of parsing chapter numbers from titles
+    - This prevents gaps when chapter titles don't contain numbers
 
-    Returns: [{ 'url': absolute_url, 'title': str, 'number': int|None }, ...]
+    Returns: [{ 'url': absolute_url, 'title': str, 'number': int }, ...]
     """
     from urllib.parse import urlparse, urlunparse
 
@@ -298,6 +300,7 @@ def fetch_chapters_from_liebiao(
     out: List[Dict[str, Any]] = []
     # For div.liebiao, chapters are in ul li a; for ul.chapter, chapters are direct li a
     selector = "ul li a[href]" if container.name == "div" else "li a[href]"
+    chapter_index = start_index
     for a_tag in container.select(selector):
         href = a_tag["href"]
         title = a_tag.get_text(strip=True)
@@ -313,9 +316,10 @@ def fetch_chapters_from_liebiao(
             {
                 "url": absolute,
                 "title": title,
-                "number": chapter_title_to_number(title),
+                "number": chapter_index,  # Use sequential index instead of parsed number
             }
         )
+        chapter_index += 1
     return out
 
 

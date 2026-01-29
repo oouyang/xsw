@@ -18,9 +18,14 @@
             </div>
           </div>
           <div class="col-auto">
-            <q-chip dense size="sm" :color="loading ? 'grey-7' : 'white'" :text-color="loading ? 'white' : 'primary'">
-              {{ loading ? $t('common.loading') : `${content.length} 段` }}
-            </q-chip>
+            <div class="column items-end q-gutter-xs">
+              <q-chip dense size="sm" :color="loading ? 'grey-7' : 'white'" :text-color="loading ? 'white' : 'primary'">
+                {{ loading ? $t('common.loading') : `${content.length} 段` }}
+              </q-chip>
+              <q-chip v-if="!loading && estimatedReadingTimeText" dense size="sm" color="white" text-color="primary" icon="schedule">
+                {{ estimatedReadingTimeText }}
+              </q-chip>
+            </div>
           </div>
         </div>
       </q-card-section>
@@ -236,6 +241,35 @@ const displayChapterTitle = computed(() => convertIfNeeded(props.chapterTitle));
 const displayContent = computed(() =>
   content.value.map(paragraph => convertIfNeeded(paragraph))
 );
+
+// Estimated reading time calculation
+// Average reading speed: 350 Chinese characters per minute
+const READING_SPEED_CPM = 350;
+
+const estimatedReadingTimeText = computed(() => {
+  if (loading.value || content.value.length === 0) {
+    return '';
+  }
+
+  // Count total characters in content
+  const totalChars = content.value.reduce((sum, paragraph) => sum + paragraph.length, 0);
+
+  // Calculate reading time in minutes
+  const totalMinutes = Math.ceil(totalChars / READING_SPEED_CPM);
+
+  if (totalMinutes === 0) {
+    return '';
+  }
+
+  // Format based on duration
+  if (totalMinutes < 60) {
+    return t('chapter.readingTimeMinutes', { minutes: totalMinutes });
+  } else {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return t('chapter.readingTimeHoursMinutes', { hours, minutes });
+  }
+});
 
 
 async function loadMeta() {

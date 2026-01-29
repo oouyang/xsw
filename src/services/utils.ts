@@ -5,15 +5,25 @@ export function is_production() {
   return process.env.NODE_ENV === 'production';
 }
 
-const { update, config } = useAppConfig();
+/**
+ * Lazy getter for appConfig instance.
+ * Avoids module-level initialization, ensuring config is accessed only when needed.
+ */
+function getAppConfig() {
+  return useAppConfig();
+}
+
 export function toggleAppFeatures(key: string) {
+  const { update, config } = getAppConfig();
   update({ featureFlags: { [key]: !config.value.featureFlags[key] } });
 }
 
 export function getCurrentUser() {
+  const { config } = getAppConfig();
   const me = JSON.parse(config.value?.me || '{"name":"unknown"}');
   return me && typeof me.name === 'string' ? me.name : 'unknown';
 }
+
 export function alog(...args: unknown[]): void {
   const timestamp = `[${new Date().toLocaleString()}] :`;
   console.log(timestamp, ...args);
@@ -35,16 +45,19 @@ interface ScrollToOptionsEx {
   offsetX?: number; // 目標 X 方向額外位移（正=向右）
   offsetY?: number; // 目標 Y 方向額外位移（正=向下）
 }
+
 export function showDialog(opts: QDialogOptions) {
   return Dialog.create(opts);
 }
 
 export function toggleDark() {
+  const { update } = getAppConfig();
   Dark.toggle();
   update({ dark: `${Dark.isActive}` });
 }
 
 export function setDark(val: boolean | 'auto') {
+  const { update } = getAppConfig();
   Dark.set(val);
   update({ dark: `${Dark.isActive}` });
 }
@@ -54,6 +67,7 @@ export function isDarkActive() {
 }
 
 export function chapterLink(num: number, title: string) {
+  const { config } = getAppConfig();
   return {
     name: 'Chapter',
     params: { bookId: config.value.bookId, chapterNum: Number(num), chapterTitle: title },

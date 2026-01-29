@@ -14,6 +14,16 @@ export interface AppSettingsState {
 const defaultFontsize = 5;
 const defaultDark = true;
 const defaultLocale = 'zh-TW';
+
+// Cache appConfig instance to avoid creating multiple instances
+let appConfigInstance: ReturnType<typeof useAppConfig> | null = null;
+function getAppConfigInstance() {
+  if (!appConfigInstance) {
+    appConfigInstance = useAppConfig();
+  }
+  return appConfigInstance;
+}
+
 export const useAppSettings = defineStore('appSettings', {
   state: (): AppSettingsState => ({
     locale: defaultLocale,
@@ -26,7 +36,7 @@ export const useAppSettings = defineStore('appSettings', {
       // const fromLS = LocalStorage.getItem<AppSettingsState>(STORAGE_KEY);
       // if (fromLS) this.$patch(fromLS);
       // Dark.set(this.dark);
-      const { config } = useAppConfig();
+      const { config } = getAppConfigInstance();
       this.locale = config.value.locale ?? defaultLocale;
       this.fontsize = Number(config.value.fontsize) || defaultFontsize;
       this.dark = config.value.dark === 'true';
@@ -39,7 +49,7 @@ export const useAppSettings = defineStore('appSettings', {
       //   fontsize: this.fontsize,
       //   dark: this.dark,
       // });
-      const { update } = useAppConfig();
+      const { update } = getAppConfigInstance();
       update({ locale: this.locale, fontsize: `${this.fontsize}`, dark: `${this.dark}` });
     },
 
