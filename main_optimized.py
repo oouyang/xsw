@@ -12,6 +12,7 @@ from db_models import init_database
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import requests
@@ -215,10 +216,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount SPA
+# Mount SPA static files (assets, js, css)
 spa_dir = "/app/dist/spa"
+spa_index_html = os.path.join(spa_dir, "index.html") if os.path.exists(spa_dir) else None
+
 if os.path.exists(spa_dir):
-    app.mount("/spa", StaticFiles(directory=spa_dir), name="spa")
+    # Mount static assets under /spa (js, css, fonts, etc.)
+    app.mount("/spa", StaticFiles(directory=spa_dir, html=False), name="spa")
 
 
 # -----------------------
@@ -1598,6 +1602,39 @@ def content_by_url(chapter_url: str = Query(...)):
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# -----------------------
+# SPA Serving Routes
+# -----------------------
+@app.get("/")
+async def serve_spa_root():
+    """Serve Vue SPA at root path."""
+    if spa_index_html and os.path.exists(spa_index_html):
+        return FileResponse(spa_index_html)
+    return {"message": "Vue SPA not found. Build the frontend first with 'npm run build'"}
+
+
+@app.get("/{full_path:path}")
+async def serve_spa_catch_all(full_path: str):
+    """
+    Catch-all route for Vue Router client-side routing.
+    Serves index.html for any non-API routes to enable SPA navigation.
+
+    API routes are under /xsw/api/* (handled by root_path)
+    Static assets are under /spa/* (handled by StaticFiles mount)
+    All other routes serve the Vue SPA index.html
+    """
+    # Don't intercept API routes (with root_path /xsw/api)
+    if full_path.startswith("xsw/api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+
+    # Serve index.html for all SPA routes
+    if spa_index_html and os.path.exists(spa_index_html):
+        return FileResponse(spa_index_html)
+
+    raise HTTPException(status_code=404, detail="Vue SPA not built. Run 'npm run build' first.")
+
 
 if __name__ == "__main__":
     import uvicorn
