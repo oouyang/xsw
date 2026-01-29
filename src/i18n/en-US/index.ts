@@ -80,6 +80,9 @@ export default {
     phase2LoadingWarning: 'Background loading incomplete (first 3 pages available)',
     phase2LoadingComplete: 'All chapters loaded',
     loadingProgress: 'Loaded {loaded} / {total} chapters',
+    estimatedReadingTime: 'Estimated Reading Time',
+    readingTimeMinutes: '{minutes} min',
+    readingTimeHoursMinutes: '{hours} hr {minutes} min',
   },
 
   // Categories
@@ -142,10 +145,17 @@ export default {
     logout: 'Logout',
     username: 'Username',
     password: 'Password',
+    email: 'Email',
     loginButton: 'Login',
     loginSuccess: 'Admin logged in successfully',
     loginFailed: 'Invalid credentials',
     logoutSuccess: 'Admin logged out',
+
+    // Google Sign-In
+    googleSignIn: 'Sign in with Google',
+    googleSignInFailed: 'Google Sign-In failed',
+    passwordLogin: 'Password Login (Fallback)',
+    passwordLoginCaption: 'For emergency access only',
 
     // Change Password
     changePassword: 'Change Password',

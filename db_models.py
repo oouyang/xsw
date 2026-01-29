@@ -167,6 +167,35 @@ class SmtpSettings(Base):
         return f"<SmtpSettings(host='{self.smtp_host}', port={self.smtp_port}, user='{self.smtp_user}')>"
 
 
+class AdminUser(Base):
+    """Admin user authentication records for Google OAuth and password authentication."""
+
+    __tablename__ = "admin_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, unique=True, nullable=False)
+    auth_method = Column(String, nullable=False)  # 'google' or 'password'
+    password_hash = Column(String, nullable=True)  # Only for password auth
+    is_active = Column(Boolean, default=True)
+
+    # Google OAuth specific
+    google_id = Column(String, unique=True, nullable=True)
+    picture_url = Column(String, nullable=True)
+
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_admin_email", "email"),
+        Index("idx_admin_google_id", "google_id"),
+    )
+
+    def __repr__(self):
+        return f"<AdminUser(email='{self.email}', auth_method='{self.auth_method}', is_active={self.is_active})>"
+
+
 # Database connection and session management
 class DatabaseManager:
     """Manages SQLite database connection and session lifecycle."""

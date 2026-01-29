@@ -1,6 +1,7 @@
 import { defineBoot } from '#q-app/wrappers';
 import axios, { type AxiosInstance } from 'axios';
 import { useAppConfig } from 'src/services/useAppConfig';
+import { authService } from 'src/services/authService';
 
 declare module 'vue' {
   interface ComponentCustomProperties {
@@ -26,6 +27,34 @@ export default defineBoot(({ app }) => {
     baseURL: baseurl,
     timeout: 15000,
   });
+
+  // Add request interceptor for authentication
+  api.interceptors.request.use(
+    (config) => {
+      // Add auth header for admin and auth endpoints
+      if (config.url?.startsWith('/admin') || config.url?.startsWith('/auth')) {
+        const authHeaders = authService.getAuthHeaders();
+        if (authHeaders.Authorization) {
+          config.headers.Authorization = authHeaders.Authorization;
+        }
+      }
+      return config;
+    },
+    (error) => Promise.reject(error)
+  );
+
+  // Add response interceptor for auth errors
+  api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error.response?.status === 401) {
+        // Token expired or invalid - clear auth
+        authService.clearAuth();
+        console.log('[axios] 401 Unauthorized - Auth cleared');
+      }
+      return Promise.reject(error);
+    }
+  );
 
   // for use inside Vue files (Options API) through this.$axios and this.$api
   app.config.globalProperties.$axios = axios;

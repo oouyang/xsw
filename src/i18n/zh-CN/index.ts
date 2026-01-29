@@ -80,6 +80,9 @@ export default {
     phase2LoadingWarning: '后台加载未完成（前3页已可用）',
     phase2LoadingComplete: '所有章节已加载完成',
     loadingProgress: '已加载 {loaded} / {total} 章',
+    estimatedReadingTime: '预计阅读时间',
+    readingTimeMinutes: '{minutes} 分钟',
+    readingTimeHoursMinutes: '{hours} 小时 {minutes} 分钟',
   },
 
   // 分类
@@ -142,10 +145,17 @@ export default {
     logout: '退出登录',
     username: '用户名',
     password: '密码',
+    email: '电子邮件',
     loginButton: '登录',
     loginSuccess: '登录成功',
     loginFailed: '用户名或密码错误',
     logoutSuccess: '已退出登录',
+
+    // Google Sign-In
+    googleSignIn: '使用 Google 登录',
+    googleSignInFailed: 'Google 登录失败',
+    passwordLogin: '密码登录（备用）',
+    passwordLoginCaption: '仅供紧急访问使用',
 
     // 修改密码
     changePassword: '修改密码',

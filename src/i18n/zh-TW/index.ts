@@ -80,6 +80,9 @@ export default {
     phase2LoadingWarning: '背景載入未完成（前3頁已可用）',
     phase2LoadingComplete: '所有章節已載入完成',
     loadingProgress: '已載入 {loaded} / {total} 章',
+    estimatedReadingTime: '預計閱讀時間',
+    readingTimeMinutes: '{minutes} 分鐘',
+    readingTimeHoursMinutes: '{hours} 小時 {minutes} 分鐘',
   },
 
   // 分類
@@ -142,10 +145,17 @@ export default {
     logout: '登出',
     username: '使用者名稱',
     password: '密碼',
+    email: '電子郵件',
     loginButton: '登入',
     loginSuccess: '登入成功',
     loginFailed: '使用者名稱或密碼錯誤',
     logoutSuccess: '已登出',
+
+    // Google Sign-In
+    googleSignIn: '使用 Google 登入',
+    googleSignInFailed: 'Google 登入失敗',
+    passwordLogin: '密碼登入（備用）',
+    passwordLoginCaption: '僅供緊急存取使用',
 
     // 修改密碼
     changePassword: '修改密碼',

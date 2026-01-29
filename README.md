@@ -57,6 +57,7 @@ A full-stack Chinese novel reading platform with intelligent caching, background
 
 ### Administrative Tools
 - 👑 **Admin Panel** - Comprehensive management interface
+- 🔐 **Secure Authentication** - Google OAuth2 SSO with JWT tokens and email whitelist
 - 📧 **SMTP Email System** - Send emails with file attachments
 - 📁 **File Upload** - Upload files to static folder
 - 📈 **Statistics Dashboard** - Cache, jobs, and sync metrics
@@ -240,6 +241,68 @@ The API includes progressive rate limiting to prevent abuse. Requests are tracke
 
 **Admin Endpoint:**
 - `GET /admin/rate-limit/stats` - View active clients and request counts
+
+---
+
+## 🔐 Admin Authentication
+
+The admin panel is secured with JWT-based authentication supporting two methods:
+
+### Authentication Methods
+
+1. **Google OAuth2 SSO** (Primary, Recommended)
+   - Secure authentication via Google accounts
+   - No password management required
+   - Email whitelist for access control
+   - Profile picture integration
+
+2. **Password Authentication** (Fallback, Emergency Access Only)
+   - Email/password login
+   - Default admin account: `admin@localhost` / `admin`
+   - Available in collapsible section for emergency access
+
+### Quick Setup
+
+**Backend Environment Variables (.env):**
+```bash
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+ADMIN_EMAIL_WHITELIST=admin@example.com,user2@example.com
+JWT_SECRET=generate-with-openssl-rand-hex-32
+JWT_EXPIRATION_HOURS=24
+```
+
+**Frontend Environment Variables (.env.local):**
+```bash
+VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+```
+
+### Default Credentials (Password Fallback)
+
+- **Email:** `admin@localhost`
+- **Password:** `admin`
+
+⚠️ **Security Warning:** Change the default password immediately in production! It's for initial setup only.
+
+### Setup Guide
+
+For detailed Google Cloud Console setup and configuration:
+- **[Complete Google SSO Setup Guide](docs/GOOGLE_SSO_SETUP.md)** - Step-by-step instructions
+
+### Key Security Features
+
+- **JWT Tokens:** 24-hour expiration (configurable)
+- **Email Whitelist:** Only specified emails can authenticate via Google SSO
+- **Protected Endpoints:** All `/admin/*` endpoints require valid JWT token
+- **Automatic Token Refresh:** Token persists across page refreshes via localStorage
+- **401 Handling:** Automatic logout on token expiration
+
+### Emergency Access
+
+If you lose access to Google SSO:
+1. Use password authentication (expand "Password Login (Fallback)" section)
+2. Log in with `admin@localhost` / `admin`
+3. Or reset password via server console (see setup guide)
 
 ---
 

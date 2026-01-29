@@ -7,8 +7,9 @@ import re
 import asyncio
 from typing import List, Optional
 from contextlib import asynccontextmanager
+from datetime import datetime
 from db_models import init_database
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -49,6 +50,16 @@ from parser import (
 import email_sender
 from email_sender import init_email_sender
 from rate_limiter import RateLimiter
+from auth import (
+    verify_google_token,
+    create_jwt_token,
+    verify_password,
+    hash_password,
+    AuthResponse,
+    require_admin_auth,
+    TokenPayload,
+    JWT_EXPIRATION_HOURS
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -132,7 +143,13 @@ async def lifespan(app: FastAPI):
     init_database(f"sqlite:///{DB_PATH}")
     init_cache_manager(ttl_seconds=CACHE_TTL)
 
-    print("[App] Database and cache initialized")
+    # Initialize admin users
+    from auth import init_admin_users
+    import db_models
+    if db_models.db_manager:
+        init_admin_users(db_models.db_manager)
+
+    print("[App] Database, cache, and auth initialized")
 
     yield  # Application runs here
 
@@ -859,24 +876,244 @@ def search_comprehensive(
 
 
 # -----------------------
+# Authentication Endpoints
+# -----------------------
+
+
+class GoogleAuthRequest(BaseModel):
+    """Request body for Google OAuth authentication."""
+    id_token: str
+
+
+class PasswordAuthRequest(BaseModel):
+    """Request body for password authentication."""
+    email: str
+    password: str
+
+
+class PasswordChangeRequest(BaseModel):
+    """Request body for changing password."""
+    current_password: str
+    new_password: str
+
+
+@app.post("/auth/google", response_model=AuthResponse)
+async def authenticate_with_google(request: GoogleAuthRequest):
+    """
+    Authenticate admin user with Google OAuth2 token.
+
+    Flow:
+    1. Verify Google ID token
+    2. Check email whitelist
+    3. Create or update AdminUser record
+    4. Generate JWT token
+    """
+    try:
+        # Verify Google token
+        user_info = verify_google_token(request.id_token)
+
+        # Get or create admin user
+        import db_models
+        from db_models import AdminUser
+
+        if not db_models.db_manager:
+            raise HTTPException(status_code=503, detail="Database not available")
+
+        session = db_models.db_manager.get_session()
+        try:
+            admin_user = session.query(AdminUser).filter_by(
+                email=user_info['email']
+            ).first()
+
+            if not admin_user:
+                # Create new admin user
+                admin_user = AdminUser(
+                    email=user_info['email'],
+                    auth_method='google',
+                    google_id=user_info['google_id'],
+                    picture_url=user_info['picture'],
+                    is_active=True,
+                    last_login_at=datetime.utcnow()
+                )
+                session.add(admin_user)
+            else:
+                # Update existing user
+                admin_user.last_login_at = datetime.utcnow()
+                admin_user.google_id = user_info['google_id']
+                admin_user.picture_url = user_info['picture']
+
+            session.commit()
+
+            # Check if user is active
+            if not admin_user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin account is deactivated"
+                )
+
+            # Generate JWT token
+            token, expiration = create_jwt_token(admin_user.email, 'google')
+
+            return AuthResponse(
+                access_token=token,
+                expires_in=JWT_EXPIRATION_HOURS * 3600,
+                user={
+                    'email': admin_user.email,
+                    'auth_method': 'google',
+                    'picture': admin_user.picture_url
+                }
+            )
+        finally:
+            session.close()
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e)
+        )
+    except Exception as e:
+        print(f"[AUTH] Google authentication failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication failed"
+        )
+
+
+@app.post("/auth/password", response_model=AuthResponse)
+async def authenticate_with_password(request: PasswordAuthRequest):
+    """
+    Authenticate admin user with email and password.
+    Fallback method for emergency access.
+    """
+    import db_models
+    from db_models import AdminUser
+
+    if not db_models.db_manager:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    session = db_models.db_manager.get_session()
+    try:
+        # Find admin user
+        admin_user = session.query(AdminUser).filter_by(
+            email=request.email,
+            auth_method='password'
+        ).first()
+
+        if not admin_user or not admin_user.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+
+        # Verify password
+        if not verify_password(request.password, admin_user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+
+        # Check if user is active
+        if not admin_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin account is deactivated"
+            )
+
+        # Update last login
+        admin_user.last_login_at = datetime.utcnow()
+        session.commit()
+
+        # Generate JWT token
+        token, expiration = create_jwt_token(admin_user.email, 'password')
+
+        return AuthResponse(
+            access_token=token,
+            expires_in=JWT_EXPIRATION_HOURS * 3600,
+            user={
+                'email': admin_user.email,
+                'auth_method': 'password'
+            }
+        )
+    finally:
+        session.close()
+
+
+@app.post("/auth/password/change")
+async def change_password(
+    request: PasswordChangeRequest,
+    auth: TokenPayload = Depends(require_admin_auth)
+):
+    """
+    Change admin user password (requires authentication).
+    """
+    import db_models
+    from db_models import AdminUser
+
+    if not db_models.db_manager:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    session = db_models.db_manager.get_session()
+    try:
+        # Find admin user
+        admin_user = session.query(AdminUser).filter_by(
+            email=auth.sub,
+            auth_method='password'
+        ).first()
+
+        if not admin_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Password authentication not enabled for this user"
+            )
+
+        # Verify current password
+        if not verify_password(request.current_password, admin_user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Current password is incorrect"
+            )
+
+        # Update password
+        admin_user.password_hash = hash_password(request.new_password)
+        session.commit()
+
+        return {"status": "success", "message": "Password changed successfully"}
+    finally:
+        session.close()
+
+
+@app.get("/auth/verify")
+async def verify_token(auth: TokenPayload = Depends(require_admin_auth)):
+    """
+    Verify if current JWT token is valid.
+    Used by frontend to check authentication status.
+    """
+    return {
+        "valid": True,
+        "email": auth.sub,
+        "auth_method": auth.auth_method
+    }
+
+
+# -----------------------
 # Admin Endpoints
 # -----------------------
 @app.post("/admin/cache/clear")
-def clear_memory_cache():
+def clear_memory_cache(auth: TokenPayload = Depends(require_admin_auth)):
     """Clear in-memory cache (DB remains intact)."""
     cache_mgr.cache_manager.clear_memory_cache()
     return {"status": "cleared", "message": "Memory cache cleared"}
 
 
 @app.post("/admin/cache/invalidate/{book_id}")
-def invalidate_book_cache(book_id: str):
+def invalidate_book_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
     """Invalidate memory cache for a specific book (DB remains intact)."""
     cache_mgr.cache_manager.invalidate_book(book_id)
     return {"status": "invalidated", "book_id": book_id, "scope": "memory_only"}
 
 
 @app.delete("/admin/cache/chapters/{book_id}")
-def delete_book_chapters_cache(book_id: str):
+def delete_book_chapters_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
     """Delete all chapter records for a book from database and memory cache."""
     deleted_count = cache_mgr.cache_manager.delete_book_chapters(book_id)
     return {
@@ -888,13 +1125,13 @@ def delete_book_chapters_cache(book_id: str):
 
 
 @app.get("/admin/stats")
-def get_cache_stats():
+def get_cache_stats(auth: TokenPayload = Depends(require_admin_auth)):
     """Get detailed cache statistics."""
     return cache_mgr.cache_manager.get_stats()
 
 
 @app.get("/admin/rate-limit/stats")
-def get_rate_limit_stats():
+def get_rate_limit_stats(auth: TokenPayload = Depends(require_admin_auth)):
     """Get rate limiter statistics."""
     if not RATE_LIMIT_ENABLED or rate_limiter is None:
         return {"enabled": False}
@@ -912,7 +1149,7 @@ def get_rate_limit_stats():
 
 
 @app.get("/admin/smtp/settings")
-def get_smtp_settings():
+def get_smtp_settings(auth: TokenPayload = Depends(require_admin_auth)):
     """Get current SMTP settings (password masked)."""
     import db_models
     from db_models import SmtpSettings
@@ -956,6 +1193,7 @@ def save_smtp_settings(
     use_ssl: bool = Query(False),
     from_email: str = Query(None),
     from_name: str = Query("看小說 Admin"),
+    auth: TokenPayload = Depends(require_admin_auth)
 ):
     """Save SMTP configuration."""
     import db_models
@@ -1011,7 +1249,7 @@ def save_smtp_settings(
 
 
 @app.post("/admin/smtp/test")
-def test_smtp_connection():
+def test_smtp_connection(auth: TokenPayload = Depends(require_admin_auth)):
     """Test SMTP connection with current settings."""
     import db_models
     from db_models import SmtpSettings
@@ -1060,6 +1298,7 @@ def send_email(
     cc: str = Query(None),
     bcc: str = Query(None),
     attachments: str = Query(None),
+    auth: TokenPayload = Depends(require_admin_auth)
 ):
     """
     Send an email using configured SMTP settings.
@@ -1135,7 +1374,7 @@ def send_email(
 
 
 @app.post("/admin/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), auth: TokenPayload = Depends(require_admin_auth)):
     """
     Upload a file to the /dist/spa/upload folder.
     Returns the URL path to access the uploaded file.
@@ -1182,6 +1421,7 @@ def send_chapter_validation_alert(
     last_chapter_number: int = Query(0),
     actual_chapter_count: int = Query(0),
     to_email: str = Query(...),
+    auth: TokenPayload = Depends(require_admin_auth)
 ):
     """
     Send an alert email when chapter validation fails after max retries.

@@ -11,41 +11,88 @@
         <!-- Login Form -->
         <div v-if="!isAdminLoggedIn">
           <div class="text-subtitle2 q-mb-md">{{ $t('admin.login') }}</div>
-          <q-input
-            v-model="adminUsername"
+
+          <!-- Google Sign-In Button -->
+          <div ref="googleButtonContainer" class="q-mb-md google-signin-container"></div>
+
+          <!-- Separator -->
+          <div class="row items-center q-mb-md">
+            <q-separator class="col" />
+            <div class="col-auto q-px-md text-grey-6">OR</div>
+            <q-separator class="col" />
+          </div>
+
+          <!-- Password Login (Collapsible) -->
+          <q-expansion-item
             dense
-            outlined
-            :label="$t('admin.username')"
-            class="q-mb-sm"
-            @keyup.enter="adminLogin"
-          />
-          <q-input
-            v-model="adminPassword"
-            dense
-            outlined
-            type="password"
-            :label="$t('admin.password')"
-            class="q-mb-md"
-            @keyup.enter="adminLogin"
-          />
-          <q-btn
-            color="primary"
-            icon="admin_panel_settings"
-            :label="$t('admin.loginButton')"
-            class="full-width"
-            @click="adminLogin"
-            :loading="adminLoading"
-          />
+            :label="$t('admin.passwordLogin')"
+            :caption="$t('admin.passwordLoginCaption')"
+            icon="vpn_key"
+            class="q-mb-md password-expansion"
+          >
+            <q-card flat bordered class="q-mt-sm">
+              <q-card-section>
+                <q-input
+                  v-model="passwordEmail"
+                  dense
+                  outlined
+                  type="email"
+                  :label="$t('admin.email')"
+                  class="q-mb-sm"
+                  @keyup.enter="passwordLogin"
+                />
+                <q-input
+                  v-model="passwordPassword"
+                  dense
+                  outlined
+                  type="password"
+                  :label="$t('admin.password')"
+                  class="q-mb-md"
+                  @keyup.enter="passwordLogin"
+                />
+                <q-btn
+                  color="primary"
+                  icon="login"
+                  :label="$t('admin.loginButton')"
+                  class="full-width"
+                  @click="passwordLogin"
+                  :loading="adminLoading"
+                />
+              </q-card-section>
+            </q-card>
+          </q-expansion-item>
         </div>
 
         <!-- Admin Panel (after login) -->
         <div v-else>
           <!-- Admin Info Bar -->
           <div class="row items-center q-mb-md q-pa-sm rounded-borders admin-info-bar">
-            <q-icon name="account_circle" size="sm" class="q-mr-sm" />
-            <div class="text-body2">{{ adminUsername }}</div>
-            <q-space />
+            <!-- User Avatar -->
+            <q-avatar size="32px" class="q-mr-sm">
+              <img v-if="currentUser?.picture" :src="currentUser.picture" alt="User avatar" />
+              <q-icon v-else name="account_circle" size="32px" />
+            </q-avatar>
+
+            <!-- User Info -->
+            <div class="col">
+              <div class="text-body2 text-weight-medium">{{ currentUser?.email }}</div>
+              <div class="row items-center q-gutter-xs">
+                <q-chip
+                  dense
+                  size="sm"
+                  :icon="currentUser?.auth_method === 'google' ? 'verified' : 'vpn_key'"
+                  :color="currentUser?.auth_method === 'google' ? 'positive' : 'grey'"
+                  text-color="white"
+                  class="q-ma-none"
+                >
+                  {{ currentUser?.auth_method === 'google' ? 'Google' : 'Password' }}
+                </q-chip>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
             <q-btn
+              v-if="currentUser?.auth_method === 'password'"
               flat
               dense
               size="sm"
@@ -487,10 +534,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { useI18n } from 'vue-i18n';
 import { api } from 'src/boot/axios';
+import { authService, type AuthUser } from 'src/services/authService';
 
 const { t } = useI18n();
 
@@ -524,11 +572,13 @@ watch(showDialog, (newVal) => {
 
 // Admin login state
 const isAdminLoggedIn = ref(false);
-const adminUsername = ref('admin');
-const adminPassword = ref('');
+const currentUser = ref<AuthUser | null>(null);
+const passwordEmail = ref('admin@localhost');
+const passwordPassword = ref('');
 const adminLoading = ref(false);
 const statsLoading = ref(false);
 const resyncBookId = ref('');
+const googleButtonContainer = ref<HTMLElement | null>(null);
 
 // Init sync parameters
 const initSyncParams = ref({
@@ -573,31 +623,28 @@ const passwordForm = ref({
   error: ''
 });
 
-// Admin credentials storage
-const ADMIN_STORAGE_KEY = 'xsw_admin_credentials';
-
-interface AdminCredentials {
-  username: string;
-  password: string;
-}
-
-function loadAdminCredentials(): AdminCredentials {
-  try {
-    const stored = localStorage.getItem(ADMIN_STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch (e) {
-    console.error('Failed to load admin credentials:', e);
-  }
-  return { username: 'admin', password: 'admin' };
-}
-
-function saveAdminCredentials(credentials: AdminCredentials) {
-  try {
-    localStorage.setItem(ADMIN_STORAGE_KEY, JSON.stringify(credentials));
-  } catch (e) {
-    console.error('Failed to save admin credentials:', e);
+// Google Sign-In integration
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: {
+            client_id: string;
+            callback: (response: { credential: string }) => void;
+          }) => void;
+          renderButton: (
+            parent: HTMLElement,
+            options: {
+              theme?: string;
+              size?: string;
+              text?: string;
+              width?: number;
+            }
+          ) => void;
+        };
+      };
+    };
   }
 }
 
@@ -644,33 +691,138 @@ const stats = ref<{
   periodicSync: null
 });
 
-// Admin functions
-function adminLogin() {
-  const credentials = loadAdminCredentials();
-  if (adminUsername.value === credentials.username && adminPassword.value === credentials.password) {
+// Admin authentication functions
+async function handleGoogleSignIn(response: { credential: string }) {
+  adminLoading.value = true;
+  try {
+    const authResponse = await authService.authenticateWithGoogle(response.credential);
+    currentUser.value = authResponse.user;
     isAdminLoggedIn.value = true;
-    adminPassword.value = '';
     void refreshStats();
     $q.notify({
       type: 'positive',
       message: t('admin.loginSuccess'),
       position: 'top'
     });
-  } else {
+  } catch (error) {
+    console.error('Google Sign-In failed:', error);
+    $q.notify({
+      type: 'negative',
+      message: t('admin.googleSignInFailed'),
+      position: 'top'
+    });
+  } finally {
+    adminLoading.value = false;
+  }
+}
+
+async function passwordLogin() {
+  if (!passwordEmail.value || !passwordPassword.value) {
+    $q.notify({
+      type: 'warning',
+      message: t('admin.allFieldsRequired'),
+      position: 'top'
+    });
+    return;
+  }
+
+  adminLoading.value = true;
+  try {
+    const authResponse = await authService.authenticateWithPassword(
+      passwordEmail.value,
+      passwordPassword.value
+    );
+    currentUser.value = authResponse.user;
+    isAdminLoggedIn.value = true;
+    passwordPassword.value = '';
+    void refreshStats();
+    $q.notify({
+      type: 'positive',
+      message: t('admin.loginSuccess'),
+      position: 'top'
+    });
+  } catch (error) {
+    console.error('Password login failed:', error);
     $q.notify({
       type: 'negative',
       message: t('admin.loginFailed'),
       position: 'top'
     });
+  } finally {
+    adminLoading.value = false;
   }
 }
 
 function logout() {
+  authService.clearAuth();
   isAdminLoggedIn.value = false;
-  adminUsername.value = 'admin';
-  adminPassword.value = '';
+  currentUser.value = null;
+  passwordEmail.value = 'admin@localhost';
+  passwordPassword.value = '';
   activeTab.value = 'stats';
+  $q.notify({
+    type: 'info',
+    message: t('admin.logoutSuccess'),
+    position: 'top'
+  });
 }
+
+function loadGoogleSignIn() {
+  // Check if VITE_GOOGLE_CLIENT_ID is configured
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    console.warn('[AdminDialog] VITE_GOOGLE_CLIENT_ID not configured, Google Sign-In disabled');
+    return;
+  }
+
+  // Load Google Sign-In script
+  const script = document.createElement('script');
+  script.src = 'https://accounts.google.com/gsi/client';
+  script.async = true;
+  script.defer = true;
+  script.onload = () => {
+    if (window.google && googleButtonContainer.value) {
+      initializeGoogleSignIn();
+    }
+  };
+  document.head.appendChild(script);
+}
+
+function initializeGoogleSignIn() {
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  if (!clientId || !window.google || !googleButtonContainer.value) {
+    return;
+  }
+
+  try {
+    window.google.accounts.id.initialize({
+      client_id: clientId,
+      callback: handleGoogleSignIn
+    });
+
+    window.google.accounts.id.renderButton(googleButtonContainer.value, {
+      theme: 'outline',
+      size: 'large',
+      text: 'signin_with',
+      width: googleButtonContainer.value.offsetWidth || 300
+    });
+  } catch (error) {
+    console.error('[AdminDialog] Failed to initialize Google Sign-In:', error);
+  }
+}
+
+// Check if user is already authenticated
+function checkExistingAuth() {
+  if (authService.isAuthenticated()) {
+    currentUser.value = authService.getUser();
+    isAdminLoggedIn.value = true;
+  }
+}
+
+onMounted(() => {
+  checkExistingAuth();
+  loadGoogleSignIn();
+});
 
 function close() {
   showDialog.value = false;
@@ -687,7 +839,7 @@ function closePasswordDialog() {
   };
 }
 
-function changePassword() {
+async function changePassword() {
   passwordForm.value.error = '';
 
   // Validation
@@ -706,20 +858,13 @@ function changePassword() {
     return;
   }
 
-  // Verify current password
-  const credentials = loadAdminCredentials();
-  if (passwordForm.value.currentPassword !== credentials.password) {
-    passwordForm.value.error = t('admin.incorrectPassword');
-    return;
-  }
-
-  // Save new password
+  // Change password via backend
   passwordForm.value.loading = true;
   try {
-    saveAdminCredentials({
-      username: credentials.username,
-      password: passwordForm.value.newPassword
-    });
+    await authService.changePassword(
+      passwordForm.value.currentPassword,
+      passwordForm.value.newPassword
+    );
 
     $q.notify({
       type: 'positive',
@@ -728,11 +873,16 @@ function changePassword() {
     });
 
     closePasswordDialog();
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to change password:', error);
+    const errorMessage = error.response?.status === 401
+      ? t('admin.incorrectPassword')
+      : t('admin.passwordChangeFailed');
+
+    passwordForm.value.error = errorMessage;
     $q.notify({
       type: 'negative',
-      message: t('admin.passwordChangeFailed'),
+      message: errorMessage,
       position: 'top'
     });
   } finally {
@@ -1072,6 +1222,24 @@ watch(() => [showDialog.value, isAdminLoggedIn.value], ([dialog, loggedIn]) => {
 <style scoped>
 .rounded-borders {
   border-radius: 4px;
+}
+
+/* Google Sign-In button container */
+.google-signin-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Password expansion item */
+.password-expansion {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+}
+
+body.body--dark .password-expansion {
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 /* Admin info bar - light mode */
