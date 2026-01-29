@@ -446,8 +446,9 @@ p {
 }
 
 .chapter-content {
-  max-width: 800px;
+  max-width: min(800px, 90vw);
   margin: 0 auto;
+  padding: 0 16px;
 }
 
 /* Smooth transitions for buttons */
@@ -462,5 +463,42 @@ p {
 
 .q-btn:active:not(:disabled) {
   transform: translateY(0);
+}
+
+/* Mobile responsive navigation - hide bottom nav on small screens */
+@media (max-width: 600px) {
+  /* Hide bottom navigation on mobile to reduce clutter */
+  .row.q-my-md.q-gutter-sm.justify-center {
+    display: none;
+  }
+
+  /* Make top navigation buttons smaller and stack better on mobile */
+  .q-card-section.q-py-sm .row.q-gutter-sm {
+    flex-wrap: wrap;
+  }
+
+  .q-card-section.q-py-sm .q-btn {
+    font-size: 0.75rem;
+    min-width: auto;
+  }
+
+  /* Adjust progress indicator for mobile */
+  .q-linear-progress {
+    margin-top: 8px;
+  }
+}
+
+/* Tablet and larger - show both navigations */
+@media (min-width: 601px) {
+  .chapter-content {
+    padding: 0 24px;
+  }
+}
+
+/* Large screens - optimize reading width */
+@media (min-width: 1440px) {
+  .chapter-content {
+    max-width: 900px;
+  }
 }
 </style>

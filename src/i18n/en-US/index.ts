@@ -77,6 +77,9 @@ export default {
     reloadChapters: 'Reload',
     loadingFirstPages: 'Loading first {pages} pages...',
     loadingRemainingInBackground: 'Loading remaining chapters in background...',
+    phase2LoadingWarning: 'Background loading incomplete (first 3 pages available)',
+    phase2LoadingComplete: 'All chapters loaded',
+    loadingProgress: 'Loaded {loaded} / {total} chapters',
   },
 
   // Categories

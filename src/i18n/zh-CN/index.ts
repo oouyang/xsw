@@ -77,6 +77,9 @@ export default {
     reloadChapters: '重新加载',
     loadingFirstPages: '加载前 {pages} 页章节...',
     loadingRemainingInBackground: '后台加载剩余章节...',
+    phase2LoadingWarning: '后台加载未完成（前3页已可用）',
+    phase2LoadingComplete: '所有章节已加载完成',
+    loadingProgress: '已加载 {loaded} / {total} 章',
   },
 
   // 分类

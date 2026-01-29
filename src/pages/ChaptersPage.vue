@@ -32,6 +32,33 @@
         </div>
       </q-card-section>
       <q-card-actions align="right">
+        <!-- Quick chapter navigation -->
+        <q-input
+          v-model.number="jumpToChapterNum"
+          dense
+          outlined
+          type="number"
+          :min="1"
+          :max="book.info?.last_chapter_number || 9999"
+          placeholder="跳至章節..."
+          style="max-width: 120px"
+          class="q-mr-sm"
+          @keyup.enter="jumpToChapter"
+        >
+          <template v-slot:append>
+            <q-btn
+              flat
+              dense
+              round
+              icon="arrow_forward"
+              size="sm"
+              @click="jumpToChapter"
+              :disable="!jumpToChapterNum || jumpToChapterNum < 1"
+            >
+              <q-tooltip>跳至指定章節</q-tooltip>
+            </q-btn>
+          </template>
+        </q-input>
         <q-btn flat dense icon="refresh" :label="$t('chapter.reloadChapters')" @click="reload" :loading="loading" />
       </q-card-actions>
     </q-card>
@@ -110,6 +137,21 @@
         </template>
         <div class="text-caption">
           {{ phase2Message || $t('chapter.loadingRemainingInBackground') }}
+          <!-- Show progress if total chapters known -->
+          <div v-if="book.info?.last_chapter_number && book.allChapters.length > 0" class="q-mt-xs">
+            <q-linear-progress
+              :value="book.allChapters.length / book.info.last_chapter_number"
+              color="blue-9"
+              size="4px"
+              rounded
+            />
+            <div class="text-caption text-grey-7 q-mt-xs">
+              {{ $t('chapter.loadingProgress', {
+                loaded: book.allChapters.length,
+                total: book.info.last_chapter_number
+              }) }}
+            </div>
+          </div>
         </div>
         <template v-slot:action>
           <q-btn flat dense size="sm" icon="close" @click="isPhase2Loading = false" />
@@ -234,6 +276,9 @@ const loadingPhase = ref<LoadingPhase>('idle');
 const isPhase2Loading = ref(false);
 const phase2Message = ref('');
 
+// Quick chapter navigation
+const jumpToChapterNum = ref<number | null>(null);
+
 // Smart error tracking with context
 interface LoadError {
   phase: 'phase1' | 'phase2' | 'info';
@@ -315,7 +360,7 @@ async function switchPage(page: number) {
       if (hasLoadedChapters) {
         loadError.value = {
           phase: 'phase2',
-          message: '背景載入未完成（前3頁已可用）',
+          message: t('chapter.phase2LoadingWarning'),
           retryable: true,
           technicalDetails: errorMsg
         };
@@ -339,6 +384,40 @@ async function switchPage(page: number) {
     }
   })
 }
+
+/**
+ * Jump to a specific chapter number
+ */
+function jumpToChapter() {
+  if (!jumpToChapterNum.value || jumpToChapterNum.value < 1) return;
+
+  const chapterNum = jumpToChapterNum.value;
+  const totalChapters = book.info?.last_chapter_number || book.allChapters.length;
+
+  if (chapterNum > totalChapters) {
+    // Show warning if chapter number exceeds total
+    console.warn(`[jumpToChapter] Chapter ${chapterNum} exceeds total ${totalChapters}`);
+    return;
+  }
+
+  // Calculate which page this chapter is on
+  const targetPage = Math.ceil(chapterNum / book.pageSize);
+  console.log(`[jumpToChapter] Jumping to chapter ${chapterNum}, page ${targetPage}`);
+
+  // If the chapter is already loaded, find it and navigate directly
+  const targetChapter = book.allChapters.find(c => c.number === chapterNum);
+  if (targetChapter) {
+    // Navigate to chapter content directly
+    void router.push(chapterLink(targetChapter.number, targetChapter.title));
+  } else {
+    // Switch to the page containing the chapter
+    void switchPage(targetPage);
+  }
+
+  // Clear input
+  jumpToChapterNum.value = null;
+}
+
 // watch(page, (newVal, oldVal) => {
 //   // Validate page number
 //   if (!Number.isFinite(newVal) || newVal < 1) {

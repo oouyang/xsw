@@ -77,6 +77,9 @@ export default {
     reloadChapters: '重新載入',
     loadingFirstPages: '載入前 {pages} 頁章節...',
     loadingRemainingInBackground: '背景載入剩餘章節...',
+    phase2LoadingWarning: '背景載入未完成（前3頁已可用）',
+    phase2LoadingComplete: '所有章節已載入完成',
+    loadingProgress: '已載入 {loaded} / {total} 章',
   },
 
   // 分類

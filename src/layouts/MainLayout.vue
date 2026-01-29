@@ -401,4 +401,73 @@ function handleKey(e: KeyboardEvent) {
   color: var(--q-primary);
   border-left: 3px solid var(--q-primary);
 }
+
+/* Mobile optimizations */
+@media (max-width: 600px) {
+  /* Make drawer full-screen on mobile */
+  .q-drawer--right {
+    width: 100% !important;
+  }
+
+  /* Hide some scroll buttons on mobile to reduce clutter */
+  .q-page-sticky:not([position="left"]):not([position="right"]):not([position="bottom"]) {
+    display: none !important;
+  }
+
+  /* Keep only essential navigation buttons on mobile */
+  .q-page-sticky[position="left"],
+  .q-page-sticky[position="right"],
+  .q-page-sticky[position="bottom"] {
+    opacity: 0.8;
+  }
+
+  /* Smaller button size on mobile */
+  .q-page-sticky .q-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  /* Adjust header search input on mobile */
+  .search-input {
+    max-width: 150px !important;
+  }
+
+  /* Stack toolbar items better on mobile */
+  .q-toolbar {
+    flex-wrap: wrap;
+    min-height: 56px;
+  }
+}
+
+/* Tablet optimizations */
+@media (min-width: 601px) and (max-width: 1024px) {
+  /* Medium drawer width on tablet */
+  .q-drawer--right {
+    width: 300px !important;
+  }
+
+  /* Show more scroll buttons on tablet */
+  .q-page-sticky {
+    opacity: 0.9;
+  }
+}
+
+/* Large screen optimizations */
+@media (min-width: 1025px) {
+  /* Default drawer width */
+  .q-drawer--right {
+    width: 250px;
+  }
+
+  /* Full opacity for all buttons on desktop */
+  .q-page-sticky {
+    opacity: 1;
+  }
+
+  /* Larger touch targets for mouse */
+  .q-page-sticky .q-btn {
+    width: 48px;
+    height: 48px;
+  }
+}
 </style>
