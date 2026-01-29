@@ -4,12 +4,14 @@ Optimized FastAPI backend with SQLite database-first caching.
 Strategy: Check DB → Fetch from web → Store to DB
 """
 import re
+import asyncio
 from typing import List, Optional
 from contextlib import asynccontextmanager
 from db_models import init_database
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import requests
 import os
@@ -44,14 +46,9 @@ from parser import (
     parse_books,
     extract_book_id_from_url,
 )
-import background_jobs as bg_jobs
-from background_jobs import init_job_manager
-import midnight_sync as midnight
-from midnight_sync import init_midnight_scheduler
-import periodic_sync as periodic
-from periodic_sync import init_periodic_scheduler
 import email_sender
 from email_sender import init_email_sender
+from rate_limiter import RateLimiter
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -63,6 +60,10 @@ WWW_BASE = os.getenv("WWW_BASE", "https://www.xsw.tw")
 DEFAULT_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "10"))
 DB_PATH = os.getenv("DB_PATH", "xsw_cache.db")
 CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "900"))
+
+# Rate limiting configuration
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+RATE_LIMIT_WHITELIST = os.getenv("RATE_LIMIT_WHITELIST", "127.0.0.1,::1").split(",")
 
 # Use default Python requests User-Agent instead of browser-like UA
 # This helps with corporate proxies like Zscaler that may block browser UAs
@@ -102,56 +103,6 @@ def fetch_html(url: str) -> str:
 
 
 # -----------------------
-# Background Job Callbacks
-# -----------------------
-def _bg_fetch_book_info(book_id: str):
-    """Background job callback to fetch and cache book info."""
-    try:
-        # Check if already cached
-        cached_info = cache_mgr.cache_manager.get_book_info(book_id)
-        if cached_info:
-            print(f"[BG] Book {book_id} info already cached")
-            return
-
-        # Fetch from web
-        url = resolve_book_home(book_id)
-        html_content = fetch_html(url)
-        info = parse_book_info(html_content, BASE_URL)
-
-        if info:
-            info["book_id"] = book_id
-            info["source_url"] = url
-            cache_mgr.cache_manager.store_book_info(book_id, info)
-            print(f"[BG] Cached book info for {book_id}")
-    except Exception as e:
-        print(f"[BG] Failed to fetch book info for {book_id}: {e}")
-        raise
-
-
-def _bg_fetch_chapters(book_id: str):
-    """Background job callback to fetch and cache all chapters."""
-    try:
-        # Check if already cached
-        cached_chapters = cache_mgr.cache_manager.get_chapter_list(book_id)
-        if cached_chapters and len(cached_chapters) > 0:
-            print(f"[BG] Book {book_id} already has {len(cached_chapters)} chapters cached")
-            return
-
-        # Fetch from web
-        url = resolve_book_home(book_id)
-        html_content = fetch_html(url)
-        items = fetch_chapters_from_liebiao(html_content, page_url=url, canonical_base=canonical_base())
-
-        if items:
-            # Store chapter references (metadata only, not content)
-            cache_mgr.cache_manager.store_chapter_refs(book_id, items)
-            print(f"[BG] Cached {len(items)} chapter references for {book_id}")
-    except Exception as e:
-        print(f"[BG] Failed to fetch chapters for {book_id}: {e}")
-        raise
-
-
-# -----------------------
 # Pydantic Models
 # -----------------------
 class Category(BaseModel):
@@ -178,61 +129,15 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown."""
     # Startup: Initialize database and cache
     print(f"[App] Starting with BASE_URL={BASE_URL}, DB_PATH={DB_PATH}")
-    db_mgr = init_database(f"sqlite:///{DB_PATH}")
+    init_database(f"sqlite:///{DB_PATH}")
     init_cache_manager(ttl_seconds=CACHE_TTL)
 
-    # Initialize background job manager
-    num_workers = int(os.getenv("BG_JOB_WORKERS", "2"))
-    rate_limit = float(os.getenv("BG_JOB_RATE_LIMIT", "2.0"))
-    init_job_manager(num_workers=num_workers, rate_limit_seconds=rate_limit)
-
-    # Set up job callbacks
-    bg_jobs.job_manager.fetch_book_info_callback = _bg_fetch_book_info
-    bg_jobs.job_manager.fetch_chapters_callback = _bg_fetch_chapters
-
-    # Start background workers
-    bg_jobs.job_manager.start()
-
-    # Initialize midnight sync scheduler
-    sync_hour = int(os.getenv("MIDNIGHT_SYNC_HOUR", "0"))  # Default: midnight
-    sync_minute = int(os.getenv("MIDNIGHT_SYNC_MINUTE", "0"))
-    slow_rate = float(os.getenv("MIDNIGHT_SYNC_RATE_LIMIT", "5.0"))  # Default: 5s between books
-    init_midnight_scheduler(
-        db_session_factory=db_mgr.get_session,
-        job_manager=bg_jobs.job_manager,
-        sync_hour=sync_hour,
-        sync_minute=sync_minute,
-        slow_rate_limit=slow_rate,
-    )
-
-    # Start midnight scheduler
-    midnight.midnight_scheduler.start()
-
-    # Initialize periodic sync scheduler (runs every 6 hours)
-    periodic_interval = int(os.getenv("PERIODIC_SYNC_HOURS", "6"))  # Default: 6 hours
-    periodic_priority = int(os.getenv("PERIODIC_SYNC_PRIORITY", "3"))  # Default: priority 3
-    init_periodic_scheduler(
-        db_session_factory=db_mgr.get_session,
-        job_manager=bg_jobs.job_manager,
-        interval_hours=periodic_interval,
-        sync_priority=periodic_priority,
-    )
-
-    # Start periodic scheduler
-    periodic.periodic_scheduler.start()
-
-    print(f"[App] Database, cache, {num_workers} background workers, midnight scheduler, and periodic sync (every {periodic_interval}h) initialized")
+    print("[App] Database and cache initialized")
 
     yield  # Application runs here
 
-    # Shutdown: Stop background workers and cleanup
-    print("[App] Shutting down background workers and schedulers...")
-    if periodic.periodic_scheduler:
-        periodic.periodic_scheduler.stop()
-    if midnight.midnight_scheduler:
-        midnight.midnight_scheduler.stop()
-    if bg_jobs.job_manager:
-        bg_jobs.job_manager.stop()
+    # Shutdown: Cleanup
+    print("[App] Shutting down...")
     print("[App] Shutdown complete")
 
 app = FastAPI(
@@ -242,6 +147,48 @@ app = FastAPI(
     description="Optimized API with SQLite database-first caching",
     lifespan=lifespan
 )
+
+# -----------------------
+# Rate Limiting Middleware
+# -----------------------
+# Initialize rate limiter
+rate_limiter = RateLimiter(RATE_LIMIT_WHITELIST) if RATE_LIMIT_ENABLED else None
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Middleware to apply progressive rate limiting per client IP"""
+
+    async def dispatch(self, request: Request, call_next):
+        if not RATE_LIMIT_ENABLED or rate_limiter is None:
+            return await call_next(request)
+
+        # Extract client IP (support X-Forwarded-For for proxies)
+        client_ip = request.headers.get("X-Forwarded-For")
+        if client_ip:
+            # X-Forwarded-For can be comma-separated list, take first
+            client_ip = client_ip.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
+
+        # Get delay based on current request count
+        delay = rate_limiter.get_delay(client_ip)
+
+        # Apply delay if needed
+        if delay > 0:
+            request_count = len(rate_limiter._request_history.get(client_ip, [])) + 1
+            print(f"[RateLimit] Client {client_ip} has {request_count} requests in last 60s - applying {delay}s delay")
+            await asyncio.sleep(delay)
+
+        # Record this request
+        rate_limiter.record_request(client_ip)
+
+        # Process request
+        response = await call_next(request)
+        return response
+
+# Add rate limiting middleware before CORS (so it runs first)
+if RATE_LIMIT_ENABLED:
+    app.add_middleware(RateLimitMiddleware)
+    print(f"[App] Rate limiting enabled with whitelist: {RATE_LIMIT_WHITELIST}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -262,15 +209,13 @@ if os.path.exists(spa_dir):
 # -----------------------
 @app.get("/health")
 def health():
-    """Health check with cache and job stats."""
+    """Health check with cache stats."""
     cache_stats = cache_mgr.cache_manager.get_stats() if cache_mgr.cache_manager else {}
-    job_stats = bg_jobs.job_manager.get_stats() if bg_jobs.job_manager else {}
     return {
         "status": "ok",
         "base_url": BASE_URL,
         "db_path": DB_PATH,
         "cache_stats": cache_stats,
-        "job_stats": job_stats,
     }
 
 
@@ -314,14 +259,8 @@ def get_categories():
 def list_books_in_category(
     cat_id: int,
     page: int = Query(1, ge=1),
-    bg_sync: bool = Query(True, description="Trigger background sync for books")
 ):
-    """
-    List books in category (not cached, real-time).
-
-    Optionally triggers background jobs to pre-cache book info and chapters.
-    Set bg_sync=false to disable background syncing.
-    """
+    """List books in category (not cached, real-time)."""
     try:
         url = f"{BASE_URL}/fenlei{cat_id}_{page}.html"
         html_content = fetch_html(url)
@@ -331,12 +270,6 @@ def list_books_in_category(
             BookSummary(**b, book_id=extract_book_id_from_url(b["bookurl"]))
             for b in books
         ]
-
-        # Trigger background sync jobs for all books on this page
-        if bg_sync and bg_jobs.job_manager:
-            book_ids = [bs.book_id for bs in book_summaries if bs.book_id]
-            queued = bg_jobs.job_manager.enqueue_batch(book_ids, priority=0)
-            print(f"[API] Category {cat_id} page {page}: Queued {queued}/{len(book_ids)} books for background sync")
 
         return book_summaries
     except requests.HTTPError as e:
@@ -352,10 +285,6 @@ def get_book_info(book_id: str):
     Strategy: Check DB → Fetch from web → Store to DB
     """
     try:
-        # Track book access for midnight sync
-        if midnight.midnight_scheduler:
-            midnight.midnight_scheduler.track_book_access(book_id)
-
         # Check cache first
         cached_info = cache_mgr.cache_manager.get_book_info(book_id)
         if cached_info:
@@ -390,7 +319,7 @@ def get_book_chapters(
     page: int = Query(1, ge=1),
     nocache: bool = Query(False),
     www: bool = Query(False),
-    all: bool = Query(False)
+    all_chapters_flag: bool = Query(False, alias="all")
 ):
     """
     Get chapter list for a book.
@@ -418,9 +347,10 @@ def get_book_chapters(
 
             if www:
                 # Fetch from home page only (mobile site - latest 10 chapters)
+                # NOTE: Don't cache these results as they may be partial and incorrectly numbered
                 home_url = resolve_book_home(book_id)
                 html_content = fetch_html(home_url)
-                items = fetch_chapters_from_liebiao(html_content, home_url, canonical_base())
+                items = fetch_chapters_from_liebiao(html_content, home_url, canonical_base(), start_index=1)
             else:
                 # Fetch from pagination pages (all chapters)
                 items = fetch_all_chapters_from_pagination(book_id)
@@ -428,8 +358,10 @@ def get_book_chapters(
             if not items:
                 raise HTTPException(status_code=404, detail="No chapters found")
 
-            # Store to DB
-            cache_mgr.cache_manager.store_chapter_refs(book_id, items)
+            # Store to DB only for full fetches (www=false)
+            # Partial fetches (www=true) from home page may be incorrectly numbered
+            if not www:
+                cache_mgr.cache_manager.store_chapter_refs(book_id, items)
 
             # Convert to ChapterRef list
             all_chapters = [
@@ -438,8 +370,14 @@ def get_book_chapters(
                 if item.get("number") is not None
             ]
 
+            # CRITICAL: Sort chapters by number to ensure correct order
+            # HTML may return chapters out of order
+            all_chapters.sort(key=lambda c: c.number)
+            print(f"[API] Sorted {len(all_chapters)} chapters by number")
+
             # Sync book info with actual last chapter from fetched chapters
-            if all_chapters:
+            # Only do this for full fetches (www=false) as partial fetches may have incorrect numbering
+            if all_chapters and not www:
                 last_chapter = max(all_chapters, key=lambda c: c.number)
                 print(f"[API] Syncing book {book_id} with last chapter: {last_chapter.number} - {last_chapter.title}")
 
@@ -471,7 +409,7 @@ def get_book_chapters(
                         print(f"[API] Warning: Failed to fetch book info during sync: {e}")
 
         # Return based on 'all' parameter
-        if all:
+        if all_chapters_flag:
             # Return all chapters
             return all_chapters
 
@@ -548,14 +486,18 @@ def fetch_all_chapters_from_pagination(book_id: str) -> list:
 
     print(f"[API] Found {total_pages} pages for book {book_id}")
 
-    # Collect all chapters from all pages
+    # Collect all chapters from all pages with sequential indexing
     all_items = []
+    current_chapter_index = 1  # Start from chapter 1
     for page_num in range(1, total_pages + 1):
         page_url = f"{base}/{book_id}/page-{page_num}.html"
         html_content = fetch_html(page_url)
-        items = fetch_chapters_from_liebiao(html_content, page_url, base)
+        # Pass start_index to ensure sequential numbering across pages
+        items = fetch_chapters_from_liebiao(html_content, page_url, base, start_index=current_chapter_index)
         all_items.extend(items)
-        print(f"[API] Page {page_num}/{total_pages}: found {len(items)} chapters")
+        print(f"[API] Page {page_num}/{total_pages}: found {len(items)} chapters (indices {current_chapter_index}-{current_chapter_index + len(items) - 1})")
+        # Update index for next page
+        current_chapter_index += len(items)
 
     return all_items
 
@@ -591,7 +533,7 @@ def get_chapter_content(
             # Try home page first (for recent chapters)
             home_url = resolve_book_home(book_id)
             home_html = fetch_html(home_url)
-            items = fetch_chapters_from_liebiao(home_html, home_url, canonical_base())
+            items = fetch_chapters_from_liebiao(home_html, home_url, canonical_base(), start_index=1)
 
             # Find target chapter in home page
             target = next((it for it in items if it.get("number") == chapter_num), None)
@@ -919,192 +861,6 @@ def search_comprehensive(
 # -----------------------
 # Admin Endpoints
 # -----------------------
-@app.get("/admin/jobs/stats")
-def get_job_stats():
-    """Get background job statistics."""
-    if not bg_jobs.job_manager:
-        return {"error": "Background job manager not initialized"}
-    return bg_jobs.job_manager.get_stats()
-
-
-@app.post("/admin/jobs/sync/{book_id}")
-def trigger_book_sync(book_id: str, priority: int = Query(10, description="Job priority (higher = first)")):
-    """Manually trigger background sync for a specific book."""
-    if not bg_jobs.job_manager:
-        raise HTTPException(status_code=503, detail="Background job manager not available")
-
-    queued = bg_jobs.job_manager.enqueue_sync(book_id, priority=priority)
-    if queued:
-        return {"status": "queued", "book_id": book_id, "priority": priority}
-    else:
-        return {"status": "already_queued_or_syncing", "book_id": book_id}
-
-
-@app.post("/admin/jobs/force-resync/{book_id}")
-def force_resync_book(
-    book_id: str,
-    priority: int = Query(10, description="Job priority (higher = first)"),
-    clear_cache: bool = Query(True, description="Clear book cache before resync"),
-):
-    """
-    Force resync a book, bypassing recent completion checks.
-    Useful for resyncing books that may have missing chapters due to:
-    - Previous parsing errors (e.g., Chinese numeral support was missing)
-    - Incomplete sync
-    - Data corruption
-
-    This will:
-    1. Optionally clear the book's cache
-    2. Remove the book from recently completed list
-    3. Queue the book for immediate resync
-    """
-    if not bg_jobs.job_manager:
-        raise HTTPException(status_code=503, detail="Background job manager not available")
-
-    # Clear cache if requested
-    if clear_cache and cache_mgr.cache_manager:
-        cache_mgr.cache_manager.invalidate_book(book_id)
-
-    # Force resync
-    queued = bg_jobs.job_manager.force_resync(book_id, priority=priority)
-    if queued:
-        return {
-            "status": "queued",
-            "book_id": book_id,
-            "priority": priority,
-            "cache_cleared": clear_cache,
-            "message": "Book queued for forced resync",
-        }
-    else:
-        return {
-            "status": "already_syncing",
-            "book_id": book_id,
-            "message": "Book is currently being synced, cannot force resync",
-        }
-
-
-@app.post("/admin/jobs/clear_history")
-def clear_job_history():
-    """Clear completed and failed job history."""
-    if not bg_jobs.job_manager:
-        raise HTTPException(status_code=503, detail="Background job manager not available")
-
-    bg_jobs.job_manager.clear_history()
-    return {"status": "cleared", "message": "Job history cleared"}
-
-
-@app.post("/admin/init-sync")
-def admin_init_sync(
-    categories_limit: int = Query(7, ge=1, le=20, description="Number of categories to scan"),
-    pages_per_category: int = Query(10, ge=1, le=50, description="Pages to scan per category"),
-):
-    """
-    Initialize full sync: Drop all data, scan categories, and queue all books.
-
-    This will:
-    1. Clear all database tables (books, chapters, categories, sync queue)
-    2. Fetch categories from homepage
-    3. Scan books from first N categories (default 7)
-    4. Queue all discovered books for background sync
-
-    WARNING: This is a destructive operation that will delete all existing data!
-    """
-    import db_models
-    from db_models import Book, Chapter, Category, PendingSyncQueue
-
-    if not bg_jobs.job_manager:
-        raise HTTPException(status_code=503, detail="Background job manager not available")
-
-    if not db_models.db_manager:
-        raise HTTPException(status_code=503, detail="Database not available")
-
-    session = db_models.db_manager.get_session()
-    try:
-        # Step 1: Clear all data
-
-        print("[INIT_SYNC] Clearing all data...")
-        deleted_chapters = session.query(Chapter).delete()
-        deleted_books = session.query(Book).delete()
-        deleted_categories = session.query(Category).delete()
-        deleted_queue = session.query(PendingSyncQueue).delete()
-        session.commit()
-        print(f"[INIT_SYNC] Deleted: {deleted_books} books, {deleted_chapters} chapters, {deleted_categories} categories, {deleted_queue} queue items")
-
-        # Clear memory cache
-        if cache_mgr.cache_manager:
-            cache_mgr.cache_manager.clear_memory_cache()
-
-        # Clear job manager state
-        bg_jobs.job_manager.clear_all()
-
-        # Step 2: Fetch categories
-        print("[INIT_SYNC] Fetching categories...")
-        home_url = BASE_URL + "/"
-        html_content = fetch_html(home_url)
-        cats = find_categories_from_nav(html_content, BASE_URL)
-        print(f"[INIT_SYNC] Found {len(cats)} categories")
-
-        # Limit categories
-        cats_to_scan = cats[:categories_limit]
-        print(f"[INIT_SYNC] Will scan {len(cats_to_scan)} categories")
-
-        # Step 3: Scan books from categories
-        total_books_found = 0
-        book_ids_to_queue = set()
-
-        for cat in cats_to_scan:
-            cat_id = cat["id"]
-            cat_name = cat["name"]
-            print(f"[INIT_SYNC] Scanning category {cat_id} ({cat_name})...")
-
-            for page in range(1, pages_per_category + 1):
-                try:
-                    url = f"{BASE_URL}/fenlei{cat_id}_{page}.html"
-                    html = fetch_html(url)
-                    books = parse_books(html, BASE_URL)
-
-                    for book in books:
-                        book_id = extract_book_id_from_url(book["bookurl"])
-                        if book_id:
-                            book_ids_to_queue.add(book_id)
-
-                    print(f"[INIT_SYNC]   Page {page}: Found {len(books)} books")
-                    total_books_found += len(books)
-                except Exception as e:
-                    print(f"[INIT_SYNC]   Page {page}: Error - {e}")
-                    continue
-
-        # Step 4: Queue all books
-        print(f"[INIT_SYNC] Queuing {len(book_ids_to_queue)} unique books...")
-        queued = bg_jobs.job_manager.enqueue_batch(list(book_ids_to_queue), priority=5)
-
-        return {
-            "status": "initialized",
-            "deleted": {
-                "books": deleted_books,
-                "chapters": deleted_chapters,
-                "categories": deleted_categories,
-                "queue_items": deleted_queue,
-            },
-            "scanned": {
-                "categories": len(cats_to_scan),
-                "pages_per_category": pages_per_category,
-                "total_books_found": total_books_found,
-                "unique_books": len(book_ids_to_queue),
-            },
-            "queued": queued,
-            "message": f"Initialized sync: queued {queued} books from {len(cats_to_scan)} categories"
-        }
-    except Exception as e:
-        session.rollback()
-        print(f"[INIT_SYNC] Error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        session.close()
-
-
 @app.post("/admin/cache/clear")
 def clear_memory_cache():
     """Clear in-memory cache (DB remains intact)."""
@@ -1114,9 +870,21 @@ def clear_memory_cache():
 
 @app.post("/admin/cache/invalidate/{book_id}")
 def invalidate_book_cache(book_id: str):
-    """Invalidate cache for a specific book."""
+    """Invalidate memory cache for a specific book (DB remains intact)."""
     cache_mgr.cache_manager.invalidate_book(book_id)
-    return {"status": "invalidated", "book_id": book_id}
+    return {"status": "invalidated", "book_id": book_id, "scope": "memory_only"}
+
+
+@app.delete("/admin/cache/chapters/{book_id}")
+def delete_book_chapters_cache(book_id: str):
+    """Delete all chapter records for a book from database and memory cache."""
+    deleted_count = cache_mgr.cache_manager.delete_book_chapters(book_id)
+    return {
+        "status": "deleted",
+        "book_id": book_id,
+        "deleted_chapters": deleted_count,
+        "message": f"Deleted {deleted_count} chapters from cache. Next fetch will reload from web.",
+    }
 
 
 @app.get("/admin/stats")
@@ -1125,95 +893,17 @@ def get_cache_stats():
     return cache_mgr.cache_manager.get_stats()
 
 
-@app.get("/admin/midnight-sync/stats")
-def get_midnight_sync_stats():
-    """Get midnight sync queue statistics."""
-    if not midnight.midnight_scheduler:
-        return {"error": "Midnight sync scheduler not initialized"}
-    return midnight.midnight_scheduler.get_queue_stats()
-
-
-@app.post("/admin/midnight-sync/clear-completed")
-def clear_midnight_sync_completed():
-    """Clear completed and failed entries from midnight sync queue."""
-    if not midnight.midnight_scheduler:
-        raise HTTPException(status_code=503, detail="Midnight sync scheduler not available")
-
-    cleared = midnight.midnight_scheduler.clear_completed()
-    return {"status": "cleared", "removed_count": cleared, "message": f"Cleared {cleared} completed/failed entries"}
-
-
-@app.post("/admin/midnight-sync/trigger")
-def trigger_midnight_sync_now():
-    """Manually trigger the midnight sync process immediately."""
-    if not midnight.midnight_scheduler:
-        raise HTTPException(status_code=503, detail="Midnight sync scheduler not available")
-
-    # Run sync in a background thread to avoid blocking the request
-    import threading
-    thread = threading.Thread(
-        target=midnight.midnight_scheduler._run_midnight_sync,
-        name="manual-midnight-sync",
-        daemon=True,
-    )
-    thread.start()
+@app.get("/admin/rate-limit/stats")
+def get_rate_limit_stats():
+    """Get rate limiter statistics."""
+    if not RATE_LIMIT_ENABLED or rate_limiter is None:
+        return {"enabled": False}
 
     return {
-        "status": "triggered",
-        "message": "Midnight sync started in background",
+        "enabled": True,
+        "whitelist": RATE_LIMIT_WHITELIST,
+        **rate_limiter.get_stats()
     }
-
-
-@app.post("/admin/midnight-sync/enqueue-unfinished")
-def enqueue_unfinished_books():
-    """
-    Manually enqueue all unfinished books (status != '已完成') to the midnight sync queue.
-
-    This endpoint finds all books in the database that are not marked as completed
-    and adds them to the pending sync queue with priority 1.
-
-    Returns:
-        Number of books added to the queue
-    """
-    if not midnight.midnight_scheduler:
-        raise HTTPException(status_code=503, detail="Midnight sync scheduler not available")
-
-    added_count = midnight.midnight_scheduler.enqueue_unfinished_books()
-
-    return {
-        "status": "success",
-        "added_count": added_count,
-        "message": f"Added {added_count} unfinished books to sync queue",
-    }
-
-
-# ============================================
-# Periodic Sync Endpoints
-# ============================================
-
-
-@app.get("/admin/periodic-sync/stats")
-def get_periodic_sync_stats():
-    """Get periodic sync scheduler statistics."""
-    if not periodic.periodic_scheduler:
-        return {"error": "Periodic sync scheduler not initialized"}
-    return periodic.periodic_scheduler.get_stats()
-
-
-@app.post("/admin/periodic-sync/trigger")
-def trigger_periodic_sync_now():
-    """Manually trigger the periodic sync process immediately."""
-    if not periodic.periodic_scheduler:
-        raise HTTPException(status_code=503, detail="Periodic sync scheduler not available")
-
-    try:
-        periodic.periodic_scheduler.trigger_sync()
-        return {
-            "status": "triggered",
-            "message": "Periodic sync completed successfully",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to trigger periodic sync: {str(e)}")
 
 
 # ============================================
@@ -1483,6 +1173,137 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
 
+@app.post("/admin/alert/chapter-validation")
+def send_chapter_validation_alert(
+    book_id: str = Query(...),
+    book_name: str = Query(...),
+    reason: str = Query(...),
+    retries: int = Query(...),
+    last_chapter_number: int = Query(0),
+    actual_chapter_count: int = Query(0),
+    to_email: str = Query(...),
+):
+    """
+    Send an alert email when chapter validation fails after max retries.
+
+    This endpoint is called by the frontend after detecting unreasonable chapters
+    and exhausting retry attempts (default: 3 retries).
+    """
+    if not email_sender.email_sender:
+        # Try to initialize from database
+        import db_models
+        from db_models import SmtpSettings
+
+        if not db_models.db_manager:
+            raise HTTPException(status_code=503, detail="Database not available")
+
+        session = db_models.db_manager.get_session()
+        try:
+            settings = session.query(SmtpSettings).filter_by(id=1).first()
+            if not settings:
+                raise HTTPException(status_code=404, detail="SMTP not configured, cannot send alert email")
+
+            smtp_config = {
+                'smtp_host': settings.smtp_host,
+                'smtp_port': settings.smtp_port,
+                'smtp_user': settings.smtp_user,
+                'smtp_password': settings.smtp_password,
+                'use_tls': settings.use_tls,
+                'use_ssl': settings.use_ssl,
+                'from_email': settings.from_email,
+                'from_name': settings.from_name,
+            }
+            init_email_sender(smtp_config)
+        finally:
+            session.close()
+
+    # Build email body
+    subject = f"⚠️ Chapter Validation Failed: {book_name} (Book ID: {book_id})"
+
+    body_html = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+            .alert {{ background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin-bottom: 20px; }}
+            .details {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; }}
+            .details dt {{ font-weight: bold; margin-top: 10px; }}
+            .details dd {{ margin-left: 0; margin-bottom: 10px; }}
+            .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>🚨 Chapter Validation Alert</h2>
+
+            <div class="alert">
+                <strong>Attention Required:</strong> Chapter validation has failed multiple times for this book.
+                Automatic resync attempts have been exhausted.
+            </div>
+
+            <div class="details">
+                <dl>
+                    <dt>📚 Book Name:</dt>
+                    <dd>{book_name}</dd>
+
+                    <dt>🔢 Book ID:</dt>
+                    <dd>{book_id}</dd>
+
+                    <dt>❌ Validation Failure Reason:</dt>
+                    <dd>{reason}</dd>
+
+                    <dt>🔄 Retry Attempts:</dt>
+                    <dd>{retries} (max retries reached)</dd>
+
+                    <dt>📖 Expected Chapter Count:</dt>
+                    <dd>{last_chapter_number}</dd>
+
+                    <dt>📊 Actual Chapter Count:</dt>
+                    <dd>{actual_chapter_count}</dd>
+
+                    <dt>⚠️ Discrepancy:</dt>
+                    <dd>{abs(last_chapter_number - actual_chapter_count)} chapters</dd>
+                </dl>
+            </div>
+
+            <h3>Recommended Actions:</h3>
+            <ol>
+                <li>Check the source website for data availability</li>
+                <li>Review backend logs for parsing errors</li>
+                <li>Manually trigger resync via admin panel:
+                    <code>/admin/jobs/force-resync/{book_id}</code>
+                </li>
+                <li>If issue persists, check parser logic for edge cases</li>
+            </ol>
+
+            <div class="footer">
+                <p>This is an automated alert from 看小說 monitoring system.</p>
+                <p>Timestamp: {__import__('datetime').datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Send email
+    result = email_sender.email_sender.send_email(
+        to_email=to_email,
+        subject=subject,
+        body=body_html,
+        is_html=True,
+    )
+
+    if result['status'] == 'error':
+        raise HTTPException(status_code=500, detail=f"Failed to send alert email: {result['message']}")
+
+    return {
+        "status": "success",
+        "message": f"Alert email sent to {to_email}",
+        "email_result": result,
+    }
+
+
 @app.get("/by-url/chapters", response_model=List[ChapterRef])
 def chapters_by_url(book_url: str = Query(...)):
     """
@@ -1495,10 +1316,10 @@ def chapters_by_url(book_url: str = Query(...)):
         else:
             url = book_url
         html_content = fetch_html(url)
-        chaps = fetch_chapters_from_liebiao(html_content, BASE_URL)
+        chaps = fetch_chapters_from_liebiao(html_content, url, canonical_base(), start_index=1)
         return [
-            ChapterRef(number=k, title=v["title"], url=v["url"])
-            for k, v in sorted(chaps.items())
+            ChapterRef(number=ch["number"], title=ch["title"], url=ch["url"])
+            for ch in chaps
         ]
     except requests.HTTPError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))

@@ -1,81 +1,136 @@
-# XSW - Novel Reading Web Application
+# 看小說 (XSW) - Novel Reading Web Application
 
-A full-stack web application for reading Chinese novels with web scraping, hybrid caching, and modern UI.
+A full-stack Chinese novel reading platform with intelligent caching, background synchronization, comprehensive search, and administrative tools.
 
-## 📖 Overview
+## 📖 Table of Contents
 
-This project consists of:
-- **Backend (xsw)**: FastAPI-based web scraper with hybrid caching (SQLite + in-memory)
-- **Frontend (web)**: Vue 3 + Quasar framework SPA with Pinia state management
-- **Deployment**: Docker Compose with separate containers for backend and frontend
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Getting Started](#getting-started)
+- [Configuration](#configuration)
+- [Features Documentation](#features-documentation)
+- [API Documentation](#api-documentation)
+- [Development](#development)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## 🎯 Overview
+
+**看小說 (XSW)** is a modern, feature-rich web application for reading Chinese novels. Built with FastAPI and Vue 3, it provides an exceptional reading experience through intelligent caching, background synchronization, and a polished user interface.
+
+### Tech Stack
+
+**Backend:**
+- Python 3.11+ with FastAPI
+- SQLAlchemy ORM with SQLite database
+- BeautifulSoup4 for HTML parsing
+- Background job system with threading
+- SMTP email support with attachments
+
+**Frontend:**
+- Vue 3.5+ with TypeScript and Composition API
+- Quasar Framework 2.16+ for UI components
+- Pinia 3.0+ for state management
+- Axios for API communication
+- OpenCC-JS for Chinese text conversion
+
+---
+
+## ⭐ Key Features
+
+### Core Reading Experience
+- 📖 **Adaptive Two-Phase Loading** - Content appears in 1-2 seconds regardless of book size
+- 🎨 **Modern UI with Dark Mode** - Polished interface with smooth animations
+- ⌨️ **Keyboard Shortcuts** - Arrow keys for chapter navigation
+- 🔍 **Comprehensive Search** - Search across book names, authors, chapters, and content
+- 🌐 **Multi-Language Support** - Traditional Chinese, Simplified Chinese, English
+- 📱 **Responsive Design** - Mobile-optimized reading experience
+
+### Smart Caching System
+- 💾 **3-Tier Hybrid Cache** - Memory (TTL) → Database (SQLite) → Web scraping
+- 🔄 **Automatic Background Sync** - Books cached proactively when browsing categories
+- 🌙 **Midnight Sync Queue** - Automatic overnight updates for accessed books
+- 📊 **Unfinished Books Auto-Sync** - All ongoing books stay up-to-date automatically
+
+### Administrative Tools
+- 👑 **Admin Panel** - Comprehensive management interface
+- 📧 **SMTP Email System** - Send emails with file attachments
+- 📁 **File Upload** - Upload files to static folder
+- 📈 **Statistics Dashboard** - Cache, jobs, and sync metrics
+- 🔧 **Cache Management** - Clear and invalidate caches
+- 🕐 **Sync Control** - Manual trigger, queue management
+- 🔒 **Password Management** - Change admin password
+
+### Search & Discovery
+- 🔎 **Multi-Field Search** - Books, authors, chapters, full-text content
+- 📑 **Relevance Scoring** - Intelligent ranking of search results
+- 📋 **Grouped Results** - Matches organized by book
+- 💡 **Context Snippets** - Preview matched content
+
+### Developer Experience
+- 📝 **OpenAPI Documentation** - Auto-generated API docs
+- 🛡️ **Type Safety** - TypeScript throughout frontend
+- 🧪 **Error Handling** - Context-aware error messages with smart retry
+- 📊 **Observable** - Comprehensive logging and metrics
+
+---
 
 ## 🏗️ Architecture
 
 ### Backend Architecture
 
-The backend uses a **3-tier hybrid caching strategy** for optimal performance:
+```
+┌─────────────────────────────────────────────────────────┐
+│                     FastAPI Backend                      │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│  ┌──────────────┐    ┌────────────────┐                │
+│  │   REST API   │───▶│  Cache Manager │                │
+│  └──────────────┘    └────────────────┘                │
+│                              │                            │
+│                              ├──▶ Memory Cache (TTL)     │
+│                              ├──▶ SQLite Database        │
+│                              └──▶ Web Scraper            │
+│                                                           │
+│  ┌──────────────────┐    ┌─────────────────────┐       │
+│  │ Background Jobs  │    │  Midnight Sync      │       │
+│  │  - 2 Workers     │    │  - Scheduled sync   │       │
+│  │  - Rate limited  │    │  - Priority queue   │       │
+│  └──────────────────┘    └─────────────────────┘       │
+│                                                           │
+│  ┌──────────────────┐    ┌─────────────────────┐       │
+│  │ Search Engine    │    │  Email System       │       │
+│  │  - Full-text     │    │  - SMTP support     │       │
+│  │  - Multi-field   │    │  - Attachments      │       │
+│  └──────────────────┘    └─────────────────────┘       │
+│                                                           │
+└─────────────────────────────────────────────────────────┘
+```
 
-1. **Memory Layer (TTL Cache)**:
-   - Fastest, volatile cache with configurable TTL (default 15 minutes)
-   - Thread-safe with LRU eviction when full
-   - Holds recently accessed book info and chapter content
+### 3-Tier Caching Strategy
 
-2. **Database Layer (SQLite)**:
-   - Persistent cache stored in `/app/data/` volume
-   - Stores book metadata and chapter content
+1. **Memory Layer (TTL Cache)**
+   - ⚡ Fastest, volatile cache
+   - Configurable TTL (default: 15 minutes)
+   - Thread-safe with LRU eviction
+   - Holds recently accessed content
+
+2. **Database Layer (SQLite)**
+   - 💾 Persistent storage
    - Survives container restarts
+   - Stores book metadata and chapters
+   - Indexed for fast queries
 
-3. **Web Scraping Layer**:
-   - Fallback when cache misses occur
-   - Scrapes from m.xsw.tw (mobile site)
-   - Respects timeouts: 10s default, extended for batch operations
+3. **Web Scraping Layer**
+   - 🌐 Fallback when cache misses
+   - Scrapes from m.xsw.tw
+   - Rate-limited to avoid blocking
+   - Stores results to database
 
-**Key Backend Features:**
-- FastAPI REST API with OpenAPI documentation
-- Server-side pagination (20 chapters per page)
-- Extended timeouts for long-running operations (5 minutes for all chapters, 2 minutes for chapter content)
-- Traditional Chinese text conversion support
-- CORS enabled for cross-origin requests
-- Robust error handling with fallback strategies
-
-**Technology Stack:**
-- Python 3.11+
-- FastAPI for REST API
-- SQLAlchemy ORM for database operations
-- BeautifulSoup4 for HTML parsing
-- Pydantic for data validation
-- SQLite for persistent storage
-
-### Frontend Architecture
-
-Modern Vue 3 application with enterprise-grade state management:
-
-**Key Frontend Features:**
-- Vue 3 Composition API with `<script setup>` syntax
-- Pinia store for centralized state management
-- LocalStorage persistence for offline reading list
-- Quasar UI components for mobile-responsive design
-- Axios for API communication with dynamic timeouts
-- Chinese text conversion (Simplified ⟷ Traditional)
-- Dark mode support
-- Keyboard shortcuts (Arrow keys for navigation)
-- Floating navigation buttons with scroll tracking
-- Chapter list drawer with auto-scroll to current chapter
-
-**Technology Stack:**
-- Vue 3.5+ with TypeScript
-- Quasar Framework 2.16+
-- Pinia 3.0+ for state management
-- Vue Router 4.0+ for navigation
-- Axios 1.2+ for HTTP requests
-- OpenCC-JS for Chinese text conversion
-
-**State Management:**
-- Book metadata (author, title, chapter count)
-- All chapters cached in memory (with invalidation logic)
-- Current reading position tracking
-- Page-based pagination state
-- Previous/next chapter navigation
+---
 
 ## 🚀 Getting Started
 
@@ -85,10 +140,11 @@ Modern Vue 3 application with enterprise-grade state management:
 - Node.js 20+ (for local development)
 - Python 3.11+ (for local development)
 
-### Environment Variables
+### Quick Start with Docker
 
-Create a `.env` file in the project root:
+1. **Clone the repository**
 
+2. **Create environment file (.env):**
 ```bash
 # Backend Configuration
 BASE_URL=https://m.xsw.tw
@@ -99,155 +155,54 @@ CHAPTERS_PAGE_SIZE=20
 LOG_LEVEL=INFO
 
 # Database
-DATABASE_URL=sqlite:///./data/books.db
+DB_PATH=xsw_cache.db
 
-# Docker Image Configuration
+# Background Jobs
+BG_JOB_WORKERS=2
+BG_JOB_RATE_LIMIT=2.0
+
+# Midnight Sync
+MIDNIGHT_SYNC_HOUR=0
+MIDNIGHT_SYNC_MINUTE=0
+MIDNIGHT_SYNC_RATE_LIMIT=5.0
+
+# Periodic Sync (6 hours)
+PERIODIC_SYNC_INTERVAL=6
+PERIODIC_SYNC_PRIORITY=3
+
+# Docker
 img=xsw
 tag=latest
-
-# Python Package Index (if behind corporate firewall)
-BASE_URL=https://pypi.org/simple
-INDEX_URL=https://pypi.org/simple
-TRUSTED_HOST=pypi.org
 ```
 
-### Build & Deploy
-
-#### Build Backend (API)
-
+3. **Build and run:**
 ```bash
-docker compose -f compose.yml -f docker/build.yml up -d xsw --build
-```
-
-This builds the FastAPI backend service:
-- Exposes port 8000
-- Creates persistent volume `xsw_data` for SQLite database
-- Mounts `/app/data` for database storage
-
-#### Build Frontend (Web)
-
-```bash
-docker compose -f compose.yml -f docker/build.yml up -d web --build
-```
-
-This builds the Vue 3 SPA:
-- Exposes port 2345 (maps to internal port 80)
-- Serves static files via nginx
-- Includes built Quasar SPA
-
-#### Build Everything
-
-```bash
+# Build everything
 docker compose -f compose.yml -f docker/build.yml up -d --build
+
+# Or build separately
+docker compose -f compose.yml -f docker/build.yml up -d xsw --build  # Backend
+docker compose -f compose.yml -f docker/build.yml up -d web --build  # Frontend
 ```
 
-### Access the Application
+4. **Access the application:**
+- Frontend: http://localhost:2345
+- Backend API: http://localhost:8000
+- API Documentation: http://localhost:8000/xsw/api/docs
+- Health Check: http://localhost:8000/xsw/api/health
 
-- **Frontend**: http://localhost:2345
-- **Backend API**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/xsw/api/docs (Swagger UI)
-- **API Health**: http://localhost:8000/xsw/api/health
+### Default Admin Credentials
 
-## 🛠️ Development
+- **Username:** `admin`
+- **Password:** `admin`
 
-### Backend Development
+⚠️ **Security Note:** Change the admin password in production using the admin panel.
 
-1. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
+---
 
-2. Run the development server:
-```bash
-uvicorn main:app --reload --port 8000
-```
+## ⚙️ Configuration
 
-3. API will be available at:
-   - http://localhost:8000/xsw/api/docs (Swagger UI)
-   - http://localhost:8000/xsw/api/redoc (ReDoc)
-
-### Frontend Development
-
-1. Install Node.js dependencies:
-```bash
-npm install
-```
-
-2. Run the Quasar dev server:
-```bash
-npm run dev
-```
-
-3. Application will be available at: http://localhost:9000 (default Quasar port)
-
-4. Configure API endpoint in `src/boot/axios.ts`:
-```typescript
-api.defaults.baseURL = 'http://localhost:8000/xsw/api';
-```
-
-### Linting & Formatting
-
-```bash
-# Frontend
-npm run lint
-npm run format
-
-# Backend
-black *.py
-flake8 *.py
-```
-
-## 📂 Project Structure
-
-```
-xsw/
-├── backend/
-│   ├── main.py                 # FastAPI application entry
-│   ├── cache_manager.py        # Hybrid cache implementation
-│   ├── db_models.py           # SQLAlchemy models
-│   ├── db_utils.py            # Database utilities
-│   ├── parser.py              # HTML parsing logic
-│   └── requirements.txt       # Python dependencies
-│
-├── frontend/src/
-│   ├── boot/                  # Quasar boot files
-│   │   ├── axios.ts          # Axios configuration
-│   │   ├── appSettings.ts    # App settings
-│   │   └── books.ts          # Book store initialization
-│   ├── components/           # Vue components
-│   │   └── ConfigCard.vue   # Settings dialog
-│   ├── layouts/             # Page layouts
-│   │   └── MainLayout.vue   # Main app layout
-│   ├── pages/               # Route pages
-│   │   ├── ChapterPage.vue  # Chapter reading page
-│   │   └── ChaptersPage.vue # Chapter list page
-│   ├── services/            # Business logic
-│   │   ├── bookApi.ts       # API client
-│   │   ├── useAppConfig.ts  # App config composable
-│   │   └── utils.ts         # Utility functions
-│   ├── stores/              # Pinia stores
-│   │   ├── appSettings.ts   # App settings store
-│   │   └── books.ts         # Book data store
-│   ├── types/               # TypeScript types
-│   │   └── book-api.ts      # API type definitions
-│   └── router/              # Vue Router config
-│
-├── docker/
-│   ├── Dockerfile           # Backend container
-│   ├── Dockerfile.web       # Frontend container (nginx)
-│   └── build.yml           # Docker Compose build config
-│
-├── compose.yml             # Main Docker Compose config
-├── package.json           # Frontend dependencies
-├── quasar.config.ts       # Quasar framework config
-└── README.md             # This file
-```
-
-## 🔧 Configuration
-
-### Backend Configuration
-
-Modify `.env` or set environment variables:
+### Backend Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -256,165 +211,233 @@ Modify `.env` or set environment variables:
 | `CACHE_TTL_SECONDS` | `900` | Memory cache TTL (15 minutes) |
 | `CACHE_MAX_ITEMS` | `500` | Max items in memory cache |
 | `CHAPTERS_PAGE_SIZE` | `20` | Chapters per page |
-| `LOG_LEVEL` | `INFO` | Logging level |
-| `DATABASE_URL` | `sqlite:///./data/books.db` | Database connection string |
+| `DB_PATH` | `xsw_cache.db` | SQLite database path |
+| `BG_JOB_WORKERS` | `2` | Background worker threads |
+| `BG_JOB_RATE_LIMIT` | `2.0` | Seconds between background jobs |
+| `MIDNIGHT_SYNC_HOUR` | `0` | Hour to run midnight sync (0-23) |
+| `MIDNIGHT_SYNC_MINUTE` | `0` | Minute to run sync (0-59) |
+| `MIDNIGHT_SYNC_RATE_LIMIT` | `5.0` | Seconds between syncing books |
+| `PERIODIC_SYNC_INTERVAL` | `6` | Hours between periodic syncs |
+| `PERIODIC_SYNC_PRIORITY` | `3` | Priority for periodic sync jobs |
+| `RATE_LIMIT_ENABLED` | `true` | Enable/disable progressive rate limiting |
+| `RATE_LIMIT_WHITELIST` | `127.0.0.1,::1` | Comma-separated IPs/CIDRs to whitelist |
 
-### Frontend Configuration
+### Rate Limiting
 
-Modify `src/boot/axios.ts` for API endpoint:
+The API includes progressive rate limiting to prevent abuse. Requests are tracked per client IP in a 1-minute sliding window.
 
-```typescript
-api.defaults.baseURL = process.env.API_BASE_URL || '/xsw/api';
-api.defaults.timeout = 15000; // Default timeout
-```
+**Rate Limit Thresholds:**
+- **0-50 requests/min:** No delay (normal speed)
+- **51-100 requests/min:** 1 second delay per request
+- **101-200 requests/min:** 10 seconds delay per request
+- **201-500 requests/min:** 60 seconds (1 minute) delay per request
+- **500+ requests/min:** 300 seconds (5 minutes) delay per request
 
-Modify `quasar.config.ts` for build configuration:
+**Whitelist Support:**
+- Single IPs: `127.0.0.1`, `::1`
+- CIDR ranges: `10.0.0.0/8`, `192.168.0.0/16`
+- Multiple entries: Comma-separated in `RATE_LIMIT_WHITELIST`
 
-```typescript
-build: {
-  publicPath: '/xsw/', // Change for different deployment paths
-  vueRouterMode: 'hash', // 'hash' or 'history'
-}
-```
+**Admin Endpoint:**
+- `GET /admin/rate-limit/stats` - View active clients and request counts
 
-## 📋 API Endpoints
+---
 
-### Book Information
-- `GET /xsw/api/books/{book_id}` - Get book metadata
-- `GET /xsw/api/books/{book_id}/chapters` - Get chapter list (paginated or all)
-  - Query params: `page`, `all`, `nocache`
-- `GET /xsw/api/books/{book_id}/chapters/{chapter_num}` - Get chapter content
+## 📚 Features Documentation
 
-### Categories
-- `GET /xsw/api/categories` - List all categories
-- `GET /xsw/api/categories/{cat_id}/books` - Books in category
+### Background Job System
 
-### Search
-- `GET /xsw/api/search?q={query}` - Search books by name/author
+Automatically pre-caches books when browsing categories.
 
-### Admin (Cache Management)
-- `POST /xsw/api/admin/cache/chapters/page/clear` - Clear page cache
-- `POST /xsw/api/admin/cache/chapters/all/clear` - Clear all chapters cache
-- `POST /xsw/api/admin/cache/chapters/mapping/clear` - Clear URL mapping cache
+**See:** [BACKGROUND_JOBS.md](BACKGROUND_JOBS.md)
 
-### Health
-- `GET /xsw/api/health` - Service health check
+### Midnight Sync Queue
 
-## 🐛 Troubleshooting
+Deferred synchronization system that updates accessed books overnight.
 
-### Database Issues
+**See:** [MIDNIGHT_SYNC.md](MIDNIGHT_SYNC.md), [UNFINISHED_BOOKS_SYNC.md](UNFINISHED_BOOKS_SYNC.md)
 
-If you encounter corrupted cache data:
+### Two-Phase Loading
 
-1. Stop the services:
+Dramatically improves perceived performance - content appears in 1-2 seconds.
+
+**See:** [TWO_PHASE_LOADING.md](TWO_PHASE_LOADING.md)
+
+### Comprehensive Search
+
+Powerful full-text search across all content with relevance scoring.
+
+**See:** [SEARCH_API.md](SEARCH_API.md)
+
+### Admin Panel
+
+Comprehensive administrative interface with statistics and management tools.
+
+**See:** [ADMIN_PANEL.md](ADMIN_PANEL.md)
+
+### Frontend Improvements
+
+Modern, polished user experience with smooth loading and error handling.
+
+**See:** [FRONTEND_IMPROVEMENTS.md](FRONTEND_IMPROVEMENTS.md)
+
+---
+
+## 📋 API Documentation
+
+Full API documentation available at: http://localhost:8000/xsw/api/docs
+
+### Quick Reference
+
+**Book Management:**
+- `GET /books/{book_id}` - Get book metadata
+- `GET /books/{book_id}/chapters` - Get chapter list
+- `GET /books/{book_id}/chapters/{chapter_num}` - Get chapter content
+
+**Search:**
+- `GET /search?q=keyword` - Search books and content
+
+**Admin:**
+- `GET /admin/midnight-sync/stats` - Sync queue statistics
+- `POST /admin/midnight-sync/trigger` - Manually trigger sync
+- `POST /admin/smtp/test` - Test SMTP connection
+- `POST /admin/upload` - Upload file
+- `POST /admin/email/send` - Send email with attachments
+
+**Health:**
+- `GET /health` - System health check
+
+---
+
+## 🛠️ Development
+
+### Backend Development
+
 ```bash
-docker compose down
+# Install dependencies
+pip install -r requirements.txt
+
+# Run development server
+uvicorn main_optimized:app --reload --port 8000
+
+# Access API docs
+open http://localhost:8000/xsw/api/docs
 ```
 
-2. Clear the database volume:
+### Frontend Development
+
 ```bash
-docker volume rm xsw_xsw_data
+# Install dependencies
+npm install
+
+# Run Quasar dev server
+npm run dev
+
+# Access application
+open http://localhost:9000
 ```
 
-3. Clear backend memory cache via API:
-```bash
-curl -X POST http://localhost:8000/xsw/api/admin/cache/chapters/all/clear
-curl -X POST http://localhost:8000/xsw/api/admin/cache/chapters/page/clear
-curl -X POST http://localhost:8000/xsw/api/admin/cache/chapters/mapping/clear
-```
+---
 
-4. Restart services:
-```bash
-docker compose up -d
-```
+## 🚢 Deployment
 
-### Timeout Errors
-
-If you experience timeout errors when loading many chapters:
-
-- The backend uses extended timeouts (5 minutes for all chapters)
-- Check network connectivity to m.xsw.tw
-- Consider using the `nocache` parameter to bypass stale cache: `?nocache=true`
-
-### Navigation Not Working
-
-If prev/next chapter buttons don't work:
-
-- Ensure `currentChapterIndex` is being set in the book store
-- Check browser console for navigation errors
-- Verify that `allChapters` array is populated
-
-### Dark Mode Styling Issues
-
-If dark mode colors are incorrect:
-
-- Check that Quasar dark mode is enabled in settings
-- Verify CSS variables are defined in theme
-- Inspect element styles in browser dev tools
-
-## 📦 Production Deployment
-
-### Using Pre-built Images
+### Production Build
 
 ```bash
-# Pull images
-docker pull ${img}:${tag}
-docker pull ${img}:${tag}-web
+# Build all containers
+docker compose -f compose.yml -f docker/build.yml build
 
-# Run with production compose file
-docker compose -f compose.yml up -d
-```
-
-### Environment-specific Configuration
-
-Create environment-specific `.env` files:
-
-- `.env.development` - Local development
-- `.env.staging` - Staging environment
-- `.env.production` - Production environment
-
-Load with:
-```bash
+# Run with production config
 docker compose --env-file .env.production up -d
 ```
 
 ### Reverse Proxy (nginx)
 
-Example nginx configuration:
-
 ```nginx
 server {
-    listen 80;
+    listen 443 ssl http2;
     server_name xsw.example.com;
 
+    # Frontend
     location / {
         proxy_pass http://localhost:2345;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
     }
 
+    # Backend API
     location /xsw/api {
         proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 300s;
     }
 }
 ```
 
+---
+
+## 🐛 Troubleshooting
+
+### Database Issues
+
+```bash
+# Clear database
+docker compose down
+docker volume rm xsw_xsw_data
+docker compose up -d
+```
+
+### Background Jobs Not Processing
+
+```bash
+# Check worker status
+curl http://localhost:8000/xsw/api/admin/jobs/stats
+
+# Check logs
+docker logs xsw --tail 100 -f
+```
+
+### SMTP Email Issues
+
+```bash
+# Test SMTP connection
+curl -X POST http://localhost:8000/xsw/api/admin/smtp/test
+
+# Check SMTP logs
+docker logs xsw | grep "\[EmailSender\]"
+```
+
+---
+
+## 📂 Project Structure
+
+```
+xsw/
+├── backend/
+│   ├── main_optimized.py          # FastAPI application
+│   ├── cache_manager.py            # Cache system
+│   ├── db_models.py                # Database models
+│   ├── background_jobs.py          # Job queue
+│   ├── midnight_sync.py            # Midnight scheduler
+│   ├── periodic_sync.py            # Periodic scheduler
+│   ├── email_sender.py             # SMTP email
+│   └── parser.py                   # HTML parsing
+│
+├── frontend/src/
+│   ├── pages/                     # Route pages
+│   ├── components/                # Vue components
+│   ├── stores/                    # Pinia stores
+│   ├── services/                  # API clients
+│   └── i18n/                      # Translations
+│
+├── docker/                        # Docker configs
+├── compose.yml                    # Docker Compose
+└── docs/                         # Documentation
+```
+
+---
+
 ## 📄 License
 
 This project is for educational purposes only.
 
-## 🤝 Contributing
+---
 
-Contributions are welcome. Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 📧 Contact
-
-For issues or questions, please open a GitHub issue.
+**Built with ❤️ using FastAPI, Vue 3, and Quasar**
