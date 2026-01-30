@@ -1,0 +1,80 @@
+dhost=boleai02
+dpath=/ci/apps/xeus/ws
+dname=web
+xhost=bolezk03
+ximg=hpctw-docker-dev-local.boartifactory.micron.com/xsw
+xpath=/etl/python_env
+
+# Frontend build
+alias build="nvm use 22 && QUASAR_STAGING=1 npm run build -- --debug"
+
+# Frontend deploy - deploy SPA to nginx container
+alias deploy="
+echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' && \
+echo '📦 [1/4] Creating tarball from dist/spa...' && \
+tar czf dist/spa.tgz --transform='s|^dist/spa||' dist/spa/ && \
+echo '✓ Tarball created' && \
+echo '' && \
+echo '⬆️  [2/4] Uploading to ${dhost}:${dpath}...' && \
+scp -q dist/spa.tgz ${dhost}:${dpath} && \
+echo '✓ Upload complete' && \
+echo '' && \
+echo '📋 [3/4] Copying to container ${dname}:/tmp...' && \
+ssh ${dhost} docker exec kind docker cp ${dpath}/spa.tgz ${dname}:/tmp && \
+echo '✓ Copied to container' && \
+echo '' && \
+echo '📂 [4/4] Extracting to /usr/share/nginx/html...' && \
+ssh ${dhost} docker exec kind docker exec ${dname} tar xzf /tmp/spa.tgz -C /usr/share/nginx/html && \
+echo '✓ Extraction complete' && \
+echo '' && \
+echo '✅ Frontend deployment successful!' && \
+echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+"
+
+# Backend build
+alias xbuild="docker compose -f compose.yml -f docker/build.yml build xsw"
+
+# Backend deploy - deploy xsw backend container
+alias xdeploy="
+echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' && \
+echo '🏷️  [1/6] Tagging image as ${ximg}:latest...' && \
+docker tag oouyang/xsw:latest ${ximg}:latest && \
+echo '✓ Image tagged' && \
+echo '' && \
+echo '⬆️  [2/6] Pushing to registry...' && \
+docker push ${ximg}:latest && \
+echo '✓ Push complete' && \
+echo '' && \
+echo '⬇️  [3/6] Pulling on ${dhost}...' && \
+ssh ${dhost} docker pull ${ximg} && \
+echo '✓ Pull complete on ${dhost}' && \
+echo '' && \
+echo '💾 [4/6] Saving image on ${dhost} to ${xpath}/ximg.tgz...' && \
+ssh ${dhost} docker save ${ximg} -o ${xpath}/ximg.tgz && \
+echo '✓ Image saved' && \
+echo '' && \
+echo '📥 [5/6] Loading image on ${xhost}...' && \
+ssh ${xhost} docker load -i ${xpath}/ximg.tgz && \
+echo '✓ Image loaded on ${xhost}' && \
+echo '' && \
+echo '🔄 [6/6] Restarting xsw container on ${xhost}...' && \
+ssh ${xhost} docker compose -f /opt/nginx/docker-compose.yml down xsw && \
+ssh ${xhost} docker compose -f /opt/nginx/docker-compose.yml up -d xsw && \
+echo '✓ Container restarted' && \
+echo '' && \
+echo '✅ Backend deployment successful!' && \
+echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+"
+# Optimized aliases
+
+# Deploy - optimized with silent tar, parallel compression, combined SSH commands
+#alias deploy="tar czf dist/spa.tgz --transform='s|^dist/spa||' dist/spa/ && scp -C dist/spa.tgz ${dhost}:${dpath} && ssh ${dhost} 'docker exec kind docker cp ${dpath}/spa.tgz ${dname}:/tmp && docker exec kind docker exec ${dname} tar xzf /tmp/spa.tgz -C /usr/share/nginx/html && docker exec kind docker exec ${dname} rm /tmp/spa.tgz'"
+
+# Docker build - use buildkit for better caching
+# alias xbuild="DOCKER_BUILDKIT=1 docker compose -f compose.yml -f docker/build.yml build xsw"
+
+# Docker deploy - optimized with image streaming instead of save/load
+# alias xdeploy="docker tag oouyang/xsw:latest ${ximg}:latest && docker push ${ximg}:latest && ssh ${dhost} 'docker pull ${ximg}' && ssh ${xhost} 'docker pull ${ximg} && docker compose -f /opt/nginx/docker-compose.yml up -d --no-deps xsw'"
+
+# Quick deploy (no rebuild)
+# alias deploy-fast="tar czf dist/spa.tgz -C dist/spa . && scp -C dist/spa.tgz ${dhost}:${dpath} && ssh ${dhost} 'docker exec kind docker cp ${dpath}/spa.tgz ${dname}:/tmp && docker exec kind docker exec ${dname} sh -c \"rm -rf /usr/share/nginx/html/* && tar xzf /tmp/spa.tgz -C /usr/share/nginx/html && rm /tmp/spa.tgz\"'"
