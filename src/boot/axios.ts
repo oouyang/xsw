@@ -40,14 +40,15 @@ export default defineBoot(({ app }) => {
       }
       return config;
     },
-    (error) => Promise.reject(error)
+    (error: Error) => Promise.reject(error)
   );
 
   // Add response interceptor for auth errors
   api.interceptors.response.use(
     (response) => response,
-    (error) => {
-      if (error.response?.status === 401) {
+    (error: Error) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((error as any).response?.status === 401) {
         // Token expired or invalid - clear auth
         authService.clearAuth();
         console.log('[axios] 401 Unauthorized - Auth cleared');

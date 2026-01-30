@@ -32,10 +32,13 @@ export function detectBasePath(configBasePath?: string): string {
   // Check for other common patterns
   // e.g., /xsw/, /app/, etc.
   const match = pathname.match(/^(\/[^/]+)\//);
-  if (match && match[1] !== '/') {
-    // If the first segment looks like a base path (not a route)
-    // This is a heuristic - adjust based on your route structure
+  if (match && match[1]) {
     const firstSegment = match[1];
+
+    // Ignore root path
+    if (firstSegment === '/') {
+      return '/';
+    }
 
     // Known app routes that should NOT be treated as base paths
     const appRoutes = ['/books', '/chapters', '/dashboard'];

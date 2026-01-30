@@ -797,7 +797,9 @@ function initializeGoogleSignIn() {
   try {
     window.google.accounts.id.initialize({
       client_id: clientId,
-      callback: handleGoogleSignIn
+      callback: (response: { credential: string }) => {
+        void handleGoogleSignIn(response);
+      }
     });
 
     window.google.accounts.id.renderButton(googleButtonContainer.value, {
@@ -873,9 +875,10 @@ async function changePassword() {
     });
 
     closePasswordDialog();
-  } catch (error: any) {
+  } catch (error) {
     console.error('Failed to change password:', error);
-    const errorMessage = error.response?.status === 401
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorMessage = (error as any).response?.status === 401
       ? t('admin.incorrectPassword')
       : t('admin.passwordChangeFailed');
 
