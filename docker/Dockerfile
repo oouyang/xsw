@@ -18,18 +18,18 @@ ENV INDEX_URL=$INDEX_URL
 ENV TRUSTED_HOST=$TRUSTED_HOST
 
 WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
 RUN  if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
       pip config set global.index-url "${INDEX_URL}" && \
       pip config set global.trusted-host "${TRUSTED_HOST}"; \
     else \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
-    pip install --no-cache-dir fastapi uvicorn bs4 requests lxml ruff sqlalchemy opencc-python-reimplemented python-multipart
-    # && \
-    # apt-get update && \
-    # DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    #   curl jq && \
-    # rm -rf /var/lib/apt/lists/*
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir ruff
 
 COPY . .
 COPY --from=builder /web/dist /app/dist

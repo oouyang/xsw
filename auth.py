@@ -22,8 +22,8 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 ADMIN_EMAIL_WHITELIST_STR = os.getenv("ADMIN_EMAIL_WHITELIST", "")
 ADMIN_EMAIL_WHITELIST = [e.strip() for e in ADMIN_EMAIL_WHITELIST_STR.split(",") if e.strip()]
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing (using Argon2 for better security and compatibility)
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 # Security scheme for FastAPI
 security = HTTPBearer()
