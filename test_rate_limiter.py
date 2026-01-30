@@ -4,7 +4,6 @@ Test script for rate limiter functionality.
 Tests the RateLimiter class in isolation before deploying.
 """
 
-import time
 from rate_limiter import RateLimiter
 
 
@@ -168,7 +167,7 @@ def test_stats():
 
     stats = limiter.get_stats()
 
-    print(f"\nStatistics:")
+    print("\nStatistics:")
     print(f"   Active clients: {stats['active_clients']}")
     print(f"   Total requests in window: {stats['total_requests_in_window']}")
     print(f"   Whitelist IPs: {stats['whitelist_ips']}")
