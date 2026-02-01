@@ -1200,13 +1200,34 @@ async function testSMTPConnection() {
       message: response.data.message,
       position: 'top'
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Failed to test SMTP connection:', error);
     smtpSettings.value.last_test_status = 'error';
     smtpSettings.value.last_test_at = new Date().toLocaleString();
+
+    // Better error handling with specific messages
+    let errorMessage = t('admin.smtp.testFailed');
+
+    // Type guard for axios error
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosError = error as { response?: { status?: number; data?: { detail?: string; message?: string } } };
+      if (axiosError.response) {
+        // Server responded with error status
+        if (axiosError.response.status === 404) {
+          errorMessage = axiosError.response.data?.detail || t('admin.smtp.notConfigured');
+        } else if (axiosError.response.data?.detail) {
+          errorMessage = axiosError.response.data.detail;
+        } else if (axiosError.response.data?.message) {
+          errorMessage = axiosError.response.data.message;
+        }
+      }
+    } else if (error && typeof error === 'object' && 'message' in error) {
+      errorMessage = (error as { message: string }).message;
+    }
+
     $q.notify({
       type: 'negative',
-      message: t('admin.smtp.testFailed'),
+      message: errorMessage,
       position: 'top'
     });
   } finally {

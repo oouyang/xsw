@@ -441,7 +441,7 @@ function handleKeyPress(event: KeyboardEvent) {
   if (key === 'enter') {
     // Navigate to chapters list
     event.preventDefault();
-    router.push(`/book/${props.bookId}/chapters`);
+    void router.push(`/book/${props.bookId}/chapters`);
     return;
   }
 
@@ -450,7 +450,7 @@ function handleKeyPress(event: KeyboardEvent) {
     event.preventDefault();
     const canGoPrev = book.prevChapter && props.chapterNum > 1;
     if (canGoPrev && book.prevChapter) {
-      router.push(chapterLink(book.prevChapter.number, book.prevChapter.title));
+      void router.push(chapterLink(book.prevChapter.number, book.prevChapter.title));
     }
     return;
   }
@@ -461,7 +461,7 @@ function handleKeyPress(event: KeyboardEvent) {
     const isLastChapter = book.info?.last_chapter_number && props.chapterNum >= book.info.last_chapter_number;
     const canGoNext = book.nextChapter && !isLastChapter;
     if (canGoNext && book.nextChapter) {
-      router.push(chapterLink(book.nextChapter.number, book.nextChapter.title));
+      void router.push(chapterLink(book.nextChapter.number, book.nextChapter.title));
     }
     return;
   }
