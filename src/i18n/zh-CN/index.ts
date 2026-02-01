@@ -83,6 +83,7 @@ export default {
     estimatedReadingTime: '预计阅读时间',
     readingTimeMinutes: '{minutes} 分钟',
     readingTimeHoursMinutes: '{hours} 小时 {minutes} 分钟',
+    keyboardHint: '键盘快捷键：P (上一章) • N (下一章) • Enter (章节列表)',
   },
 
   // 分类
@@ -299,6 +300,7 @@ export default {
       lastTest: '最后测试',
       testSuccess: '连接成功',
       testFailed: '连接失败',
+      notConfigured: 'SMTP 尚未设置。请先保存设置。',
       saveSuccess: 'SMTP 设置保存成功',
       saveFailed: '保存 SMTP 设置失败',
     },

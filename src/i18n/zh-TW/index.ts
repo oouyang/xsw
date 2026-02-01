@@ -83,6 +83,7 @@ export default {
     estimatedReadingTime: '預計閱讀時間',
     readingTimeMinutes: '{minutes} 分鐘',
     readingTimeHoursMinutes: '{hours} 小時 {minutes} 分鐘',
+    keyboardHint: '鍵盤快捷鍵：P (上一章) • N (下一章) • Enter (章節列表)',
   },
 
   // 分類
@@ -299,6 +300,7 @@ export default {
       lastTest: '最後測試',
       testSuccess: '連接成功',
       testFailed: '連接失敗',
+      notConfigured: 'SMTP 尚未設定。請先儲存設定。',
       saveSuccess: 'SMTP 設定儲存成功',
       saveFailed: '儲存 SMTP 設定失敗',
     },

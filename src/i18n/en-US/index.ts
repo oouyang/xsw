@@ -83,6 +83,7 @@ export default {
     estimatedReadingTime: 'Estimated Reading Time',
     readingTimeMinutes: '{minutes} min',
     readingTimeHoursMinutes: '{hours} hr {minutes} min',
+    keyboardHint: 'Keyboard: P (Previous) • N (Next) • Enter (Chapter List)',
   },
 
   // Categories
@@ -299,6 +300,7 @@ export default {
       lastTest: 'Last Test',
       testSuccess: 'Connection successful',
       testFailed: 'Connection failed',
+      notConfigured: 'SMTP not configured. Please save settings first.',
       saveSuccess: 'SMTP settings saved successfully',
       saveFailed: 'Failed to save SMTP settings',
     },

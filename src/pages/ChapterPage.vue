@@ -87,6 +87,12 @@
       </q-card-section>
     </q-card>
 
+    <!-- Keyboard Navigation Instructions -->
+    <div class="q-my-md text-center text-caption text-grey-7">
+      <q-icon name="keyboard" size="xs" class="q-mr-xs" />
+      {{ $t('chapter.keyboardHint') }}
+    </div>
+
     <!-- Bottom Navigation -->
     <div class="row q-my-md q-gutter-sm justify-center">
       <q-btn
@@ -138,6 +144,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
 import { getChapterContent } from 'src/services/bookApi';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { nextTick } from 'process';
@@ -149,6 +156,7 @@ const { t } = useI18n();
 const { config, update } = useAppConfig();
 const fontsize = computed(() => Number(config.value.fontsize) || 7)
 const { convertIfNeeded } = useTextConversion();
+const router = useRouter();
 
 const props = defineProps<{ bookId: string; chapterNum: number; chapterTitle?: string }>();
 const title = ref('');
@@ -415,6 +423,50 @@ async function load() {
   }
 }
 
+/**
+ * Handle keyboard shortcuts for navigation
+ * - Enter: Go to chapters list
+ * - P: Previous chapter
+ * - N: Next chapter
+ */
+function handleKeyPress(event: KeyboardEvent) {
+  // Ignore if user is typing in an input field
+  const target = event.target as HTMLElement;
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+
+  if (key === 'enter') {
+    // Navigate to chapters list
+    event.preventDefault();
+    router.push(`/book/${props.bookId}/chapters`);
+    return;
+  }
+
+  if (key === 'p') {
+    // Previous chapter
+    event.preventDefault();
+    const canGoPrev = book.prevChapter && props.chapterNum > 1;
+    if (canGoPrev && book.prevChapter) {
+      router.push(chapterLink(book.prevChapter.number, book.prevChapter.title));
+    }
+    return;
+  }
+
+  if (key === 'n') {
+    // Next chapter
+    event.preventDefault();
+    const isLastChapter = book.info?.last_chapter_number && props.chapterNum >= book.info.last_chapter_number;
+    const canGoNext = book.nextChapter && !isLastChapter;
+    if (canGoNext && book.nextChapter) {
+      router.push(chapterLink(book.nextChapter.number, book.nextChapter.title));
+    }
+    return;
+  }
+}
+
 onMounted(async () => {
   await loadMeta();
   await load();
@@ -426,6 +478,9 @@ onMounted(async () => {
   }
 
   console.log('fontsize ', fontsize.value)
+
+  // Add keyboard navigation listener
+  window.addEventListener('keydown', handleKeyPress);
 });
 
 // Track the current loading request to prevent race conditions
@@ -470,6 +525,9 @@ onBeforeUnmount(() => {
   if (debounceTimer) {
     clearTimeout(debounceTimer);
   }
+
+  // Remove keyboard navigation listener
+  window.removeEventListener('keydown', handleKeyPress);
 });
 </script>
 
