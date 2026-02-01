@@ -22,19 +22,22 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-RUN  if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
       pip config set global.index-url "${INDEX_URL}" && \
       pip config set global.trusted-host "${TRUSTED_HOST}"; \
     else \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir ruff
+    pip install -r requirements.txt && \
+    pip install ruff
 
 COPY . .
 COPY --from=builder /web/dist /app/dist
 ARG BASE_URL
+ARG AUTH_ENABLED
 ENV BASE_URL=$BASE_URL
+ENV AUTH_ENABLED=$AUTH_ENABLED
 ENV DB_PATH=/app/data/xsw_cache.db
 
 # Create data directory for database persistence

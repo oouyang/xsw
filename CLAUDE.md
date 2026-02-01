@@ -200,13 +200,56 @@ With sequential indexing, validation is strict:
 - Frontend **always** searches by number, never by index
 - Use `findIndex()` to locate chapters, never calculate index from number
 
+## Routing Architecture
+
+### API Router Pattern
+
+**CRITICAL**: All API endpoints use `api_router`, NOT direct `@app` decorators.
+
+```python
+# main_optimized.py structure:
+api_router = APIRouter()  # Line 169
+
+# Define ALL routes on api_router
+@api_router.get("/health")
+def health():
+    pass
+
+# Include router at END of file (line 1702)
+app.include_router(api_router, prefix="/xsw/api")
+```
+
+**Why This Matters**:
+- Routes must be defined BEFORE router inclusion
+- Never mount StaticFiles at `/` (blocks all routes)
+- API prefix `/xsw/api` added via `include_router()`
+- See [docs/ROUTING_FIX.md](docs/ROUTING_FIX.md) for full technical details
+
+### Static File Serving
+
+SPA and static assets are served without blocking API routes:
+- `/` → SPA index.html (route handler)
+- `/assets/*` → Mounted StaticFiles
+- `/icons/*` → Mounted StaticFiles
+- `/{file}.{ext}` → Route handler for config.json, favicon.ico, etc.
+- SPA fallback middleware for client-side routing
+
 ## Common Patterns
 
 ### Adding New API Endpoints
-1. Add endpoint in `main_optimized.py`
-2. Use `cache_mgr.cache_manager` for caching
-3. Handle `HTTPException` for errors
-4. Return Pydantic models for type safety
+1. Add endpoint in `main_optimized.py` using `@api_router` decorator
+2. Define route BEFORE the `app.include_router()` call (before line 1702)
+3. Use `cache_mgr.cache_manager` for caching
+4. Handle `HTTPException` for errors
+5. Return Pydantic models for type safety
+
+Example:
+```python
+# Add around line 300-1650 (before router inclusion)
+@api_router.get("/my-endpoint")
+def my_endpoint():
+    return {"status": "ok"}
+```
 
 ### Adding Frontend Features
 1. Create API client method in `src/services/bookApi.ts`
@@ -248,6 +291,24 @@ BASE_URL=https://m.xsw.tw      # Scraping target
 DB_PATH=xsw_cache.db           # SQLite database
 CACHE_TTL_SECONDS=900          # Memory cache TTL
 HTTP_TIMEOUT=10                # Request timeout
+AUTH_ENABLED=true              # Enable/disable authentication (default: true)
+```
+
+### Authentication Control
+
+Set `AUTH_ENABLED=false` to disable authentication:
+- All admin endpoints accessible without JWT tokens
+- Useful for local development and testing
+- Not recommended for production deployments
+
+```bash
+# Development without auth
+export AUTH_ENABLED=false
+uvicorn main_optimized:app --reload
+
+# Production with auth (default)
+export AUTH_ENABLED=true
+docker compose up -d
 ```
 
 ## Testing
@@ -261,15 +322,42 @@ Currently no automated tests. Manual testing workflow:
 ## Documentation References
 
 - **README.md** - Full feature overview and setup
-- **TWO_PHASE_LOADING.md** - Frontend loading strategy
-- **SEARCH_API.md** - Full-text search implementation
-- **ADMIN_PANEL.md** - Admin features
-- **SQLITE_BATCH_FIX.md** - Batch commit optimization
+- **docs/TWO_PHASE_LOADING.md** - Frontend loading strategy
+- **docs/SEARCH_API.md** - Full-text search implementation
+- **docs/ADMIN_PANEL.md** - Admin features
+- **docs/SQLITE_BATCH_FIX.md** - Batch commit optimization
+- **docs/ROUTING_FIX.md** - API routing architecture and 404 fix explanation
 
 ## Recent Major Changes
+
+### February 2026
+
+1. **API Routing Refactor** (Feb 1, 2026) - Fixed 404 errors for all API endpoints
+   - Introduced APIRouter pattern for all `/xsw/api/*` routes
+   - Removed blocking StaticFiles mount at root
+   - Proper route precedence over static file serving
+   - See [docs/ROUTING_FIX.md](docs/ROUTING_FIX.md) for technical details
+
+2. **Authentication Control** (Feb 1, 2026) - Added `AUTH_ENABLED` environment variable
+   - Can disable authentication for development with `AUTH_ENABLED=false`
+   - All admin endpoints accessible without JWT when disabled
+   - Configured in [auth.py](auth.py#L17) and [docker/Dockerfile](docker/Dockerfile#L40)
+
+3. **Docker Build Optimization** (Feb 1, 2026) - Added pip cache mounting
+   - Speeds up rebuilds by caching Python packages
+   - Similar to existing npm cache in builder stage
+   - See [docker/Dockerfile:25](docker/Dockerfile#L25)
+
+### January 2026
 
 1. **Sequential Indexing** (Jan 2026) - Changed from parsed chapter numbers to sequential indices (1, 2, 3, ...)
 2. **Removed Background Jobs** (Jan 2026) - Simplified backend by removing all automatic sync systems
 3. **Number-Based Filtering** (Jan 2026) - Fixed all locations that assumed `chapter.number = index + 1`
 
-When making changes, always verify that the sequential indexing and number-based filtering principles are maintained.
+## Important Principles
+
+When making changes, always verify:
+1. **Sequential indexing** - Chapters numbered 1, 2, 3... regardless of title
+2. **Number-based filtering** - Never use index slicing, always filter by chapter.number
+3. **Router pattern** - All API routes use `@api_router`, included at end of file
+4. **No root mounts** - Never mount StaticFiles at `/`, use selective paths only

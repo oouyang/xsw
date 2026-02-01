@@ -422,7 +422,7 @@ class ChapterContent(BaseModel):
 # App
 # -----
 app = FastAPI(
-    title="小說網 API",
+    title="看小說 API",
     version="1.0.0",
     root_path="/xsw/api"  # This adds /api as a prefix for all routes
 )

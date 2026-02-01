@@ -16,6 +16,7 @@ services:
       - xsw_data:/app/data
     environment:
       - no_proxy=.micron.com,127.0.0.0/8,localhost,10.38.138.123
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile

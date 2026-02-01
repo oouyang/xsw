@@ -573,7 +573,7 @@ watch(showDialog, (newVal) => {
 // Admin login state
 const isAdminLoggedIn = ref(false);
 const currentUser = ref<AuthUser | null>(null);
-const passwordEmail = ref('admin@localhost');
+const passwordEmail = ref('admin@example.com');
 const passwordPassword = ref('');
 const adminLoading = ref(false);
 const statsLoading = ref(false);
@@ -757,7 +757,7 @@ function logout() {
   authService.clearAuth();
   isAdminLoggedIn.value = false;
   currentUser.value = null;
-  passwordEmail.value = 'admin@localhost';
+  passwordEmail.value = 'admin@example.com';
   passwordPassword.value = '';
   activeTab.value = 'stats';
   $q.notify({

@@ -9,10 +9,10 @@ from typing import List, Optional
 from contextlib import asynccontextmanager
 from datetime import datetime
 from db_models import init_database
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Depends, status
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Depends, status, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import requests
@@ -161,10 +161,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="看小說 API (Optimized)",
     version="2.0.0",
-    root_path="/xsw/api",
     description="Optimized API with SQLite database-first caching",
     lifespan=lifespan
 )
+
+# Create API router for all API endpoints
+api_router = APIRouter()
 
 # -----------------------
 # Rate Limiting Middleware
@@ -216,19 +218,77 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add simple health check at root level (for monitoring)
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    return {"ok": True}
+
 # Mount SPA static files (assets, js, css)
 spa_dir = "/app/dist/spa"
-spa_index_html = os.path.join(spa_dir, "index.html") if os.path.exists(spa_dir) else None
+# spa_index_html = os.path.join(spa_dir, "index.html") if os.path.exists(spa_dir) else None
 
 if os.path.exists(spa_dir):
-    # Mount static assets under /spa (js, css, fonts, etc.)
-    app.mount("/spa", StaticFiles(directory=spa_dir, html=False), name="spa")
+    INDEX_FILE = Path(spa_dir) / "index.html"
 
+    # 1) Serve / (and /index.html) explicitly
+    @app.get("/", include_in_schema=False)
+    async def spa_root() -> FileResponse:
+        return FileResponse(INDEX_FILE, media_type="text/html")
+
+    # 2) Mount static assets at /assets (avoid mounting at root which catches all paths)
+    assets_dir = os.path.join(spa_dir, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    # 3) Mount icons
+    icons_dir = os.path.join(spa_dir, "icons")
+    if os.path.exists(icons_dir):
+        app.mount("/icons", StaticFiles(directory=icons_dir), name="icons")
+
+    # 4) Serve other root-level static files manually
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return FileResponse(os.path.join(spa_dir, "favicon.ico"))
+
+    @app.get("/{filename}.{ext}", include_in_schema=False)
+    async def spa_static_files(filename: str, ext: str):
+        """Serve static files like config.json, opc.pem, etc."""
+        filepath = os.path.join(spa_dir, f"{filename}.{ext}")
+        if os.path.exists(filepath) and os.path.isfile(filepath):
+            return FileResponse(filepath)
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # 5) SPA history-mode fallback:
+    #    - Only for paths under "/" that are NOT API calls and NOT obvious assets
+    @app.middleware("http")
+    async def spa_history_mode_fallback(request: Request, call_next):
+        # Let normal routing/StaticFiles try first (APIs, real files, etc.)
+        response: Response = await call_next(request)
+
+        if response.status_code != 404:
+            return response
+
+        path = request.url.path or ""
+
+        # DO NOT touch API paths (these are handled by routers behind root_path)
+        # Externally, APIs are /xsw/api/**, but internally Starlette still sees paths
+        # without root_path. If you also mount/route with "/xsw/api" prefixes locally,
+        # keep this guard; otherwise you can remove it.
+        if path.startswith("/xsw/api"):
+            return response
+
+        # Heuristic: if the last segment has no dot => likely a client route, not a file.
+        last_seg = path.rsplit("/", 1)[-1]
+        if "." not in last_seg and INDEX_FILE.exists():
+            return FileResponse(INDEX_FILE, media_type="text/html")
+
+        # For missing real files, keep 404
+        return response
 
 # -----------------------
-# Routes
+# API Routes
 # -----------------------
-@app.get("/health")
+@api_router.get("/health")
 def health():
     """Health check with cache stats."""
     cache_stats = cache_mgr.cache_manager.get_stats() if cache_mgr.cache_manager else {}
@@ -240,7 +300,7 @@ def health():
     }
 
 
-@app.get("/categories", response_model=List[Category])
+@api_router.get("/categories", response_model=List[Category])
 def get_categories():
     """Get categories from homepage."""
     try:
@@ -276,7 +336,7 @@ def get_categories():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/categories/{cat_id}/books", response_model=List[BookSummary])
+@api_router.get("/categories/{cat_id}/books", response_model=List[BookSummary])
 def list_books_in_category(
     cat_id: int,
     page: int = Query(1, ge=1),
@@ -299,7 +359,7 @@ def list_books_in_category(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/books/{book_id}", response_model=BookInfo)
+@api_router.get("/books/{book_id}", response_model=BookInfo)
 def get_book_info(book_id: str):
     """
     Get book metadata.
@@ -334,7 +394,7 @@ def get_book_info(book_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/books/{book_id}/chapters", response_model=List[ChapterRef])
+@api_router.get("/books/{book_id}/chapters", response_model=List[ChapterRef])
 def get_book_chapters(
     book_id: str,
     page: int = Query(1, ge=1),
@@ -523,7 +583,7 @@ def fetch_all_chapters_from_pagination(book_id: str) -> list:
     return all_items
 
 
-@app.get("/books/{book_id}/chapters/{chapter_num}", response_model=ChapterContent)
+@api_router.get("/books/{book_id}/chapters/{chapter_num}", response_model=ChapterContent)
 def get_chapter_content(
     book_id: str,
     chapter_num: int,
@@ -700,7 +760,7 @@ def _extract_snippet(text: str, query: str, context_chars: int = 100) -> str:
     return snippet
 
 
-@app.get("/search")
+@api_router.get("/search")
 def search_comprehensive(
     q: str = Query(..., min_length=1, description="Search query"),
     search_type: str = Query("all", description="Search scope: all, books, chapters, content"),
@@ -901,7 +961,7 @@ class PasswordChangeRequest(BaseModel):
     new_password: str
 
 
-@app.post("/auth/google", response_model=AuthResponse)
+@api_router.post("/auth/google", response_model=AuthResponse)
 async def authenticate_with_google(request: GoogleAuthRequest):
     """
     Authenticate admin user with Google OAuth2 token.
@@ -983,7 +1043,7 @@ async def authenticate_with_google(request: GoogleAuthRequest):
         )
 
 
-@app.post("/auth/password", response_model=AuthResponse)
+@api_router.post("/auth/password", response_model=AuthResponse)
 async def authenticate_with_password(request: PasswordAuthRequest):
     """
     Authenticate admin user with email and password.
@@ -1042,7 +1102,7 @@ async def authenticate_with_password(request: PasswordAuthRequest):
         session.close()
 
 
-@app.post("/auth/password/change")
+@api_router.post("/auth/password/change")
 async def change_password(
     request: PasswordChangeRequest,
     auth: TokenPayload = Depends(require_admin_auth)
@@ -1086,7 +1146,7 @@ async def change_password(
         session.close()
 
 
-@app.get("/auth/verify")
+@api_router.get("/auth/verify")
 async def verify_token(auth: TokenPayload = Depends(require_admin_auth)):
     """
     Verify if current JWT token is valid.
@@ -1102,21 +1162,21 @@ async def verify_token(auth: TokenPayload = Depends(require_admin_auth)):
 # -----------------------
 # Admin Endpoints
 # -----------------------
-@app.post("/admin/cache/clear")
+@api_router.post("/admin/cache/clear")
 def clear_memory_cache(auth: TokenPayload = Depends(require_admin_auth)):
     """Clear in-memory cache (DB remains intact)."""
     cache_mgr.cache_manager.clear_memory_cache()
     return {"status": "cleared", "message": "Memory cache cleared"}
 
 
-@app.post("/admin/cache/invalidate/{book_id}")
+@api_router.post("/admin/cache/invalidate/{book_id}")
 def invalidate_book_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
     """Invalidate memory cache for a specific book (DB remains intact)."""
     cache_mgr.cache_manager.invalidate_book(book_id)
     return {"status": "invalidated", "book_id": book_id, "scope": "memory_only"}
 
 
-@app.delete("/admin/cache/chapters/{book_id}")
+@api_router.delete("/admin/cache/chapters/{book_id}")
 def delete_book_chapters_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
     """Delete all chapter records for a book from database and memory cache."""
     deleted_count = cache_mgr.cache_manager.delete_book_chapters(book_id)
@@ -1128,13 +1188,13 @@ def delete_book_chapters_cache(book_id: str, auth: TokenPayload = Depends(requir
     }
 
 
-@app.get("/admin/stats")
+@api_router.get("/admin/stats")
 def get_cache_stats(auth: TokenPayload = Depends(require_admin_auth)):
     """Get detailed cache statistics."""
     return cache_mgr.cache_manager.get_stats()
 
 
-@app.get("/admin/rate-limit/stats")
+@api_router.get("/admin/rate-limit/stats")
 def get_rate_limit_stats(auth: TokenPayload = Depends(require_admin_auth)):
     """Get rate limiter statistics."""
     if not RATE_LIMIT_ENABLED or rate_limiter is None:
@@ -1152,7 +1212,7 @@ def get_rate_limit_stats(auth: TokenPayload = Depends(require_admin_auth)):
 # ============================================
 
 
-@app.get("/admin/smtp/settings")
+@api_router.get("/admin/smtp/settings")
 def get_smtp_settings(auth: TokenPayload = Depends(require_admin_auth)):
     """Get current SMTP settings (password masked)."""
     import db_models
@@ -1187,7 +1247,7 @@ def get_smtp_settings(auth: TokenPayload = Depends(require_admin_auth)):
         session.close()
 
 
-@app.post("/admin/smtp/settings")
+@api_router.post("/admin/smtp/settings")
 def save_smtp_settings(
     smtp_host: str = Query(...),
     smtp_port: int = Query(...),
@@ -1252,7 +1312,7 @@ def save_smtp_settings(
         session.close()
 
 
-@app.post("/admin/smtp/test")
+@api_router.post("/admin/smtp/test")
 def test_smtp_connection(auth: TokenPayload = Depends(require_admin_auth)):
     """Test SMTP connection with current settings."""
     import db_models
@@ -1293,7 +1353,7 @@ def test_smtp_connection(auth: TokenPayload = Depends(require_admin_auth)):
         session.close()
 
 
-@app.post("/admin/email/send")
+@api_router.post("/admin/email/send")
 def send_email(
     to_email: str = Query(...),
     subject: str = Query(...),
@@ -1377,7 +1437,7 @@ def send_email(
     return result
 
 
-@app.post("/admin/upload")
+@api_router.post("/admin/upload")
 async def upload_file(file: UploadFile = File(...), auth: TokenPayload = Depends(require_admin_auth)):
     """
     Upload a file to the /dist/spa/upload folder.
@@ -1416,7 +1476,7 @@ async def upload_file(file: UploadFile = File(...), auth: TokenPayload = Depends
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
 
-@app.post("/admin/alert/chapter-validation")
+@api_router.post("/admin/alert/chapter-validation")
 def send_chapter_validation_alert(
     book_id: str = Query(...),
     book_name: str = Query(...),
@@ -1548,7 +1608,7 @@ def send_chapter_validation_alert(
     }
 
 
-@app.get("/by-url/chapters", response_model=List[ChapterRef])
+@api_router.get("/by-url/chapters", response_model=List[ChapterRef])
 def chapters_by_url(book_url: str = Query(...)):
     """
     Fetch chapters by raw book URL (root or page-1).
@@ -1571,7 +1631,7 @@ def chapters_by_url(book_url: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/by-url/content", response_model=ChapterContent)
+@api_router.get("/by-url/content", response_model=ChapterContent)
 def content_by_url(chapter_url: str = Query(...)):
     """
     Fetch chapter content directly by its URL.
@@ -1607,33 +1667,39 @@ def content_by_url(chapter_url: str = Query(...)):
 # -----------------------
 # SPA Serving Routes
 # -----------------------
-@app.get("/")
-async def serve_spa_root():
-    """Serve Vue SPA at root path."""
-    if spa_index_html and os.path.exists(spa_index_html):
-        return FileResponse(spa_index_html)
-    return {"message": "Vue SPA not found. Build the frontend first with 'npm run build'"}
+# @api_router.get("/")
+# async def serve_spa_root():
+#     """Serve Vue SPA at root path."""
+#     if spa_index_html and os.path.exists(spa_index_html):
+#         return FileResponse(spa_index_html)
+#     return {"message": "Vue SPA not found. Build the frontend first with 'npm run build'"}
 
 
-@app.get("/{full_path:path}")
-async def serve_spa_catch_all(full_path: str):
-    """
-    Catch-all route for Vue Router client-side routing.
-    Serves index.html for any non-API routes to enable SPA navigation.
+# @api_router.get("/{full_path:path}")
+# async def serve_spa_catch_all(full_path: str):
+#     """
+#     Catch-all route for Vue Router client-side routing.
+#     Serves index.html for any non-API routes to enable SPA navigation.
 
-    API routes are under /xsw/api/* (handled by root_path)
-    Static assets are under /spa/* (handled by StaticFiles mount)
-    All other routes serve the Vue SPA index.html
-    """
-    # Don't intercept API routes (with root_path /xsw/api)
-    if full_path.startswith("xsw/api/"):
-        raise HTTPException(status_code=404, detail="API endpoint not found")
+#     API routes are under /xsw/api/* (handled by root_path)
+#     Static assets are under /spa/* (handled by StaticFiles mount)
+#     All other routes serve the Vue SPA index.html
+#     """
+#     # Don't intercept API routes (with root_path /xsw/api)
+#     if full_path.startswith("xsw/api/"):
+#         raise HTTPException(status_code=404, detail="API endpoint not found")
 
-    # Serve index.html for all SPA routes
-    if spa_index_html and os.path.exists(spa_index_html):
-        return FileResponse(spa_index_html)
+#     # Serve index.html for all SPA routes
+#     if spa_index_html and os.path.exists(spa_index_html):
+#         return FileResponse(spa_index_html)
 
-    raise HTTPException(status_code=404, detail="Vue SPA not built. Run 'npm run build' first.")
+#     raise HTTPException(status_code=404, detail="Vue SPA not built. Run 'npm run build' first.")
+
+# -----------------------
+# Include API Router
+# -----------------------
+# IMPORTANT: This must be done AFTER all route definitions above
+app.include_router(api_router, prefix="/xsw/api")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ The admin panel now supports two authentication methods:
 
 2. **Password Authentication** (Fallback, Emergency Access Only)
    - Email/password login
-   - Default admin account: `admin@localhost` / `admin`
+   - Default admin account: `admin@example.com` / `admin`
    - Hidden in UI, available in collapsible section
 
 ---
@@ -183,7 +183,7 @@ Add the email addresses that should have admin access to `ADMIN_EMAIL_WHITELIST`
 
 ### Step 3: Database Migration
 
-The `AdminUser` table will be created automatically when the application starts. The default admin user (`admin@localhost` / `admin`) will also be created if no admin users exist.
+The `AdminUser` table will be created automatically when the application starts. The default admin user (`admin@example.com` / `admin`) will also be created if no admin users exist.
 
 ### Step 4: Restart the Application
 
@@ -263,13 +263,13 @@ npm run dev
 
 1. Expand the **"Password Login (Fallback)"** section
 2. Enter:
-   - **Email**: `admin@localhost`
+   - **Email**: `admin@example.com`
    - **Password**: `admin` (default, change immediately!)
 3. Click **"Login"**
 4. The admin panel should open
 5. You should see:
    - Default account icon (no profile picture)
-   - Email: `admin@localhost`
+   - Email: `admin@example.com`
    - A grey chip with "Password" label
 
 ### Test 3: Protected Endpoints
@@ -304,6 +304,7 @@ npm run dev
 **Symptoms**: Google OAuth popup shows "redirect_uri_mismatch" error.
 
 **Solution**:
+
 1. Go to [Google Cloud Console Credentials](https://console.cloud.google.com/apis/credentials)
 2. Click on your OAuth 2.0 Client ID
 3. Verify **Authorized JavaScript origins** includes your current URL:
@@ -431,7 +432,7 @@ npm run dev
 
 ### 5. Password Authentication
 
-- **Change Default Password**: Immediately change `admin@localhost` / `admin` in production
+- **Change Default Password**: Immediately change `admin@example.com` / `admin` in production
 - **Strong Passwords**: Minimum 12 characters, mix of upper/lower/numbers/symbols
 - **Consider Disabling**: In production, consider disabling password auth entirely (Google SSO only)
 - **Emergency Access Only**: Treat password login as last resort
@@ -468,12 +469,12 @@ If you lose access to your Google account:
 
 1. Use password authentication (fallback)
 2. Expand "Password Login (Fallback)" section
-3. Log in with `admin@localhost` / `admin` (or your changed password)
+3. Log in with `admin@example.com` / `admin` (or your changed password)
 4. This works even if Google SSO is unavailable
 
 ### Scenario 2: Forgot Password
 
-If you forgot the password for `admin@localhost`:
+If you forgot the password for `admin@example.com`:
 
 1. Access the server directly (SSH or console)
 2. Run Python shell:
@@ -481,12 +482,13 @@ If you forgot the password for `admin@localhost`:
    python
    ```
 3. Reset password:
+
    ```python
    from db_models import db_manager, AdminUser
    from auth import hash_password
 
    session = db_manager.get_session()
-   admin = session.query(AdminUser).filter_by(email='admin@localhost').first()
+   admin = session.query(AdminUser).filter_by(email='admin@example.com').first()
    if admin:
        admin.password_hash = hash_password('new-password-here')
        session.commit()
@@ -495,6 +497,7 @@ If you forgot the password for `admin@localhost`:
        print("Admin user not found")
    session.close()
    ```
+
 4. Log in with the new password
 
 ### Scenario 3: Locked Out Completely
@@ -516,7 +519,7 @@ If the `AdminUser` table is corrupted:
    rm xsw.db  # or your database file name
    ```
 3. Restart application (will recreate database with default admin)
-4. Log in with `admin@localhost` / `admin`
+4. Log in with `admin@example.com` / `admin`
 5. Immediately change the default password
 
 ---
@@ -528,6 +531,7 @@ If the `AdminUser` table is corrupted:
 For dev, staging, and production environments:
 
 **Development (.env.dev)**:
+
 ```bash
 GOOGLE_CLIENT_ID=dev-client-id.apps.googleusercontent.com
 ADMIN_EMAIL_WHITELIST=dev@example.com
@@ -536,6 +540,7 @@ JWT_EXPIRATION_HOURS=24
 ```
 
 **Production (.env.prod)**:
+
 ```bash
 GOOGLE_CLIENT_ID=prod-client-id.apps.googleusercontent.com
 ADMIN_EMAIL_WHITELIST=admin@company.com,manager@company.com
@@ -569,6 +574,7 @@ JWT_EXPIRATION_HOURS=1    # 1 hour
 ### Monitoring Authentication
 
 Add monitoring to track:
+
 - Failed login attempts
 - Token expirations
 - Google SSO vs password login usage

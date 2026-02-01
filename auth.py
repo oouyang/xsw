@@ -5,7 +5,7 @@ Supports Google OAuth2 and password-based authentication with JWT tokens.
 import os
 import jwt
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from passlib.context import CryptContext
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -14,6 +14,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 # Configuration
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() == "true"
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
@@ -26,7 +27,8 @@ ADMIN_EMAIL_WHITELIST = [e.strip() for e in ADMIN_EMAIL_WHITELIST_STR.split(",")
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 # Security scheme for FastAPI
-security = HTTPBearer()
+# auto_error=False allows optional auth when AUTH_ENABLED=false
+security = HTTPBearer(auto_error=False)
 
 
 class TokenPayload(BaseModel):
@@ -150,11 +152,13 @@ def decode_jwt_token(token: str) -> TokenPayload:
 
 
 async def require_admin_auth(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> TokenPayload:
     """
     FastAPI dependency to require admin authentication.
     Use this to protect admin endpoints.
+
+    Can be disabled via AUTH_ENABLED=false environment variable.
 
     Example:
         @app.get("/admin/stats")
@@ -162,6 +166,15 @@ async def require_admin_auth(
             # Auth verified, proceed
             pass
     """
+    # Bypass authentication if AUTH_ENABLED is false
+    if not AUTH_ENABLED:
+        return TokenPayload(
+            sub="admin@localhost",
+            auth_method="disabled",
+            exp=datetime.utcnow() + timedelta(hours=24),
+            iat=datetime.utcnow()
+        )
+
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -184,7 +197,12 @@ def init_admin_users(db_manager):
     """
     Initialize admin users table with default password admin if no users exist.
     Call this during application startup.
+    Skips initialization if AUTH_ENABLED is false.
     """
+    if not AUTH_ENABLED:
+        print("[AUTH] Authentication disabled (AUTH_ENABLED=false), skipping admin user initialization")
+        return
+
     from db_models import AdminUser
 
     session = db_manager.get_session()

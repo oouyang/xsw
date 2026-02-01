@@ -24,6 +24,7 @@ A full-stack Chinese novel reading platform with intelligent caching, background
 ### Tech Stack
 
 **Backend:**
+
 - Python 3.11+ with FastAPI
 - SQLAlchemy ORM with SQLite database
 - BeautifulSoup4 for HTML parsing
@@ -31,6 +32,7 @@ A full-stack Chinese novel reading platform with intelligent caching, background
 - SMTP email support with attachments
 
 **Frontend:**
+
 - Vue 3.5+ with TypeScript and Composition API
 - Quasar Framework 2.16+ for UI components
 - Pinia 3.0+ for state management
@@ -42,6 +44,7 @@ A full-stack Chinese novel reading platform with intelligent caching, background
 ## ⭐ Key Features
 
 ### Core Reading Experience
+
 - 📖 **Adaptive Two-Phase Loading** - Content appears in 1-2 seconds regardless of book size
 - 🎨 **Modern UI with Dark Mode** - Polished interface with smooth animations
 - ⌨️ **Keyboard Shortcuts** - Arrow keys for chapter navigation
@@ -50,12 +53,14 @@ A full-stack Chinese novel reading platform with intelligent caching, background
 - 📱 **Responsive Design** - Mobile-optimized reading experience
 
 ### Smart Caching System
+
 - 💾 **3-Tier Hybrid Cache** - Memory (TTL) → Database (SQLite) → Web scraping
 - 🔄 **Automatic Background Sync** - Books cached proactively when browsing categories
 - 🌙 **Midnight Sync Queue** - Automatic overnight updates for accessed books
 - 📊 **Unfinished Books Auto-Sync** - All ongoing books stay up-to-date automatically
 
 ### Administrative Tools
+
 - 👑 **Admin Panel** - Comprehensive management interface
 - 🔐 **Secure Authentication** - Google OAuth2 SSO with JWT tokens and email whitelist
 - 📧 **SMTP Email System** - Send emails with file attachments
@@ -66,12 +71,14 @@ A full-stack Chinese novel reading platform with intelligent caching, background
 - 🔒 **Password Management** - Change admin password
 
 ### Search & Discovery
+
 - 🔎 **Multi-Field Search** - Books, authors, chapters, full-text content
 - 📑 **Relevance Scoring** - Intelligent ranking of search results
 - 📋 **Grouped Results** - Matches organized by book
 - 💡 **Context Snippets** - Preview matched content
 
 ### Developer Experience
+
 - 📝 **OpenAPI Documentation** - Auto-generated API docs
 - 🛡️ **Type Safety** - TypeScript throughout frontend
 - 🧪 **Error Handling** - Context-aware error messages with smart retry
@@ -146,6 +153,7 @@ A full-stack Chinese novel reading platform with intelligent caching, background
 1. **Clone the repository**
 
 2. **Create environment file (.env):**
+
 ```bash
 # Backend Configuration
 BASE_URL=https://m.xsw.tw
@@ -177,6 +185,7 @@ tag=latest
 ```
 
 3. **Build and run:**
+
 ```bash
 # Build everything
 docker compose -f compose.yml -f docker/build.yml up -d --build
@@ -187,6 +196,7 @@ docker compose -f compose.yml -f docker/build.yml up -d web --build  # Frontend
 ```
 
 4. **Access the application:**
+
 - Frontend: http://localhost:2345
 - Backend API: http://localhost:8000
 - API Documentation: http://localhost:8000/xsw/api/docs
@@ -205,29 +215,30 @@ docker compose -f compose.yml -f docker/build.yml up -d web --build  # Frontend
 
 ### Backend Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BASE_URL` | `https://m.xsw.tw` | Target scraping site |
-| `HTTP_TIMEOUT` | `10` | Default HTTP timeout (seconds) |
-| `CACHE_TTL_SECONDS` | `900` | Memory cache TTL (15 minutes) |
-| `CACHE_MAX_ITEMS` | `500` | Max items in memory cache |
-| `CHAPTERS_PAGE_SIZE` | `20` | Chapters per page |
-| `DB_PATH` | `xsw_cache.db` | SQLite database path |
-| `BG_JOB_WORKERS` | `2` | Background worker threads |
-| `BG_JOB_RATE_LIMIT` | `2.0` | Seconds between background jobs |
-| `MIDNIGHT_SYNC_HOUR` | `0` | Hour to run midnight sync (0-23) |
-| `MIDNIGHT_SYNC_MINUTE` | `0` | Minute to run sync (0-59) |
-| `MIDNIGHT_SYNC_RATE_LIMIT` | `5.0` | Seconds between syncing books |
-| `PERIODIC_SYNC_INTERVAL` | `6` | Hours between periodic syncs |
-| `PERIODIC_SYNC_PRIORITY` | `3` | Priority for periodic sync jobs |
-| `RATE_LIMIT_ENABLED` | `true` | Enable/disable progressive rate limiting |
-| `RATE_LIMIT_WHITELIST` | `127.0.0.1,::1` | Comma-separated IPs/CIDRs to whitelist |
+| Variable                   | Default            | Description                              |
+| -------------------------- | ------------------ | ---------------------------------------- |
+| `BASE_URL`                 | `https://m.xsw.tw` | Target scraping site                     |
+| `HTTP_TIMEOUT`             | `10`               | Default HTTP timeout (seconds)           |
+| `CACHE_TTL_SECONDS`        | `900`              | Memory cache TTL (15 minutes)            |
+| `CACHE_MAX_ITEMS`          | `500`              | Max items in memory cache                |
+| `CHAPTERS_PAGE_SIZE`       | `20`               | Chapters per page                        |
+| `DB_PATH`                  | `xsw_cache.db`     | SQLite database path                     |
+| `BG_JOB_WORKERS`           | `2`                | Background worker threads                |
+| `BG_JOB_RATE_LIMIT`        | `2.0`              | Seconds between background jobs          |
+| `MIDNIGHT_SYNC_HOUR`       | `0`                | Hour to run midnight sync (0-23)         |
+| `MIDNIGHT_SYNC_MINUTE`     | `0`                | Minute to run sync (0-59)                |
+| `MIDNIGHT_SYNC_RATE_LIMIT` | `5.0`              | Seconds between syncing books            |
+| `PERIODIC_SYNC_INTERVAL`   | `6`                | Hours between periodic syncs             |
+| `PERIODIC_SYNC_PRIORITY`   | `3`                | Priority for periodic sync jobs          |
+| `RATE_LIMIT_ENABLED`       | `true`             | Enable/disable progressive rate limiting |
+| `RATE_LIMIT_WHITELIST`     | `127.0.0.1,::1`    | Comma-separated IPs/CIDRs to whitelist   |
 
 ### Rate Limiting
 
 The API includes progressive rate limiting to prevent abuse. Requests are tracked per client IP in a 1-minute sliding window.
 
 **Rate Limit Thresholds:**
+
 - **0-50 requests/min:** No delay (normal speed)
 - **51-100 requests/min:** 1 second delay per request
 - **101-200 requests/min:** 10 seconds delay per request
@@ -235,11 +246,13 @@ The API includes progressive rate limiting to prevent abuse. Requests are tracke
 - **500+ requests/min:** 300 seconds (5 minutes) delay per request
 
 **Whitelist Support:**
+
 - Single IPs: `127.0.0.1`, `::1`
 - CIDR ranges: `10.0.0.0/8`, `192.168.0.0/16`
 - Multiple entries: Comma-separated in `RATE_LIMIT_WHITELIST`
 
 **Admin Endpoint:**
+
 - `GET /admin/rate-limit/stats` - View active clients and request counts
 
 ---
@@ -258,28 +271,30 @@ The admin panel is secured with JWT-based authentication supporting two methods:
 
 2. **Password Authentication** (Fallback, Emergency Access Only)
    - Email/password login
-   - Default admin account: `admin@localhost` / `admin`
+   - Default admin account: `admin@example.com` / `admin`
    - Available in collapsible section for emergency access
 
 ### Quick Setup
 
 **Backend Environment Variables (.env):**
+
 ```bash
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-ADMIN_EMAIL_WHITELIST=admin@example.com,user2@example.com
+ADMIN_EMAIL_WHITELIST=admin@example.com,patricia20130523@gmail.com
 JWT_SECRET=generate-with-openssl-rand-hex-32
 JWT_EXPIRATION_HOURS=24
 ```
 
 **Frontend Environment Variables (.env.local):**
+
 ```bash
 VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 
 ### Default Credentials (Password Fallback)
 
-- **Email:** `admin@localhost`
+- **Email:** `admin@example.com`
 - **Password:** `admin`
 
 ⚠️ **Security Warning:** Change the default password immediately in production! It's for initial setup only.
@@ -287,6 +302,7 @@ VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ### Setup Guide
 
 For detailed Google Cloud Console setup and configuration:
+
 - **[Complete Google SSO Setup Guide](docs/GOOGLE_SSO_SETUP.md)** - Step-by-step instructions
 
 ### Key Security Features
@@ -300,8 +316,9 @@ For detailed Google Cloud Console setup and configuration:
 ### Emergency Access
 
 If you lose access to Google SSO:
+
 1. Use password authentication (expand "Password Login (Fallback)" section)
-2. Log in with `admin@localhost` / `admin`
+2. Log in with `admin@example.com` / `admin`
 3. Or reset password via server console (see setup guide)
 
 ---
@@ -353,14 +370,17 @@ Full API documentation available at: http://localhost:8000/xsw/api/docs
 ### Quick Reference
 
 **Book Management:**
+
 - `GET /books/{book_id}` - Get book metadata
 - `GET /books/{book_id}/chapters` - Get chapter list
 - `GET /books/{book_id}/chapters/{chapter_num}` - Get chapter content
 
 **Search:**
+
 - `GET /search?q=keyword` - Search books and content
 
 **Admin:**
+
 - `GET /admin/midnight-sync/stats` - Sync queue statistics
 - `POST /admin/midnight-sync/trigger` - Manually trigger sync
 - `POST /admin/smtp/test` - Test SMTP connection
@@ -368,6 +388,7 @@ Full API documentation available at: http://localhost:8000/xsw/api/docs
 - `POST /admin/email/send` - Send email with attachments
 
 **Health:**
+
 - `GET /health` - System health check
 
 ---
