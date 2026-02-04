@@ -78,23 +78,14 @@ const displayBookName = computed(() => convertIfNeeded(props.book.bookname));
 const displayAuthor = computed(() => convertIfNeeded(props.book.author));
 const displayIntro = computed(() => convertIfNeeded(props.book.intro));
 
-const lastChapterNum = computed<number | null>(() => {
-  const text = props.book.lastchapter ?? '';
-  // Match "第<digits>章" optionally with spaces; supports Chinese numeral context
-  const m = text.match(/第\s*(\d+)\s*章/);
-  return m ? Number(m[1]) : null;
-});
-
+// Last chapter link - always go to chapters page since we use sequential indexing
+// The source website's chapter numbers may not match our sequential index
 const lastLink = computed(() => {
   const id = bookId.value;
-  const num = lastChapterNum.value;
-
   if (!id) return null;
 
-  if (typeof num === 'number' && Number.isFinite(num)) {
-    return { name: 'ChapterContent', params: { bookId: id, chapterNum: num } };
-  }
-  // Fallback to chapter list when we can't parse the chapter number
+  // Link to chapters page instead of specific chapter to avoid mismatches
+  // between source website chapter numbers and our sequential indexing
   return { name: 'Chapters', params: { bookId: id } };
 });
 

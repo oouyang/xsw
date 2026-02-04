@@ -10,7 +10,7 @@
     <q-banner v-if="error" class="bg-red-2 text-red-10 q-mb-md">{{ error }}</q-banner>
 
     <div class="row q-col-gutter-md">
-      <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="b in books" :key="b.bookurl">
+      <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="b in displayBooks" :key="b.bookurl">
         <BookCard :book="b" />
       </div>
     </div>
@@ -42,14 +42,20 @@ const page = ref(1);
 const maxPages = ref(50); // heuristic; tune if you know the total
 const catName = ref('');
 const error = ref('');
+const BOOKS_PER_PAGE = 12; // Limit books displayed per page for less scrolling
 
 // Convert category name for zh-CN users
 const displayCatName = computed(() => convertIfNeeded(catName.value));
+
+// Limit displayed books to reduce scrolling
+const displayBooks = computed(() => books.value.slice(0, BOOKS_PER_PAGE));
 
 async function load() {
   try {
     error.value = '';
     books.value = await listBooksInCategory(Number(props.catId), page.value);
+    // Scroll to top when page changes
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) {
     error.value = 'Load failed';
     console.log('e', e);

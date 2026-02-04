@@ -1,96 +1,96 @@
 <!-- src/pages/ChaptersPage.vue -->
 <template>
   <q-page class="q-pa-md">
-    <div class="row items-center q-mb-sm">
-      <q-breadcrumbs>
-        <q-breadcrumbs-el :label="config.name" icon="home" to="/" />
-        <q-breadcrumbs-el :label="'📜' + displayBookName || 'Book'" />
-        <q-breadcrumbs-el :label="$t('nav.chapters')"  :to="`/book/${book.info?.book_id}/chapters`" />
-        <q-breadcrumbs-el :label="`第 ${book.page} 頁`" />
-      </q-breadcrumbs>
+    <!-- Compact header -->
+    <div class="row items-center q-mb-md">
+      <q-btn flat dense round icon="arrow_back" :to="{ name: 'Dashboard' }" />
+      <div class="q-ml-sm">
+        <div class="text-h6 text-weight-medium">{{ displayBookName }}</div>
+        <div class="text-caption text-grey-7">
+          {{ displayAuthor }} • {{ displayType }} • {{ displayStatus }}
+        </div>
+      </div>
       <q-space />
-      <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" :label="$t('nav.goBack')" />
+      <q-chip outline color="primary" size="sm">
+        {{ book.info?.last_chapter_number || 0 }} 章
+      </q-chip>
     </div>
 
-    <q-card class="q-mb-md">
-      <q-card-section>
-        <div class="text-h6 q-mb-sm">📚 {{ displayBookName }}</div>
-        <div class="text-subtitle2 text-grey-7">👤 {{ displayAuthor }}</div>
-        <div class="text-caption text-grey-6 q-mt-xs">
-          🏷️ {{ displayType }} | 🚨 {{ displayStatus }} | 🗓️ {{ displayUpdate }}
-        </div>
-        <q-separator class="q-my-sm" />
-        <div class="row items-center">
-          <div class="col text-caption text-grey-7">
-            {{ $t('book.latestPrefix') }}: {{ displayLastChapterTitle }}
-          </div>
-          <div class="col-auto">
-            <q-chip dense size="sm" color="primary" text-color="white">
-              共 {{ book.info?.last_chapter_number || 0 }} 章
-            </q-chip>
-          </div>
-        </div>
-      </q-card-section>
-      <q-card-actions align="right">
-        <!-- Quick chapter navigation -->
-        <q-input
-          v-model.number="jumpToChapterNum"
-          dense
-          outlined
-          type="number"
-          :min="1"
-          :max="book.info?.last_chapter_number || 9999"
-          placeholder="跳至章節..."
-          style="max-width: 120px"
-          class="q-mr-sm"
-          @keyup.enter="jumpToChapter"
-        >
-          <template v-slot:append>
-            <q-btn
-              flat
-              dense
-              round
-              icon="arrow_forward"
-              size="sm"
-              @click="jumpToChapter"
-              :disable="!jumpToChapterNum || jumpToChapterNum < 1"
-            >
-              <q-tooltip>跳至指定章節</q-tooltip>
-            </q-btn>
-          </template>
-        </q-input>
-        <q-btn flat dense icon="refresh" :label="$t('chapter.reloadChapters')" @click="reload" :loading="loading" />
-      </q-card-actions>
-    </q-card>
+    <!-- Compact toolbar -->
+    <div class="row items-center q-mb-sm q-gutter-sm">
+      <q-input
+        v-model.number="jumpToChapterNum"
+        dense
+        outlined
+        type="number"
+        :min="1"
+        :max="book.info?.last_chapter_number || 9999"
+        placeholder="跳至章節..."
+        style="max-width: 150px"
+        @keyup.enter="jumpToChapter"
+      >
+        <template v-slot:prepend>
+          <q-icon name="search" size="xs" />
+        </template>
+        <template v-slot:append>
+          <q-btn
+            flat
+            dense
+            round
+            icon="arrow_forward"
+            size="sm"
+            @click="jumpToChapter"
+            :disable="!jumpToChapterNum || jumpToChapterNum < 1"
+          />
+        </template>
+      </q-input>
+      <q-btn dense outline icon="refresh" @click="reload" :loading="loading">
+        <q-tooltip>{{ $t('chapter.reloadChapters') }}</q-tooltip>
+      </q-btn>
+      <q-space />
+      <div class="text-caption text-grey-7">
+        第 {{ book.page }} / {{ book.maxPages }} 頁
+      </div>
+      <q-pagination
+        v-model="book.page"
+        :max="book.maxPages"
+        @update:model-value="p => switchPage(p)"
+        color="primary"
+        max-pages="7"
+        size="sm"
+        :disable="loading || book.maxPages <= 1"
+        boundary-numbers
+      />
+    </div>
 
     <!-- Context-aware error banner -->
     <q-banner
       v-if="loadError"
       :class="loadError.phase === 'phase2' ? 'bg-orange-2 text-orange-10' : 'bg-red-2 text-red-10'"
-      class="q-mb-md"
+      class="q-mb-sm"
+      dense
     >
       <template v-slot:avatar>
-        <q-icon :name="loadError.phase === 'phase2' ? 'warning' : 'error'" />
+        <q-icon :name="loadError.phase === 'phase2' ? 'warning' : 'error'" size="sm" />
       </template>
-      <div>
-        <div class="text-body2">{{ loadError.message }}</div>
-        <div v-if="loadError.technicalDetails" class="text-caption q-mt-xs">
-          {{ loadError.technicalDetails }}
-        </div>
-      </div>
+      <div class="text-body2">{{ loadError.message }}</div>
       <template v-slot:action>
         <q-btn
           v-if="loadError.retryable"
           flat
+          dense
           :color="loadError.phase === 'phase2' ? 'orange-10' : 'red-10'"
-          :label="$t('common.retry')"
           icon="refresh"
           @click="retryPhase(loadError.phase)"
-        />
+        >
+          <q-tooltip>{{ $t('common.retry') }}</q-tooltip>
+        </q-btn>
         <q-btn
           flat
           dense
+          round
           icon="close"
+          size="sm"
           :color="loadError.phase === 'phase2' ? 'orange-10' : 'red-10'"
           @click="loadError = null"
         />
@@ -98,88 +98,55 @@
     </q-banner>
 
     <!-- Legacy error banner (fallback) -->
-    <q-banner v-if="error && !loadError" class="bg-red-2 text-red-10 q-mb-md">
+    <q-banner v-if="error && !loadError" class="bg-red-2 text-red-10 q-mb-sm" dense>
       <div class="row items-center">
-        <div class="col">{{ error }}</div>
-        <q-btn flat color="red-10" :label="$t('common.retry')" icon="refresh" @click="reload" />
+        <div class="col text-body2">{{ error }}</div>
+        <q-btn flat dense color="red-10" icon="refresh" @click="reload">
+          <q-tooltip>{{ $t('common.retry') }}</q-tooltip>
+        </q-btn>
       </div>
     </q-banner>
 
-    <div class="row items-center justify-between q-mb-md" v-if="book.info">
-      <div class="text-caption text-grey-7">
-        <span v-if="displayChapters.length > 0">
-          顯示第 {{ startChapterNum }}-{{ endChapterNum }} 章
-        </span>
-        <span v-if="book.info.last_chapter_number">
-          (共 {{ book.info.last_chapter_number }} 章)
-        </span>
-      </div>
-      <q-pagination
-        v-model="book.page"
-        :max="book.maxPages"
-        @update:model-value="p => switchPage(p)"
-        color="primary"
-        max-pages="9"
-        size="sm"
-        :disable="loading || book.maxPages <= 1"
-      />
-    </div>
 
     <!-- Phase 2 background loading banner -->
     <transition name="slide-down">
-      <q-banner
+      <div
         v-if="isPhase2Loading"
-        dense
-        class="bg-blue-1 text-blue-9 q-mb-md phase2-banner"
+        class="row items-center q-px-md q-py-sm bg-blue-1 text-blue-9 q-mb-sm rounded-borders"
       >
-        <template v-slot:avatar>
-          <q-spinner-dots color="blue-9" size="sm" />
-        </template>
-        <div class="text-caption">
+        <q-spinner-dots color="blue-9" size="sm" />
+        <div class="q-ml-sm text-caption">
           {{ phase2Message || $t('chapter.loadingRemainingInBackground') }}
-          <!-- Show progress if total chapters known -->
-          <div v-if="book.info?.last_chapter_number && book.allChapters.length > 0" class="q-mt-xs">
-            <q-linear-progress
-              :value="book.allChapters.length / book.info.last_chapter_number"
-              color="blue-9"
-              size="4px"
-              rounded
-            />
-            <div class="text-caption text-grey-7 q-mt-xs">
-              {{ $t('chapter.loadingProgress', {
-                loaded: book.allChapters.length,
-                total: book.info.last_chapter_number
-              }) }}
-            </div>
-          </div>
+          <span v-if="book.info?.last_chapter_number && book.allChapters.length > 0" class="text-grey-7">
+            ({{ book.allChapters.length }} / {{ book.info.last_chapter_number }})
+          </span>
         </div>
-        <template v-slot:action>
-          <q-btn flat dense size="sm" icon="close" @click="isPhase2Loading = false" />
-        </template>
-      </q-banner>
+        <q-space />
+        <q-btn flat dense round size="sm" icon="close" @click="isPhase2Loading = false" />
+      </div>
     </transition>
 
     <!-- Skeleton loading during Phase 1 -->
-    <q-card v-if="loading && displayChapters.length === 0" class="q-mb-md skeleton-card">
-      <q-list bordered separator>
-        <q-item v-for="n in 20" :key="n" class="skeleton-item">
-          <q-item-section avatar>
-            <q-skeleton type="QAvatar" size="32px" />
+    <div v-if="loading && displayChapters.length === 0">
+      <q-list bordered separator dense>
+        <q-item v-for="n in 15" :key="n" class="skeleton-item">
+          <q-item-section avatar style="min-width: 50px">
+            <q-skeleton type="text" width="30px" />
           </q-item-section>
           <q-item-section>
             <q-skeleton type="text" :width="`${60 + Math.random() * 20}%`" />
           </q-item-section>
           <q-item-section side>
-            <q-skeleton type="circle" size="20px" />
+            <q-skeleton type="circle" size="16px" />
           </q-item-section>
         </q-item>
       </q-list>
-      <q-card-section class="text-center q-py-sm">
+      <div class="text-center q-py-sm">
         <div class="text-caption text-grey-7">
           {{ loadingMessage }}
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </div>
 
     <!-- Chapters with transition -->
     <transition name="fade" mode="out-in">
@@ -188,6 +155,7 @@
         :key="`page-${book.page}`"
         bordered
         separator
+        dense
       >
         <q-item
           v-for="c in displayChapters"
@@ -196,16 +164,16 @@
           :to="chapterLink(c.number, c.title)"
           class="chapter-item"
         >
-          <q-item-section avatar>
-            <q-avatar color="primary" text-color="white" size="sm">
+          <q-item-section avatar style="min-width: 50px">
+            <div class="text-caption text-grey-7 text-weight-medium">
               {{ c.number }}
-            </q-avatar>
+            </div>
           </q-item-section>
           <q-item-section>
             <q-item-label class="text-body2">{{ c.title }}</q-item-label>
           </q-item-section>
           <q-item-section side>
-            <q-icon name="chevron_right" color="grey-5" />
+            <q-icon name="chevron_right" color="grey-5" size="xs" />
           </q-item-section>
         </q-item>
       </q-list>
@@ -218,18 +186,17 @@
       </div>
     </q-banner>
 
-    <div class="row items-center justify-between q-my-lg">
-      <div class="text-caption text-grey-7">
-        第 {{ book.page }} / {{ book.maxPages }} 頁
-      </div>
+    <!-- Bottom pagination (only shown if there are chapters) -->
+    <div v-if="displayChapters.length > 0" class="row justify-center q-mt-md">
       <q-pagination
         v-model="book.page"
         :max="book.maxPages"
         @update:model-value="p => switchPage(p)"
         color="primary"
-        max-pages="9"
+        max-pages="7"
         size="sm"
         :disable="loading"
+        boundary-numbers
       />
     </div>
   </q-page>
@@ -294,23 +261,10 @@ const displayBookName = computed(() => convertIfNeeded(book.info?.name));
 const displayAuthor = computed(() => convertIfNeeded(book.info?.author));
 const displayType = computed(() => convertIfNeeded(book.info?.type));
 const displayStatus = computed(() => convertIfNeeded(book.info?.status));
-const displayUpdate = computed(() => convertIfNeeded(book.info?.update));
-const displayLastChapterTitle = computed(() => convertIfNeeded(book.info?.last_chapter_title));
 const displayChapters = computed(() => {
   const chapters = book.pageChapters;
   console.log('[displayChapters] page:', book.page, 'pageChapters:', chapters.length, 'allChapters:', book.allChapters.length);
   return chapters;
-});
-
-// Calculate start and end chapter numbers for current page
-const startChapterNum = computed(() => {
-  if (displayChapters.value.length === 0) return 0;
-  return displayChapters.value[0]?.number || 0;
-});
-
-const endChapterNum = computed(() => {
-  if (displayChapters.value.length === 0) return 0;
-  return displayChapters.value[displayChapters.value.length - 1]?.number || 0;
 });
 
 useMeta({ title: `${config.value.name} ${book.info?.name ? ' >> '+ book.info?.name : ''}` });
@@ -880,6 +834,8 @@ onMounted(async () => {
 <style scoped>
 .chapter-item {
   transition: all 0.2s ease;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .chapter-item:hover {
@@ -889,6 +845,12 @@ onMounted(async () => {
 
 .chapter-item:active {
   background-color: rgba(25, 118, 210, 0.15);
+}
+
+/* Compact spacing */
+.q-page {
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 /* Fade transition for chapter list */

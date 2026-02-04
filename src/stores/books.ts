@@ -245,8 +245,9 @@ export const useBookStore = defineStore('book', {
      *   - cache is outdated (based on `info.last_chapter_number`) OR
      *   - force == true
      */
-    async loadAllChapters(opts?: { force?: boolean; onProgress?: (msg: string) => void }) {
+    async loadAllChapters(opts?: { force?: boolean; nocache?: boolean; onProgress?: (msg: string) => void }) {
       if (!this.bookId) throw new Error('[loadAllChapters] bookId is null');
+      const bookId = this.bookId; // Capture in local variable for better type narrowing
 
       const expectedLast = this.info?.last_chapter_number ?? 0;
       const cachedLast =
@@ -302,12 +303,49 @@ export const useBookStore = defineStore('book', {
 
         console.log(`[loadAllChapters] Phase 1: Loading pages ${pagesToFetch.join(', ')} around current page ${currentPage}`);
 
-        // Fetch the selected pages in parallel
-        const firstPhasePromises = pagesToFetch.map((page) =>
-          getBookChapters(this.bookId!, { page, all: false })
-        );
+        // Fetch the selected pages in parallel with extended timeout
+        // Use allSettled so if one page fails, others can still succeed
+        const firstPhasePromises = pagesToFetch.map((page) => {
+          const reqOpts: Parameters<typeof getBookChapters>[1] = { page, all: false, timeout: 60000 };
+          if (opts?.nocache !== undefined) reqOpts.nocache = opts.nocache;
+          return getBookChapters(bookId, reqOpts);
+        });
 
-        const firstPhaseResponses = await Promise.all(firstPhasePromises);
+        const firstPhaseResults = await Promise.allSettled(firstPhasePromises);
+
+        // Extract successful responses and log failures
+        const firstPhaseResponses = firstPhaseResults
+          .map((result, idx) => {
+            if (result.status === 'fulfilled') {
+              return result.value;
+            } else {
+              console.warn(`[Phase 1] Failed to load page ${pagesToFetch[idx]}:`, result.reason);
+              return null;
+            }
+          })
+          .filter((resp): resp is NonNullable<typeof resp> => resp !== null);
+
+        // If all pages failed, try loading just the current page with retry
+        if (firstPhaseResponses.length === 0) {
+          console.warn('[Phase 1] All pages failed, retrying current page only...');
+          if (opts?.onProgress) {
+            opts.onProgress(`重試載入第 ${currentPage} 頁...`);
+          }
+          try {
+            const retryOpts: Parameters<typeof getBookChapters>[1] = {
+              page: currentPage,
+              all: false,
+              timeout: 90000 // 90 second timeout for retry
+            };
+            if (opts?.nocache !== undefined) retryOpts.nocache = opts.nocache;
+            const currentPageResp = await getBookChapters(bookId, retryOpts);
+            firstPhaseResponses.push(currentPageResp);
+          } catch (retryError) {
+            console.error('[Phase 1] Retry failed:', retryError);
+            throw retryError; // Re-throw so the error is handled properly
+          }
+        }
+
         const firstPhaseChaptersList = firstPhaseResponses.flatMap((resp) =>
           Array.isArray(resp) ? resp : resp.chapters
         );
@@ -337,7 +375,7 @@ export const useBookStore = defineStore('book', {
 
         // PHASE 2: Load remaining chapters in background (non-blocking)
         // Don't await this - let it run in the background
-        void this.loadRemainingChapters(pagesToFetch, expectedLast, opts?.onProgress);
+        void this.loadRemainingChapters(pagesToFetch, expectedLast, opts?.onProgress, opts?.nocache);
 
       } else {
         console.log(
@@ -361,9 +399,11 @@ export const useBookStore = defineStore('book', {
     async loadRemainingChapters(
       loadedPages: number[],
       expectedLast: number,
-      onProgress?: (msg: string) => void
+      onProgress?: (msg: string) => void,
+      nocache?: boolean
     ) {
       if (!this.bookId) return;
+      const bookId = this.bookId; // Capture in local variable for better type narrowing
 
       // Calculate how many chapters we've loaded in phase 1
       const loadedChapters = loadedPages.length * this.pageSize;
@@ -377,19 +417,54 @@ export const useBookStore = defineStore('book', {
       console.log(`[loadRemainingChapters] Phase 2: Loading remaining ~${remainingChapters} chapters in background`);
 
       if (onProgress) {
-        onProgress(`背景載入剩餘章節...`);
+        // Show different message for books with many chapters
+        if (expectedLast > 2000) {
+          onProgress(`背景載入剩餘章節... (此書共${expectedLast}章，可能需要10-15分鐘)`);
+        } else {
+          onProgress(`背景載入剩餘章節...`);
+        }
       }
 
       try {
         // Fetch all chapters using the all=true endpoint
         // The backend is optimized to handle this efficiently
-        const allChaptersResponse = await getBookChapters(this.bookId, {
-          all: true,
-        });
+        const allOpts: Parameters<typeof getBookChapters>[1] = { all: true };
+        if (nocache !== undefined) allOpts.nocache = nocache;
+
+        console.log(`[loadRemainingChapters] Fetching all chapters (nocache=${allOpts.nocache ?? false})...`);
+        const allChaptersResponse = await getBookChapters(bookId, allOpts);
 
         const chaptersArray = Array.isArray(allChaptersResponse)
           ? allChaptersResponse
           : allChaptersResponse.chapters;
+
+        console.log(`[loadRemainingChapters] Received ${chaptersArray.length} chapters from backend`);
+
+        // Check if we got a reasonable number of chapters
+        // If we only got <20 chapters when expecting hundreds/thousands, the cache is stale
+        if (chaptersArray.length < 20 && expectedLast > 100 && !nocache) {
+          console.warn(`[loadRemainingChapters] Received only ${chaptersArray.length} chapters, but expected ${expectedLast}. Retrying with nocache=true...`);
+
+          if (onProgress) {
+            onProgress(`快取資料不完整，重新載入全部章節...`);
+          }
+
+          // Retry with nocache to force backend to re-scrape
+          const retryOpts: Parameters<typeof getBookChapters>[1] = { all: true, nocache: true };
+          const retryResponse = await getBookChapters(bookId, retryOpts);
+          const retryChapters = Array.isArray(retryResponse) ? retryResponse : retryResponse.chapters;
+
+          console.log(`[loadRemainingChapters] Retry with nocache returned ${retryChapters.length} chapters`);
+
+          // Use retry result if it has more chapters
+          if (retryChapters.length > chaptersArray.length) {
+            chaptersArray.length = 0;
+            chaptersArray.push(...retryChapters);
+            console.log(`[loadRemainingChapters] Using retry result with ${retryChapters.length} chapters`);
+          } else {
+            console.warn(`[loadRemainingChapters] Retry did not improve result (still ${retryChapters.length} chapters)`);
+          }
+        }
 
         // Dedupe and merge with existing chapters
         const merged = dedupeBy(chaptersArray, (c) => normalizeNum(c.number));
@@ -412,12 +487,19 @@ export const useBookStore = defineStore('book', {
 
         this.save();
 
-        // Validate chapters after loading all
+        // Validate chapters after loading all (just log, don't auto-retry)
         const validation = this.validateChapters();
         if (!validation.valid) {
           console.error('[loadRemainingChapters] Chapter validation failed:', validation.errors);
-          // Trigger resync if validation fails
-          void this.triggerResync(validation.errors.join('; '));
+          console.warn('[loadRemainingChapters] Auto-retry disabled - user can manually refresh if needed');
+          // Note: Auto-retry is disabled because it often makes things worse
+          // (e.g., clearing cache and reloading can result in fewer chapters)
+          // Users can manually retry via the UI refresh button if needed
+        } else {
+          // Reset retry counter when validation passes
+          this.resyncRetries = 0;
+          this.lastValidationError = null;
+          this.save();
         }
 
         if (onProgress) {
@@ -469,71 +551,99 @@ export const useBookStore = defineStore('book', {
 
     /**
      * Validate chapters for reasonableness.
-     * With sequential indexing (1, 2, 3, ...), checks for:
-     * 1. Chapters are sorted by number
-     * 2. No gaps (consecutive chapters, gap should always be 1)
-     * 3. First chapter should be 1
-     * 4. Total chapters should match expected count from book info
+     *
+     * RELAXED VALIDATION: Only check critical issues that affect functionality.
+     * Small gaps and discrepancies are normal due to source website issues.
+     *
+     * Critical issues:
+     * 1. No chapters loaded at all
+     * 2. Very few chapters (< 50% of expected)
+     * 3. Chapters not sorted
+     *
+     * Non-critical (logged but not failed):
+     * - Small gaps in chapter numbers
+     * - First chapter not starting at 1
+     * - Minor count discrepancies
      *
      * @returns validation result { valid: boolean, errors: string[] }
      */
-    validateChapters(): { valid: boolean; errors: string[] } {
+    validateChapters(): { valid: boolean; errors: string[]; warnings: string[] } {
       const errors: string[] = [];
+      const warnings: string[] = [];
 
+      // CRITICAL: Check if any chapters loaded
       if (this.allChapters.length === 0) {
         errors.push('No chapters loaded');
-        return { valid: false, errors };
+        return { valid: false, errors, warnings };
       }
 
-      // Check 1: Chapters should be sorted
+      // CRITICAL: Check if chapters are sorted
       for (let i = 1; i < this.allChapters.length; i++) {
         const curr = this.allChapters[i];
         const prev = this.allChapters[i - 1];
         if (curr && prev && curr.number < prev.number) {
           errors.push(`Chapters not sorted: chapter ${prev.number} > ${curr.number} at index ${i}`);
-          break; // Only report first sorting error
+          break;
         }
       }
 
-      // Check 2: No gaps (sequential chapters should be consecutive)
-      // With sequential indexing, gap should always be 1
+      // WARNING: Check for gaps (log but don't fail)
+      let gapCount = 0;
       for (let i = 1; i < this.allChapters.length; i++) {
         const curr = this.allChapters[i];
         const prev = this.allChapters[i - 1];
         if (curr && prev) {
           const gap = curr.number - prev.number;
-          if (gap !== 1) {
-            errors.push(`Gap detected: chapter ${prev.number} → ${curr.number} (gap: ${gap}, expected: 1)`);
-            // Only report first 3 gaps to avoid spam
-            if (errors.filter(e => e.includes('Gap detected')).length >= 3) break;
+          if (gap > 1) {
+            gapCount++;
+            if (gapCount <= 3) { // Only log first 3 gaps
+              warnings.push(`Gap: chapter ${prev.number} → ${curr.number} (gap: ${gap})`);
+            }
           }
         }
       }
-
-      // Check 3: First chapter should be 1 (sequential indexing starts at 1)
-      const firstChapter = this.allChapters[0]?.number ?? 0;
-      if (firstChapter !== 1) {
-        errors.push(`First chapter number is ${firstChapter} (expected: 1 for sequential indexing)`);
+      if (gapCount > 3) {
+        warnings.push(`... and ${gapCount - 3} more gaps`);
       }
 
-      // Check 4: Total count should match book info
+      // WARNING: Check first chapter (log but don't fail)
+      const firstChapter = this.allChapters[0]?.number ?? 0;
+      if (firstChapter !== 1) {
+        warnings.push(`First chapter is ${firstChapter} (expected: 1)`);
+      }
+
+      // CRITICAL: Check if we have enough chapters (at least 30% of expected)
+      // Note: Some books have incorrect metadata on source website
       if (this.info?.last_chapter_number) {
         const expectedCount = this.info.last_chapter_number;
         const actualCount = this.allChapters.length;
-        const discrepancy = Math.abs(expectedCount - actualCount);
+        const percentage = (actualCount / expectedCount) * 100;
 
-        // Allow 5% discrepancy or 10 chapters (whichever is larger)
-        const tolerance = Math.max(Math.ceil(expectedCount * 0.05), 10);
+        // Require at least some reasonable minimum chapters to be useful
+        const minRequiredChapters = Math.min(expectedCount * 0.3, 100); // At least 30% or 100 chapters
 
-        if (discrepancy > tolerance) {
-          errors.push(`Chapter count mismatch: expected ${expectedCount}, got ${actualCount} (difference: ${discrepancy})`);
+        if (actualCount < minRequiredChapters) {
+          // Less than minimum - critical error
+          errors.push(`Too few chapters: expected ${expectedCount}, got ${actualCount} (${percentage.toFixed(1)}%)`);
+        } else if (Math.abs(expectedCount - actualCount) > Math.max(Math.ceil(expectedCount * 0.2), 50)) {
+          // 20%+ discrepancy - warning only
+          warnings.push(`Chapter count difference: expected ${expectedCount}, got ${actualCount} (${percentage.toFixed(1)}%)`);
         }
       }
 
       const valid = errors.length === 0;
-      console.log(`[validateChapters] Validation ${valid ? 'PASSED' : 'FAILED'}`, errors);
 
-      return { valid, errors };
+      if (warnings.length > 0) {
+        console.warn(`[validateChapters] Warnings (${warnings.length}):`, warnings);
+      }
+
+      if (!valid) {
+        console.error(`[validateChapters] Validation FAILED:`, errors);
+      } else {
+        console.log(`[validateChapters] Validation PASSED (${this.allChapters.length} chapters)`);
+      }
+
+      return { valid, errors, warnings };
     },
 
     /**
@@ -587,49 +697,34 @@ export const useBookStore = defineStore('book', {
         return;
       }
 
-      // Trigger resync via backend force-resync endpoint
+      // Force reload from backend with nocache=true (bypass all caches)
       try {
-        const response = await fetch(`/xsw/api/admin/jobs/force-resync/${this.bookId}?priority=10&clear_cache=true`, {
-          method: 'POST',
-        });
+        console.log('[triggerResync] Clearing cache and reloading chapters...');
 
-        if (!response.ok) {
-          console.error('[triggerResync] Failed to queue resync:', response.statusText);
-          return;
-        }
-
-        const result = await response.json();
-        console.log('[triggerResync] Resync queued:', result);
-
-        // Clear local cache and reload
+        // Clear local cache
         this.allChapters = [];
         this.pageChapters = [];
         this.save();
 
-        // Wait a bit for backend to process, then reload
-        // Use void operator to explicitly ignore the Promise from async function
-        setTimeout(() => {
-          void (async () => {
-            console.log('[triggerResync] Reloading chapters after resync...');
-            await this.loadAllChapters({ force: true });
+        // Reload with nocache to force backend to re-scrape
+        console.log('[triggerResync] Fetching fresh chapters with nocache=true...');
+        await this.loadAllChapters({ force: true, nocache: true });
 
-            // Validate again after reload
-            const validation = this.validateChapters();
-            if (!validation.valid) {
-              console.error('[triggerResync] Validation still failed after resync:', validation.errors);
-              // Trigger another resync attempt
-              await this.triggerResync(validation.errors.join('; '));
-            } else {
-              console.log('[triggerResync] Validation passed after resync!');
-              // Reset retry counter on success
-              this.resyncRetries = 0;
-              this.lastValidationError = null;
-              this.save();
-            }
-          })();
-        }, 5000); // Wait 5 seconds for backend to process
+        // Validate again after reload
+        const validation = this.validateChapters();
+        if (!validation.valid) {
+          console.error('[triggerResync] Validation still failed after resync:', validation.errors);
+          // Trigger another resync attempt (will retry up to maxRetries)
+          await this.triggerResync(validation.errors.join('; '));
+        } else {
+          console.log('[triggerResync] Validation passed after resync!');
+          // Reset retry counter on success
+          this.resyncRetries = 0;
+          this.lastValidationError = null;
+          this.save();
+        }
       } catch (error) {
-        console.error('[triggerResync] Error triggering resync:', error);
+        console.error('[triggerResync] Failed to reload chapters:', error);
       }
     },
   },

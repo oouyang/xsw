@@ -209,24 +209,12 @@ function navigateToMatch(book: SearchBookResult, match: SearchMatch) {
   // Close the dialog
   onDialogOK();
 
-  if (match.chapter_num && match.chapter_title) {
-    // Navigate to specific chapter - construct URL directly with book_id from search result
-    const chapterUrl = {
-      name: 'Chapter',
-      params: {
-        bookId: book.book_id,
-        chapterNum: match.chapter_num,
-        chapterTitle: match.chapter_title
-      }
-    };
-    console.log('[SearchDialog] Navigating to chapter:', chapterUrl);
-    void router.push(chapterUrl);
-  } else {
-    // Navigate to book chapters page
-    const url = `/book/${book.book_id}/chapters`;
-    console.log('[SearchDialog] Navigating to book:', url);
-    void router.push(url);
-  }
+  // Always navigate to chapters page instead of specific chapter
+  // because database may have old non-sequential chapter numbers that don't match
+  // the current sequential indexing system (1, 2, 3...)
+  const url = `/book/${book.book_id}/chapters`;
+  console.log('[SearchDialog] Navigating to book chapters:', url);
+  void router.push(url);
 }
 
 onMounted(() => {

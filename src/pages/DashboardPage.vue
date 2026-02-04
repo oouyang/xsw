@@ -11,7 +11,7 @@
 
     <q-skeleton v-if="loading" type="rect" height="36px" class="q-mb-md" />
     <div class="column q-gutter-xl">
-      <div v-for="cat in displayCategories" :key="cat.id">
+      <div v-for="cat in displayCategories" :key="cat.id" v-intersection="onCategoryVisible(cat.id)">
         <div class="row items-center q-mb-sm">
           <div class="text-h6">{{ cat.name }}</div>
           <q-space />
@@ -19,7 +19,15 @@
         </div>
         <q-separator />
 
-        <div class="row q-col-gutter-md">
+        <!-- Loading skeleton for category books -->
+        <div v-if="!loadedCategories.has(cat.id)" class="row q-col-gutter-md q-mt-sm">
+          <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="i in 8" :key="i">
+            <q-skeleton type="rect" height="200px" />
+          </div>
+        </div>
+
+        <!-- Actual books -->
+        <div v-else class="row q-col-gutter-md">
           <div
             class="col-12 col-sm-6 col-md-4 col-lg-3"
             v-for="book in topBooks[cat.id] || []"
@@ -48,6 +56,18 @@ const topBooks = ref<Record<string, BookSummary[]>>({});
 const loading = ref(false);
 const error = ref('');
 const { config } = useAppConfig();
+const loadedCategories = ref<Set<string>>(new Set());
+
+// Cache configuration
+const CACHE_KEY = 'dashboard_cache';
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+interface CachedData {
+  categories: Category[];
+  topBooks: Record<string, BookSummary[]>;
+  loadedCategories: string[];
+  timestamp: number;
+}
 
 // Convert category names for zh-CN users
 const displayCategories = computed(() => {
@@ -60,8 +80,66 @@ const displayCategories = computed(() => {
   }));
 });
 
-async function load() {
-  loading.value = true;
+function loadFromCache(): CachedData | null {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (!cached) return null;
+
+    const data: CachedData = JSON.parse(cached);
+    const age = Date.now() - data.timestamp;
+
+    if (age > CACHE_TTL) {
+      console.log('[Dashboard Cache] Cache expired');
+      return null;
+    }
+
+    console.log(`[Dashboard Cache] Using cached data (${Math.round(age / 1000)}s old)`);
+    return data;
+  } catch (e) {
+    console.warn('[Dashboard Cache] Failed to load cache:', e);
+    return null;
+  }
+}
+
+function saveToCache(data: CachedData) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    console.log('[Dashboard Cache] Saved to cache');
+  } catch (e) {
+    console.warn('[Dashboard Cache] Failed to save cache:', e);
+  }
+}
+
+async function loadCategoryBooks(catId: string) {
+  if (loadedCategories.value.has(catId)) return;
+
+  try {
+    loadedCategories.value.add(catId);
+    const books = await listBooksInCategory(Number(catId), 1);
+    topBooks.value[catId] = books.slice(0, 8);
+
+    // Update cache with newly loaded category
+    saveToCache({
+      categories: categories.value,
+      topBooks: topBooks.value,
+      loadedCategories: Array.from(loadedCategories.value),
+      timestamp: Date.now()
+    });
+  } catch (e) {
+    console.error(`[Dashboard] Failed to load category ${catId}:`, e);
+    loadedCategories.value.delete(catId);
+  }
+}
+
+function onCategoryVisible(catId: string) {
+  return (entry: IntersectionObserverEntry) => {
+    if (entry.isIntersecting) {
+      void loadCategoryBooks(catId);
+    }
+  };
+}
+
+async function fetchFreshData() {
   error.value = '';
   try {
     const result = await getCategories();
@@ -73,12 +151,14 @@ async function load() {
       return;
     }
 
-    // For each category, fetch page 1 and keep top 10
-    const promises = categories.value.map(async (cat: Category) => {
-      const books = await listBooksInCategory(Number(cat.id), 1);
-      topBooks.value[cat.id] = books.slice(0, 10);
+    // Don't load all category books - let lazy loading handle it
+    // Just save the categories to cache
+    saveToCache({
+      categories: categories.value,
+      topBooks: topBooks.value,
+      loadedCategories: Array.from(loadedCategories.value),
+      timestamp: Date.now()
     });
-    await Promise.all(promises);
   } catch (e) {
     error.value = 'Load failed';
     console.log('e', e);
@@ -86,5 +166,24 @@ async function load() {
     loading.value = false;
   }
 }
+
+async function load() {
+  // Try to load from cache first (stale-while-revalidate)
+  const cached = loadFromCache();
+  if (cached) {
+    // Show cached data immediately
+    categories.value = cached.categories;
+    topBooks.value = cached.topBooks;
+    loadedCategories.value = new Set(cached.loadedCategories || []);
+    // Fetch fresh categories list in background (no loading indicator)
+    void fetchFreshData();
+    return;
+  }
+
+  // No cache - show loading indicator
+  loading.value = true;
+  await fetchFreshData();
+}
+
 onMounted(load);
 </script>

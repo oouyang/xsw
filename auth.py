@@ -169,7 +169,7 @@ async def require_admin_auth(
     # Bypass authentication if AUTH_ENABLED is false
     if not AUTH_ENABLED:
         return TokenPayload(
-            sub="admin@localhost",
+            sub="admin@examp.com",
             auth_method="disabled",
             exp=datetime.utcnow() + timedelta(hours=24),
             iat=datetime.utcnow()
@@ -213,14 +213,14 @@ def init_admin_users(db_manager):
         if admin_count == 0:
             # Create default password admin
             default_admin = AdminUser(
-                email="admin@localhost",
+                email="admin@example.com",
                 auth_method="password",
                 password_hash=hash_password("admin"),
                 is_active=True
             )
             session.add(default_admin)
             session.commit()
-            print("[AUTH] Created default admin user (admin@localhost / admin)")
+            print("[AUTH] Created default admin user (admin@example.com / admin)")
             print("[AUTH] IMPORTANT: Change this password or disable password auth in production!")
     except Exception as e:
         print(f"[AUTH] Error initializing admin users: {e}")

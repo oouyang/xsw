@@ -32,10 +32,12 @@ export async function getBookInfo(bookId: string): Promise<BookInfo> {
 }
 export async function getBookChapters(
   bookId: string,
-  opts?: { page?: number; all?: boolean; max_pages?: number; nocache?: boolean },
+  opts?: { page?: number; all?: boolean; max_pages?: number; nocache?: boolean; timeout?: number },
 ): Promise<Chapters> {
-  // Use extended timeout for fetching all chapters (up to 5 minutes)
-  const timeout = opts?.all ? 300000 : 15000;
+  // Use extended timeout for fetching all chapters
+  // For books with thousands of chapters, this can take a long time (10-15 minutes)
+  // For single page requests, use 60 seconds (scraping can be slow)
+  const timeout = opts?.timeout ?? (opts?.all ? 900000 : 60000); // 15 minutes for all chapters
   const { data } = await api.get(`/books/${bookId}/chapters`, {
     params: opts,
     timeout

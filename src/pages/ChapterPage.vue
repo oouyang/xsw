@@ -379,6 +379,7 @@ async function load() {
     console.log(`Successfully loaded chapter ${props.chapterNum}, index: ${book.currentChapterIndex}`);
   } catch (e: unknown) {
     let errorMsg = 'Unknown error';
+    let is404 = false;
 
     // Extract detailed error information from axios error
     if (typeof e === 'object' && e !== null) {
@@ -387,6 +388,11 @@ async function load() {
         message?: string;
         code?: string;
       };
+
+      // Check if it's a 404 error
+      if ('response' in axiosError && axiosError.response?.status === 404) {
+        is404 = true;
+      }
 
       // Check if it's a timeout error
       if (axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout')) {
@@ -407,6 +413,60 @@ async function load() {
       errorMsg = e;
     } else {
       errorMsg = JSON.stringify(e);
+    }
+
+    // Handle 404: Try to find the nearest available chapter
+    if (is404 && book.allChapters.length > 0) {
+      console.warn(`[ChapterPage] Chapter ${props.chapterNum} not found (404), looking for nearest available chapter...`);
+
+      // Find the nearest chapter (prefer next chapter, fallback to previous)
+      const requestedNum = props.chapterNum;
+      const chapters = book.allChapters;
+
+      // Find next available chapter
+      const nextChapter = chapters.find(ch => ch.number > requestedNum);
+      if (nextChapter) {
+        console.log(`[ChapterPage] Redirecting to next available chapter: ${nextChapter.number}`);
+        error.value = `章節 ${requestedNum} 不存在，已跳轉至下一可用章節 ${nextChapter.number}`;
+        // Redirect to the nearest chapter
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Show message briefly
+        void router.replace({
+          name: 'Chapter',
+          params: {
+            bookId: props.bookId,
+            chapterNum: nextChapter.number,
+            chapterTitle: nextChapter.title
+          }
+        });
+        return;
+      }
+
+      // No next chapter found, try previous
+      const prevChapter = [...chapters].reverse().find(ch => ch.number < requestedNum);
+      if (prevChapter) {
+        console.log(`[ChapterPage] Redirecting to previous available chapter: ${prevChapter.number}`);
+        error.value = `章節 ${requestedNum} 不存在，已跳轉至上一可用章節 ${prevChapter.number}`;
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        void router.replace({
+          name: 'Chapter',
+          params: {
+            bookId: props.bookId,
+            chapterNum: prevChapter.number,
+            chapterTitle: prevChapter.title
+          }
+        });
+        return;
+      }
+
+      // No chapters available at all - fall back to chapters list
+      console.warn('[ChapterPage] No nearby chapters found, redirecting to chapters list');
+      error.value = `章節 ${requestedNum} 不存在，正在返回章節列表...`;
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      void router.replace({
+        name: 'Chapters',
+        params: { bookId: props.bookId }
+      });
+      return;
     }
 
     error.value = `${t('chapter.loadContentFailed')}: ${errorMsg}`;
