@@ -1,0 +1,76 @@
+{
+  "name": "看小說",
+  "short_name": "XSW",
+  "description": "Chinese Novel Reading Platform - Read and manage your favorite novels",
+  "version": "1.0",
+  "start_url": "/index.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#1976d2",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "icons/favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/favicon-96x96.png",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/favicon-128x128.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/favicon-180x180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/favicon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/favicon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["books", "entertainment", "lifestyle"],
+  "lang": "zh-TW",
+  "dir": "ltr",
+  "developer": {
+    "name": "Owen Ouyang",
+    "url": "https://github.com/oouyang"
+  },
+  "locales": {
+    "zh-TW": {
+      "name": "看小說",
+      "short_name": "小說",
+      "description": "中文小說閱讀平台 - 閱讀和管理您喜愛的小說"
+    },
+    "zh-CN": {
+      "name": "看小说",
+      "short_name": "小说",
+      "description": "中文小说阅读平台 - 阅读和管理您喜爱的小说"
+    },
+    "en": {
+      "name": "Novel Reader",
+      "short_name": "XSW",
+      "description": "Chinese Novel Reading Platform - Read and manage your favorite novels"
+    }
+  }
+}
