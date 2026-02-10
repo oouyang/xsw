@@ -223,6 +223,12 @@ app.add_middleware(
 def healthz():
     return {"ok": True}
 
+# Mount ubike PWA static files (multi-page app)
+ubike_dir = "/app/dist/ubike"
+if os.path.exists(ubike_dir):
+    app.mount("/ubike", StaticFiles(directory=ubike_dir, html=True), name="ubike")
+    print(f"[App] Ubike PWA static files mounted at /ubike from {ubike_dir}")
+
 # Mount SPA static files (assets, js, css)
 spa_dir = "/app/dist/spa"
 # spa_index_html = os.path.join(spa_dir, "index.html") if os.path.exists(spa_dir) else None
