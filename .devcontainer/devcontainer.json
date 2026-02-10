@@ -1,0 +1,151 @@
+{
+  "name": "xsw-fullstack",
+
+  // Build from local Dockerfile with proxy support
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      // Build-time proxy (Docker builder fetches via this)
+      "HTTP_PROXY": "http://proxy-web.micron.com:80",
+      "HTTPS_PROXY": "http://proxy-web.micron.com:80",
+      "NO_PROXY": "localhost,127.0.0.1,.micron.com",
+      "http_proxy": "http://proxy-web.micron.com:80",
+      "https_proxy": "http://proxy-web.micron.com:80",
+      "no_proxy": "localhost,127.0.0.1,.micron.com"
+    }
+  },
+
+  "remoteUser": "vscode",
+
+  // Container-level environment variables (runtime)
+  "containerEnv": {
+    // Corporate proxy at runtime for CLI tools that honor *_PROXY
+    "HTTP_PROXY": "http://proxy-web.micron.com:80",
+    "HTTPS_PROXY": "http://proxy-web.micron.com:80",
+    "NO_PROXY": "localhost,127.0.0.1,.micron.com",
+
+    // SSL/TLS certificate handling for Node.js and Python
+    "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt",
+    "NODE_EXTRA_CA_CERTS": "/usr/local/share/ca-certificates/micron/ca-bundle.crt",
+    "NODE_OPTIONS": "--use-openssl-ca",
+
+    // Python environment
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+
+    // Optional: Remote Docker daemon access (comment out if not needed)
+    "DOCKER_HOST": "ssh://hpcadmin@bolhpcnifi02"
+  },
+
+  // VS Code remote extension host environment
+  "remoteEnv": {
+    "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt",
+    "NODE_EXTRA_CA_CERTS": "/usr/local/share/ca-certificates/micron/ca-bundle.crt"
+  },
+
+  // VS Code extensions and settings
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Vue 3 development
+        "Vue.volar",
+        "Vue.vscode-typescript-vue-plugin",
+
+        // Python development
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+
+        // Code formatting and quality
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+
+        // Navigation and productivity
+        "antfu.goto-alias",
+        "usernamehw.errorlens",
+        "eamodio.gitlens",
+
+        // Docker
+        "ms-azuretools.vscode-docker",
+
+        // REST API testing
+        "humao.rest-client"
+      ],
+      "settings": {
+        // Proxy configuration for VS Code
+        "http.proxy": "http://proxy-web.micron.com:80",
+        "http.proxyStrictSSL": true,
+
+        // Vue/TypeScript settings
+        "typescript.tsserver.experimental.enableProjectDiagnostics": false,
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+
+        // Vue-specific settings
+        "[vue]": {
+          "editor.defaultFormatter": "Vue.volar"
+        },
+
+        // Python settings
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
+          }
+        },
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.ruffEnabled": true,
+        "python.formatting.provider": "none",
+
+        // File associations
+        "files.associations": {
+          "*.vue": "vue",
+          "*.env": "dotenv"
+        }
+      }
+    }
+  },
+
+  // Post-create command runs after container is created
+  "postCreateCommand": "bash .devcontainer/library-scripts/postCreate.sh",
+
+  // Expose dev server ports
+  "forwardPorts": [9000, 8000],
+  "portsAttributes": {
+    "9000": {
+      "label": "Quasar Dev Server (Frontend)",
+      "onAutoForward": "notify"
+    },
+    "8000": {
+      "label": "FastAPI Backend",
+      "onAutoForward": "notify"
+    }
+  },
+
+  // Performance and stability features
+  "runArgs": [
+    "--cap-add=SYS_ADMIN",  // Required for Chromium/Playwright if needed
+    "--shm-size=2g"          // Prevent Chrome crashes
+  ],
+
+  // Persistent volumes for caching (improves rebuild speed)
+  "mounts": [
+    // Frontend caches
+    "source=xsw-node-cache,target=/home/vscode/.cache,type=volume",
+    "source=xsw-npm-cache,target=/home/vscode/.npm,type=volume",
+    "source=xsw-yarn-cache,target=/home/vscode/.yarn,type=volume",
+
+    // Python caches
+    "source=xsw-pip-cache,target=/home/vscode/.cache/pip,type=volume",
+    "source=xsw-ruff-cache,target=/home/vscode/.cache/ruff,type=volume",
+
+    // Application data (SQLite database, etc.)
+    "source=xsw-data,target=/workspaces/xsw/data,type=volume"
+  ],
+
+  // Update dependencies when reopening container
+  "updateContentCommand": "corepack enable && corepack prepare yarn@stable --activate || true"
+}
