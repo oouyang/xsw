@@ -1,6 +1,6 @@
 <!-- src/pages/ChapterPage.vue -->
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="q-px-xs q-pt-sm q-pb-md">
     <q-banner v-if="error" class="bg-red-2 text-red-10 q-mb-md">
       <div class="row items-center">
         <div class="col">{{ error }}</div>
@@ -72,7 +72,7 @@
 
       <q-separator />
 
-      <q-card-section>
+      <q-card-section class="q-px-sm">
         <div v-if="loading" class="q-pa-lg">
           <q-skeleton type="text" v-for="i in 8" :key="i" class="q-mb-md" />
         </div>
@@ -327,6 +327,66 @@ function removeTitleWordsFromContent() {
     content.value[i] = cleaned.trim()
   }
 }
+// ── Queue-based background prefetch worker ────────────────────
+const PREFETCH_AHEAD = 5;
+const PREFETCH_DELAY_MS = 2000;
+
+interface PrefetchItem { bookId: string; chapterNum: number }
+const prefetchQueue: PrefetchItem[] = [];
+const prefetchDone = new Set<string>(); // "bookId:num" keys already fetched or in-flight
+let workerActive = false;
+let workerBookId = '';
+
+function enqueuePrefetch(bookId: string, currentNum: number) {
+  // Book changed — flush queue and done-set
+  if (bookId !== workerBookId) {
+    prefetchQueue.length = 0;
+    prefetchDone.clear();
+    workerBookId = bookId;
+  }
+
+  // Mark current chapter as done (user already loaded it)
+  prefetchDone.add(`${bookId}:${currentNum}`);
+
+  const lastChapter = book.info?.last_chapter_number ?? Infinity;
+  for (let i = 1; i <= PREFETCH_AHEAD; i++) {
+    const num = currentNum + i;
+    if (num > lastChapter) break;
+    const key = `${bookId}:${num}`;
+    if (prefetchDone.has(key)) continue;
+    // Avoid duplicate queue entries
+    if (prefetchQueue.some(q => q.bookId === bookId && q.chapterNum === num)) continue;
+    prefetchQueue.push({ bookId, chapterNum: num });
+  }
+
+  if (!workerActive) void runPrefetchWorker();
+}
+
+async function runPrefetchWorker() {
+  if (workerActive) return;
+  workerActive = true;
+
+  while (prefetchQueue.length > 0) {
+    const item = prefetchQueue.shift()!;
+    const key = `${item.bookId}:${item.chapterNum}`;
+
+    if (prefetchDone.has(key)) continue;
+    prefetchDone.add(key);
+
+    await new Promise(r => setTimeout(r, PREFETCH_DELAY_MS));
+
+    try {
+      await getChapterContent(item.bookId, item.chapterNum);
+      console.log(`[Prefetch] Cached chapter ${item.chapterNum}`);
+    } catch {
+      // Best-effort — remove from done so a future enqueue can retry
+      prefetchDone.delete(key);
+    }
+  }
+
+  workerActive = false;
+}
+
 async function load() {
   loading.value = true;
   error.value = '';
@@ -377,6 +437,9 @@ async function load() {
     }
 
     console.log(`Successfully loaded chapter ${props.chapterNum}, index: ${book.currentChapterIndex}`);
+
+    // Enqueue next chapters for background prefetch
+    enqueuePrefetch(props.bookId, props.chapterNum);
   } catch (e: unknown) {
     let errorMsg = 'Unknown error';
     let is404 = false;
@@ -598,9 +661,9 @@ p {
 }
 
 .chapter-content {
-  max-width: min(800px, 90vw);
+  max-width: 100%;
   margin: 0 auto;
-  padding: 0 16px;
+  padding: 0 4px;
 }
 
 /* Smooth transitions for buttons */
@@ -640,17 +703,11 @@ p {
   }
 }
 
-/* Tablet and larger - show both navigations */
+/* Tablet and larger - constrain reading width for comfort */
 @media (min-width: 601px) {
   .chapter-content {
-    padding: 0 24px;
-  }
-}
-
-/* Large screens - optimize reading width */
-@media (min-width: 1440px) {
-  .chapter-content {
     max-width: 900px;
+    padding: 0 12px;
   }
 }
 </style>
