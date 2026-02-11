@@ -327,36 +327,56 @@ function removeTitleWordsFromContent() {
     content.value[i] = cleaned.trim()
   }
 }
-// ── Queue-based background prefetch worker ────────────────────
-const PREFETCH_AHEAD = 25;
+// ── Priority queue-based background prefetch worker ────────────
+// High priority: next 2 chapters (immediate reading need)
+// Low priority:  chapters 3-5 ahead (read-ahead buffer)
+// Worker always drains high queue first, so navigating to a new
+// chapter immediately prioritises its next 2 over old low-priority items.
+const HIGH_PRIORITY_COUNT = 2;
+const LOW_PRIORITY_COUNT = 3;
 const PREFETCH_DELAY_MS = 2000;
 
 interface PrefetchItem { bookId: string; chapterNum: number }
-const prefetchQueue: PrefetchItem[] = [];
-const prefetchDone = new Set<string>(); // "bookId:num" keys already fetched or in-flight
+const hiQueue: PrefetchItem[] = [];
+const loQueue: PrefetchItem[] = [];
+const prefetchDone = new Set<string>(); // "bookId:num" already fetched
 let workerActive = false;
 let workerBookId = '';
 
+function prefetchKey(bookId: string, num: number) { return `${bookId}:${num}`; }
+
+function isQueued(bookId: string, num: number) {
+  return hiQueue.some(q => q.bookId === bookId && q.chapterNum === num)
+      || loQueue.some(q => q.bookId === bookId && q.chapterNum === num);
+}
+
 function enqueuePrefetch(bookId: string, currentNum: number) {
-  // Book changed — flush queue and done-set
+  // Book changed — flush everything
   if (bookId !== workerBookId) {
-    prefetchQueue.length = 0;
+    hiQueue.length = 0;
+    loQueue.length = 0;
     prefetchDone.clear();
     workerBookId = bookId;
   }
 
   // Mark current chapter as done (user already loaded it)
-  prefetchDone.add(`${bookId}:${currentNum}`);
+  prefetchDone.add(prefetchKey(bookId, currentNum));
 
   const lastChapter = book.info?.last_chapter_number ?? Infinity;
-  for (let i = 1; i <= PREFETCH_AHEAD; i++) {
+  const total = HIGH_PRIORITY_COUNT + LOW_PRIORITY_COUNT;
+
+  for (let i = 1; i <= total; i++) {
     const num = currentNum + i;
     if (num > lastChapter) break;
-    const key = `${bookId}:${num}`;
-    if (prefetchDone.has(key)) continue;
-    // Avoid duplicate queue entries
-    if (prefetchQueue.some(q => q.bookId === bookId && q.chapterNum === num)) continue;
-    prefetchQueue.push({ bookId, chapterNum: num });
+    const key = prefetchKey(bookId, num);
+    if (prefetchDone.has(key) || isQueued(bookId, num)) continue;
+
+    const item: PrefetchItem = { bookId, chapterNum: num };
+    if (i <= HIGH_PRIORITY_COUNT) {
+      hiQueue.push(item);
+    } else {
+      loQueue.push(item);
+    }
   }
 
   if (!workerActive) void runPrefetchWorker();
@@ -366,9 +386,10 @@ async function runPrefetchWorker() {
   if (workerActive) return;
   workerActive = true;
 
-  while (prefetchQueue.length > 0) {
-    const item = prefetchQueue.shift()!;
-    const key = `${item.bookId}:${item.chapterNum}`;
+  // Always prefer high-priority queue; fall back to low
+  while (hiQueue.length > 0 || loQueue.length > 0) {
+    const item = hiQueue.length > 0 ? hiQueue.shift()! : loQueue.shift()!;
+    const key = prefetchKey(item.bookId, item.chapterNum);
 
     if (prefetchDone.has(key)) continue;
     prefetchDone.add(key);
@@ -377,7 +398,8 @@ async function runPrefetchWorker() {
 
     try {
       await getChapterContent(item.bookId, item.chapterNum);
-      console.log(`[Prefetch] Cached chapter ${item.chapterNum}`);
+      const tag = hiQueue.length > 0 || loQueue.length > 0 ? '' : ' (queue empty)';
+      console.log(`[Prefetch] Cached chapter ${item.chapterNum}${tag}`);
     } catch {
       // Best-effort — remove from done so a future enqueue can retry
       prefetchDone.delete(key);
