@@ -41,7 +41,7 @@ ENV AUTH_ENABLED=$AUTH_ENABLED
 ENV DB_PATH=/app/data/xsw_cache.db
 
 # Create data directory for database persistence
-RUN mkdir -p /app/data && \
+RUN mkdir -p /app/data  /app/dist/ubike && \
     ruff check && ruff format && echo $BASE_URL
 
 EXPOSE 8000

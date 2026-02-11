@@ -7,7 +7,7 @@
       class="header-transition"
     >
       <q-toolbar>
-        <q-btn flat to="/" icon="menu_book" :label="$t('nav.home')" />
+        <q-btn flat to="/" icon="menu_book" :label="$q.screen.gt.xs ? $t('nav.home') : undefined" />
         <q-space />
 
         <!-- Search bar -->
@@ -34,7 +34,7 @@
 
         <q-space />
 
-        <q-btn flat @click="showDialog({ component: ConfigCard, position: 'bottom' })" icon="settings" :label="$t('common.settings')">
+        <q-btn flat @click="showDialog({ component: ConfigCard, position: 'bottom' })" icon="settings" :label="$q.screen.gt.xs ? $t('common.settings') : undefined">
           <q-tooltip>{{ $t('settings.title') }}</q-tooltip>
         </q-btn>
         <q-btn v-if="book.allChapters.length" flat round dense icon="menu" @click="drawerRight = !drawerRight">
@@ -121,7 +121,9 @@ import ConfigCard from 'src/components/ConfigCard.vue';
 import SearchDialog from 'src/components/SearchDialog.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useBookStore } from 'src/stores/books';
+import { useQuasar } from 'quasar';
 
+const $q = useQuasar();
 const { update } = useAppConfig();
 const route = useRoute()
 const router = useRouter()
@@ -429,13 +431,12 @@ function handleKey(e: KeyboardEvent) {
 
   /* Adjust header search input on mobile */
   .search-input {
-    max-width: 150px !important;
+    max-width: 180px !important;
   }
 
-  /* Stack toolbar items better on mobile */
+  /* Single-row toolbar on mobile */
   .q-toolbar {
-    flex-wrap: wrap;
-    min-height: 56px;
+    flex-wrap: nowrap;
   }
 }
 

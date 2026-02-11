@@ -328,7 +328,7 @@ function removeTitleWordsFromContent() {
   }
 }
 // ── Queue-based background prefetch worker ────────────────────
-const PREFETCH_AHEAD = 5;
+const PREFETCH_AHEAD = 25;
 const PREFETCH_DELAY_MS = 2000;
 
 interface PrefetchItem { bookId: string; chapterNum: number }

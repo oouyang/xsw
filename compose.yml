@@ -10,8 +10,8 @@ services:
     image: ${img}:${tag}
     env_file: .env
     restart: always
-    ports:
-      - 8000:8000
+    #ports:
+     # - 8000:8000
     volumes:
       - xsw_data:/app/data
     environment:
