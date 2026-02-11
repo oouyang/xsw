@@ -41,7 +41,7 @@ export function detectBasePath(configBasePath?: string): string {
     }
 
     // Known app routes that should NOT be treated as base paths
-    const appRoutes = ['/books', '/chapters', '/dashboard'];
+    const appRoutes = ['/book', '/books', '/cate', '/chapters', '/dashboard'];
     if (!appRoutes.includes(firstSegment)) {
       return firstSegment + '/';
     }
