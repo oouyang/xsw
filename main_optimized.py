@@ -77,11 +77,13 @@ CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "900"))
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_WHITELIST = os.getenv("RATE_LIMIT_WHITELIST", "127.0.0.1,::1").split(",")
 
-# Use default Python requests User-Agent instead of browser-like UA
-# This helps with corporate proxies like Zscaler that may block browser UAs
-# but allow automated tool requests
+# Use browser-like headers to avoid 403 blocks from czbooks.net
 session = requests.Session()
-# Don't set custom headers - use default requests User-Agent
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+})
 
 
 # -----------------------
