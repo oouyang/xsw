@@ -201,7 +201,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChapterRef, Chapters } from 'src/types/book-api';
-import { getBookInfo, getBookChapters } from 'src/services/bookApi';
+import { getBookChapters } from 'src/services/bookApi';
 import { useMeta } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppConfig } from 'src/services/useAppConfig';
@@ -210,9 +210,7 @@ import { useTextConversion } from 'src/composables/useTextConversion';
 import { useBookStore } from 'src/stores/books';
 
 const { t } = useI18n();
-const { config,
-  // update
-} = useAppConfig();
+const { config, update } = useAppConfig();
 const { convertIfNeeded } = useTextConversion();
 const book = useBookStore();
 
@@ -418,12 +416,12 @@ async function loadInfo() {
     loading.value = true;
     error.value = '';
     loadError.value = null;
-    const data = await getBookInfo(props.bookId);
-    // info.value = data;
-    book.setInfo(data);
-    // Calculate max pages: divide last chapter by page size (20) and round up
-    // maxPages.value = Math.ceil((info.value?.last_chapter_number || 100) / 20);
-    // book.setMaxPages(Math.ceil((book.info?.last_chapter_number || 100) / 20));
+    await book.loadInfo(props.bookId);
+
+    // Sync config store bookId with pinia store (may have switched to public_id)
+    if (book.bookId && book.bookId !== config.value.bookId) {
+      update({ bookId: book.bookId });
+    }
 
     // Update browser title with book name
     if (book.info?.name) {

@@ -28,7 +28,8 @@ export interface BookState {
   lastValidationError: string | null; // Last validation error message
 }
 
-const STORAGE_KEY = 'bookStore:v1';
+const STORAGE_KEY = 'bookStore:v2';
+const STORAGE_KEY_OLD = 'bookStore:v1';
 
 export const useBookStore = defineStore('book', {
   state: (): BookState => ({
@@ -163,18 +164,20 @@ export const useBookStore = defineStore('book', {
     },
     /** Load persisted state (call in boot) */
     load() {
+      // Remove stale v1 cache (had czbooks IDs, no chapter public_ids)
+      LocalStorage.remove(STORAGE_KEY_OLD);
+
       const saved = LocalStorage.getItem<BookState>(STORAGE_KEY);
       if (saved) {
         // Preserve new defaults when older payloads don't have them
         this.$patch({
           ...saved,
           allChapters: saved.allChapters ?? [],
-          pageChapters: saved.pageChapters ?? [], // migrate old `chapters` into `pageChapters` on first load
+          pageChapters: saved.pageChapters ?? [],
           resyncRetries: saved.resyncRetries ?? 0,
           lastValidationError: saved.lastValidationError ?? null,
         });
       }
-      //this.$patch(saved);
     },
 
     /** Persist immediately */
@@ -539,6 +542,13 @@ export const useBookStore = defineStore('book', {
 
     async loadInfo(bookId: string): Promise<BookInfo> {
       this.info = await getBookInfo(bookId);
+      // Switch bookId to public_id once the API returns it,
+      // so all future navigation uses our random ID instead of czbooks ID
+      if (this.info.public_id && this.bookId !== this.info.public_id) {
+        console.log(`[loadInfo] Switching bookId from "${this.bookId}" to public_id "${this.info.public_id}"`);
+        this.bookId = this.info.public_id;
+        this.save();
+      }
       return this.info;
     },
 

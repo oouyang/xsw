@@ -59,7 +59,8 @@ const { config } = useAppConfig();
 const loadedCategories = ref<Set<string>>(new Set());
 
 // Cache configuration
-const CACHE_KEY = 'dashboard_cache';
+const CACHE_KEY = 'dashboard_cache:v2';
+const CACHE_KEY_OLD = 'dashboard_cache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 interface CachedData {
@@ -168,6 +169,9 @@ async function fetchFreshData() {
 }
 
 async function load() {
+  // Remove stale v1 cache (had czbooks IDs, no public_id)
+  localStorage.removeItem(CACHE_KEY_OLD);
+
   // Try to load from cache first (stale-while-revalidate)
   const cached = loadFromCache();
   if (cached) {

@@ -288,6 +288,10 @@ async function loadMeta() {
     if (!infoMatches) {
       await book.loadInfo(props.bookId);
     }
+    // Sync config store bookId with pinia store (may have switched to public_id)
+    if (book.bookId && book.bookId !== config.value.bookId) {
+      update({ bookId: book.bookId });
+    }
     // lastChapterNum.value = book.info?.last_chapter_number ?? null;
     // Calculate number of pages: divide by page size (20) and round up
     // pages.value = Math.ceil((lastChapterNum?.value || 1) / 20);
