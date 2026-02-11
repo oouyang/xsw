@@ -100,11 +100,12 @@ def resolve_book_home(book_id: str) -> str:
     return f"{base}/n/{book_id}"
 
 
+PROXY_URL = os.getenv("HTTP_PROXY_URL", "http://taleon.work.gd:55128")
+
 def fetch_html(url: str) -> str:
-    """Fetch HTML with encoding detection."""
-    # Use verify=False to bypass SSL verification with corporate proxy/Zscaler
-    # The proxy does SSL inspection and we don't have their CA cert in container
-    resp = session.get(url, timeout=DEFAULT_TIMEOUT, verify=False)
+    """Fetch HTML with encoding detection, routing through proxy."""
+    proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
+    resp = session.get(url, timeout=DEFAULT_TIMEOUT, verify=False, proxies=proxies)
     resp.raise_for_status()
     enc = resp.apparent_encoding or resp.encoding or "utf-8"
     resp.encoding = enc
