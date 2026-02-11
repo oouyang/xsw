@@ -203,10 +203,15 @@ def resolve_chapter(book_czid: str, chapter_input: str) -> tuple:
         session.close()
 
 
-def get_book_public_id(book_czid: str) -> Optional[str]:
-    """Get the public_id for a book given its czbooks ID."""
+def get_book_public_id(book_czid: str, book_name: str = "") -> Optional[str]:
+    """Get or create a public_id for a book given its czbooks ID.
+
+    If the book exists in DB, returns its public_id.
+    If the book doesn't exist, creates a minimal record with a public_id.
+    """
     import db_models as _db
     from db_models import Book
+    from cache_manager import generate_public_id
 
     if not _db.db_manager:
         return None
@@ -214,7 +219,29 @@ def get_book_public_id(book_czid: str) -> Optional[str]:
     session = _db.db_manager.get_session()
     try:
         book = session.query(Book).filter(Book.id == book_czid).first()
-        return book.public_id if book else None
+        if book:
+            if not book.public_id:
+                book.public_id = generate_public_id()
+                session.commit()
+            return book.public_id
+
+        # Book not in DB yet — create a minimal record so it gets a public_id
+        pub_id = generate_public_id()
+        book = Book(
+            id=book_czid,
+            public_id=pub_id,
+            name=book_name or book_czid,
+        )
+        session.add(book)
+        session.commit()
+        return pub_id
+    except Exception as e:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        print(f"[API] Error getting/creating public_id for {book_czid}: {e}")
+        return None
     finally:
         session.close()
 
@@ -498,7 +525,7 @@ def list_books_in_category(
         book_summaries = []
         for b in books:
             czid = extract_book_id_from_url(b["bookurl"])
-            pub_id = get_book_public_id(czid)
+            pub_id = get_book_public_id(czid, b.get("bookname", ""))
             book_summaries.append(
                 BookSummary(**b, book_id=czid, public_id=pub_id)
             )
