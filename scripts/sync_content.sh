@@ -20,9 +20,13 @@ for b in dist/i*json; do
     continue
   fi
 
-  # Validate numeric fields
-  if ! [[ "$mx" =~ ^[0-9]+$ ]] || ! [[ "$i" =~ ^[0-9]+$ ]]; then
-    echo "Error: non-numeric mx ($mx) or book_id ($i) in $b" >&2
+  # Validate fields
+  if ! [[ "$mx" =~ ^[0-9]+$ ]]; then
+    echo "Error: non-numeric last_chapter_number ($mx) in $b" >&2
+    continue
+  fi
+  if [[ -z "$i" ]]; then
+    echo "Error: empty book_id in $b" >&2
     continue
   fi
 

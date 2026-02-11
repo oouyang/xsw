@@ -252,8 +252,8 @@ main() {
 
     # Process each book
     for chapter_file in "${chapter_files[@]}"; do
-        # Extract book_id from filename (book_123_chapters.json -> 123)
-        local book_id=$(basename "$chapter_file" | sed 's/book_\([0-9]*\)_chapters\.json/\1/')
+        # Extract book_id from filename (book_cr382b_chapters.json -> cr382b)
+        local book_id=$(basename "$chapter_file" | sed 's/book_\(.*\)_chapters\.json/\1/')
 
         # Get book name
         local book_metadata_file="${DATA_DIR}/book_${book_id}.json"

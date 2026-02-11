@@ -8,7 +8,7 @@ from datetime import datetime
 import time
 import threading
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 import db_models
 from db_models import Book, Chapter
@@ -361,6 +361,11 @@ class CacheManager:
                     try:
                         session.commit()
                         pending_commit = False
+                    except IntegrityError:
+                        # Another thread already stored these chapters — not an error
+                        session.rollback()
+                        pending_commit = False
+                        print(f"[Cache] Batch at chapter {idx + 1} already exists (concurrent write), skipping")
                     except SQLAlchemyError as e:
                         try:
                             session.rollback()

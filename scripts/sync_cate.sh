@@ -1,32 +1,41 @@
 #!/bin/bash
-max_cat=7
-max_pag=5
-#for c in {1..$max_cat}
-for (( c=1; c<=max_cat; c++ ))
-do
-  echo $c
-  for (( p=1; p<=max_pag; p++ ))
-  do
-    echo fetch category $c and page $p
-    curl "localhost:8000/xsw/api/categories/$c/books?page=$p" > dist/c${c}_p${p}.json
-  done
+#
+# sync_cate.sh - Quick category book discovery (simple version)
+#
+# Discovers category slugs from /categories API, then fetches book lists.
+# czbooks.net uses slug-based categories (e.g. "xuanhuan", "dushi").
+#
+# Usage:
+#   ./sync_cate.sh              # Sync all categories, 5 pages each
+#   MAX_PAGES=10 ./sync_cate.sh # Sync with 10 pages per category
+#
+
+set -euo pipefail
+
+API_BASE="${API_BASE:-http://localhost:8000/xsw/api}"
+MAX_PAGES="${MAX_PAGES:-5}"
+OUT_DIR="${OUT_DIR:-dist}"
+
+mkdir -p "$OUT_DIR"
+
+# Step 1: Discover category slugs from API
+echo "Discovering categories..."
+categories_json=$(curl -s "${API_BASE}/categories")
+slugs=$(echo "$categories_json" | jq -r '.[].id')
+
+if [[ -z "$slugs" ]]; then
+    echo "Error: No categories found" >&2
+    exit 1
+fi
+
+echo "$categories_json" | jq -r '.[] | "  \(.id): \(.name)"'
+echo ""
+
+# Step 2: Fetch book lists for each category
+for slug in $slugs; do
+    echo "Category: $slug"
+    for (( p=1; p<=MAX_PAGES; p++ )); do
+        echo "  fetch category $slug page $p"
+        curl -s "${API_BASE}/categories/${slug}/books?page=${p}" > "${OUT_DIR}/c_${slug}_p${p}.json"
+    done
 done
-
-#for j in dist/c*json
-#do
-#  echo fetch book $j
-#  curl "localhost:8000/xsw/api/books/$j" > dist/i$j.json
-#  curl "http://localhost:8000/xsw/api/books/$j/chapters?page=1&nocache=true&www=false&all=true" > dist/b$j.json
-#done
-
-#for b in dist/i*json
-#do
-#  echo fetch book content $b
-#  mx=$(jq .last_chapter_number $b)
-#  i=$(jq .book_id $b)
-#  for (( c=1; c<=mx; c++ ))
-#  do
-#    curl "localhost:8000/xsw/api/books/$i/chapters/${c}?nocache=true"
-#    sleep 2
-#  done
-#done

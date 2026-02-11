@@ -18,6 +18,7 @@ import requests
 import os
 import shutil
 import uuid
+import threading
 from pathlib import Path
 import urllib3
 
@@ -94,6 +95,19 @@ session.headers.update({
     "User-Agent": "curl/8.14.1",
     "Accept": "*/*",
 })
+
+
+# Per-book locks to prevent concurrent web fetches of the same book
+_book_fetch_locks: dict[str, threading.Lock] = {}
+_book_fetch_locks_guard = threading.Lock()
+
+
+def _get_book_lock(book_id: str) -> threading.Lock:
+    """Get or create a lock for a specific book_id."""
+    with _book_fetch_locks_guard:
+        if book_id not in _book_fetch_locks:
+            _book_fetch_locks[book_id] = threading.Lock()
+        return _book_fetch_locks[book_id]
 
 
 # -----------------------
@@ -444,71 +458,85 @@ def get_book_chapters(
                     print(f"[API] Chapters for {book_id} - DB hit ({len(all_chapters)} chapters)")
 
         if not all_chapters:
-            # Cache miss or nocache - fetch from web
-            print(f"[API] Chapters for {book_id} - fetching from web (www={www})")
+            # Cache miss or nocache - use per-book lock to prevent concurrent fetches
+            lock = _get_book_lock(book_id)
+            with lock:
+                # Re-check cache inside lock (another thread may have filled it)
+                if not nocache:
+                    all_chapters = cache_mgr.cache_manager.get_chapter_list(book_id)
+                    if all_chapters:
+                        first_num = min(c.number for c in all_chapters)
+                        if first_num == 1:
+                            print(f"[API] Chapters for {book_id} - DB hit after lock ({len(all_chapters)} chapters)")
+                        else:
+                            all_chapters = None
 
-            if www:
-                # Fetch from home page only (mobile site - latest 10 chapters)
-                # NOTE: Don't cache these results as they may be partial and incorrectly numbered
-                home_url = resolve_book_home(book_id)
-                html_content = fetch_html(home_url)
-                items = fetch_chapters_from_liebiao(html_content, home_url, canonical_base(), start_index=1)
-            else:
-                # Fetch from pagination pages (all chapters)
-                items = fetch_all_chapters_from_pagination(book_id)
+                if not all_chapters:
+                    # Still a cache miss - fetch from web
+                    print(f"[API] Chapters for {book_id} - fetching from web (www={www})")
 
-            if not items:
-                raise HTTPException(status_code=404, detail="No chapters found")
+                    if www:
+                        # Fetch from home page only (mobile site - latest 10 chapters)
+                        # NOTE: Don't cache these results as they may be partial and incorrectly numbered
+                        home_url = resolve_book_home(book_id)
+                        html_content = fetch_html(home_url)
+                        items = fetch_chapters_from_liebiao(html_content, home_url, canonical_base(), start_index=1)
+                    else:
+                        # Fetch from pagination pages (all chapters)
+                        items = fetch_all_chapters_from_pagination(book_id)
 
-            # Store to DB only for full fetches (www=false)
-            # Partial fetches (www=true) from home page may be incorrectly numbered
-            if not www:
-                cache_mgr.cache_manager.store_chapter_refs(book_id, items)
+                    if not items:
+                        raise HTTPException(status_code=404, detail="No chapters found")
 
-            # Convert to ChapterRef list
-            all_chapters = [
-                ChapterRef(number=item["number"], title=item["title"], url=item["url"])
-                for item in items
-                if item.get("number") is not None
-            ]
+                    # Store to DB only for full fetches (www=false)
+                    # Partial fetches (www=true) from home page may be incorrectly numbered
+                    if not www:
+                        cache_mgr.cache_manager.store_chapter_refs(book_id, items)
 
-            # CRITICAL: Sort chapters by number to ensure correct order
-            # HTML may return chapters out of order
-            all_chapters.sort(key=lambda c: c.number)
-            print(f"[API] Sorted {len(all_chapters)} chapters by number")
+                    # Convert to ChapterRef list
+                    all_chapters = [
+                        ChapterRef(number=item["number"], title=item["title"], url=item["url"])
+                        for item in items
+                        if item.get("number") is not None
+                    ]
 
-            # Sync book info with actual last chapter from fetched chapters
-            # Only do this for full fetches (www=false) as partial fetches may have incorrect numbering
-            if all_chapters and not www:
-                last_chapter = max(all_chapters, key=lambda c: c.number)
-                print(f"[API] Syncing book {book_id} with last chapter: {last_chapter.number} - {last_chapter.title}")
+                    # CRITICAL: Sort chapters by number to ensure correct order
+                    # HTML may return chapters out of order
+                    all_chapters.sort(key=lambda c: c.number)
+                    print(f"[API] Sorted {len(all_chapters)} chapters by number")
 
-                # Get or create book info
-                book_info = cache_mgr.cache_manager.get_book_info(book_id)
-                if book_info:
-                    # Update existing book info
-                    book_info_dict = book_info.dict()
-                    book_info_dict["last_chapter_number"] = last_chapter.number
-                    book_info_dict["last_chapter_title"] = last_chapter.title
-                    book_info_dict["last_chapter_url"] = last_chapter.url
-                    cache_mgr.cache_manager.store_book_info(book_id, book_info_dict)
-                    print(f"[API] Updated book {book_id} last_chapter_number to {last_chapter.number}")
-                else:
-                    # Book info not in cache - fetch and update it
-                    try:
-                        url = resolve_book_home(book_id)
-                        html_content = fetch_html(url)
-                        info = parse_book_info(html_content, BASE_URL)
-                        if info:
-                            info["book_id"] = book_id
-                            info["source_url"] = url
-                            info["last_chapter_number"] = last_chapter.number
-                            info["last_chapter_title"] = last_chapter.title
-                            info["last_chapter_url"] = last_chapter.url
-                            cache_mgr.cache_manager.store_book_info(book_id, info)
-                            print(f"[API] Created book info for {book_id} with last_chapter_number: {last_chapter.number}")
-                    except Exception as e:
-                        print(f"[API] Warning: Failed to fetch book info during sync: {e}")
+                    # Sync book info with actual last chapter from fetched chapters
+                    # Only do this for full fetches (www=false) as partial fetches may have incorrect numbering
+                    if all_chapters and not www:
+                        last_chapter = max(all_chapters, key=lambda c: c.number)
+                        print(f"[API] Syncing book {book_id} with last chapter: {last_chapter.number} - {last_chapter.title}")
+
+                        # Get or create book info
+                        book_info = cache_mgr.cache_manager.get_book_info(book_id)
+                        if book_info:
+                            # Update existing book info
+                            book_info_dict = book_info.dict()
+                            book_info_dict["last_chapter_number"] = last_chapter.number
+                            book_info_dict["last_chapter_title"] = last_chapter.title
+                            book_info_dict["last_chapter_url"] = last_chapter.url
+                            cache_mgr.cache_manager.store_book_info(book_id, book_info_dict)
+                            print(f"[API] Updated book {book_id} last_chapter_number to {last_chapter.number}")
+                        else:
+                            # Book info not in cache - fetch and update it
+                            try:
+                                url = resolve_book_home(book_id)
+                                html_content = fetch_html(url)
+                                info = parse_book_info(html_content, BASE_URL)
+                                if info:
+                                    info["book_id"] = book_id
+                                    info["source_url"] = url
+                                    info["last_chapter_number"] = last_chapter.number
+                                    info["last_chapter_title"] = last_chapter.title
+                                    info["last_chapter_url"] = last_chapter.url
+                                    cache_mgr.cache_manager.store_book_info(book_id, info)
+                                    print(f"[API] Created book info for {book_id} with last_chapter_number: {last_chapter.number}")
+                            except Exception as e:
+                                print(f"[API] Warning: Failed to fetch book info during sync: {e}")
 
         # Return based on 'all' parameter
         if all_chapters_flag:

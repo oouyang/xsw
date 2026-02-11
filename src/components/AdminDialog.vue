@@ -124,7 +124,6 @@
             narrow-indicator
           >
             <q-tab name="stats" :label="$t('admin.tabs.stats')" />
-            <q-tab name="jobs" :label="$t('admin.tabs.jobs')" />
             <q-tab name="cache" :label="$t('admin.tabs.cache')" />
             <q-tab name="books" :label="$t('admin.tabs.books')" />
             <q-tab name="smtp" :label="$t('admin.tabs.smtp')" />
@@ -134,7 +133,7 @@
             <!-- Stats Tab -->
             <q-tab-panel name="stats">
               <div class="row q-col-gutter-sm q-mb-md">
-                <div class="col-6">
+                <div class="col-12">
                   <q-card flat bordered>
                     <q-card-section class="q-pa-sm">
                       <div class="text-caption text-weight-medium">{{ $t('admin.stats.cache') }}</div>
@@ -147,127 +146,18 @@
                     </q-card-section>
                   </q-card>
                 </div>
-                <div class="col-6">
-                  <q-card flat bordered>
-                    <q-card-section class="q-pa-sm">
-                      <div class="text-caption text-weight-medium">{{ $t('admin.stats.jobs') }}</div>
-                      <div v-if="stats.jobs" class="text-body2">
-                        <div>{{ $t('admin.stats.pending') }}: {{ stats.jobs.pending_jobs }}</div>
-                        <div>{{ $t('admin.stats.completed') }}: {{ stats.jobs.completed_jobs }}</div>
-                        <div>{{ $t('admin.stats.failed') }}: {{ stats.jobs.failed_jobs }}</div>
-                      </div>
-                      <q-spinner v-else color="primary" size="20px" />
-                    </q-card-section>
-                  </q-card>
-                </div>
               </div>
-
-              <div class="row q-col-gutter-sm">
-                <div class="col-6">
-                  <q-card flat bordered>
-                    <q-card-section class="q-pa-sm">
-                      <div class="text-caption text-weight-medium">{{ $t('admin.stats.midnightSync') }}</div>
-                      <div v-if="stats.midnightSync" class="text-body2">
-                        <div>{{ $t('admin.stats.total') }}: {{ stats.midnightSync.total }}</div>
-                        <div>{{ $t('admin.stats.pending') }}: {{ stats.midnightSync.pending }} | {{ $t('admin.stats.syncing') }}: {{ stats.midnightSync.syncing }}</div>
-                        <div>{{ $t('admin.stats.completed') }}: {{ stats.midnightSync.completed }} | {{ $t('admin.stats.failed') }}: {{ stats.midnightSync.failed }}</div>
-                        <div class="text-caption">{{ $t('admin.stats.nextSync') }}: {{ stats.midnightSync.next_sync_time }}</div>
-                      </div>
-                      <q-spinner v-else color="primary" size="20px" />
-                    </q-card-section>
-                  </q-card>
-                </div>
-                <div class="col-6">
-                  <q-card flat bordered>
-                    <q-card-section class="q-pa-sm">
-                      <div class="text-caption text-weight-medium">{{ $t('admin.stats.periodicSync') }}</div>
-                      <div v-if="stats.periodicSync" class="text-body2">
-                        <div>{{ $t('admin.stats.interval') }}: {{ stats.periodicSync.interval_hours }}h</div>
-                        <div>{{ $t('admin.stats.priority') }}: {{ stats.periodicSync.priority }}</div>
-                        <div class="text-caption">{{ $t('admin.stats.lastSync') }}: {{ stats.periodicSync.last_sync_time || 'N/A' }}</div>
-                        <div class="text-caption">{{ $t('admin.stats.nextSync') }}: {{ stats.periodicSync.next_sync_time || 'N/A' }}</div>
-                      </div>
-                      <q-spinner v-else color="primary" size="20px" />
-                    </q-card-section>
-                  </q-card>
-                </div>
-              </div>
-            </q-tab-panel>
-
-            <!-- Jobs Tab -->
-            <q-tab-panel name="jobs">
-              <div class="text-subtitle2 q-mb-sm">{{ $t('admin.actions.midnightSync') }}</div>
-              <div class="row q-col-gutter-sm q-mb-md">
-                <div class="col-6">
-                  <q-btn
-                    unelevated
-                    color="primary"
-                    icon="queue"
-                    :label="$t('admin.actions.enqueue')"
-                    class="full-width"
-                    @click="enqueueUnfinished"
-                    :loading="actionLoading.enqueue"
-                    size="sm"
-                  >
-                    <q-tooltip>{{ $t('admin.tooltips.enqueue') }}</q-tooltip>
-                  </q-btn>
-                </div>
-                <div class="col-6">
-                  <q-btn
-                    unelevated
-                    color="secondary"
-                    icon="play_arrow"
-                    :label="$t('admin.actions.trigger')"
-                    class="full-width"
-                    @click="triggerSync"
-                    :loading="actionLoading.trigger"
-                    size="sm"
-                  >
-                    <q-tooltip>{{ $t('admin.tooltips.trigger') }}</q-tooltip>
-                  </q-btn>
-                </div>
-                <div class="col-6">
-                  <q-btn
-                    unelevated
-                    color="warning"
-                    icon="clear"
-                    :label="$t('admin.actions.clear')"
-                    class="full-width"
-                    @click="clearCompleted"
-                    :loading="actionLoading.clear"
-                    size="sm"
-                  >
-                    <q-tooltip>{{ $t('admin.tooltips.clear') }}</q-tooltip>
-                  </q-btn>
-                </div>
-                <div class="col-6">
-                  <q-btn
-                    unelevated
-                    color="info"
-                    icon="refresh"
-                    :label="$t('admin.actions.refresh')"
-                    class="full-width"
-                    @click="refreshStats"
-                    :loading="statsLoading"
-                    size="sm"
-                  >
-                    <q-tooltip>{{ $t('admin.tooltips.refresh') }}</q-tooltip>
-                  </q-btn>
-                </div>
-              </div>
-
-              <div class="text-subtitle2 q-mb-sm q-mt-md">Job History</div>
               <q-btn
                 unelevated
-                color="warning"
-                icon="history"
-                :label="$t('admin.actions.clearHistory')"
+                color="info"
+                icon="refresh"
+                :label="$t('admin.actions.refresh')"
                 class="full-width"
-                @click="clearJobHistory"
-                :loading="actionLoading.clearHistory"
+                @click="refreshStats"
+                :loading="statsLoading"
                 size="sm"
               >
-                <q-tooltip>{{ $t('admin.tooltips.clearHistory') }}</q-tooltip>
+                <q-tooltip>{{ $t('admin.tooltips.refresh') }}</q-tooltip>
               </q-btn>
             </q-tab-panel>
 
@@ -588,12 +478,8 @@ const initSyncParams = ref({
 
 // Action loading states
 const actionLoading = ref({
-  enqueue: false,
-  trigger: false,
-  clear: false,
   clearCache: false,
   resync: false,
-  clearHistory: false,
   initSync: false,
   saveSMTP: false,
   testSMTP: false
@@ -655,40 +541,10 @@ interface CacheStats {
   memory_cache_size: number;
 }
 
-interface JobStats {
-  pending_jobs: number;
-  completed_jobs: number;
-  failed_jobs: number;
-  active_jobs: number;
-}
-
-interface MidnightSyncStats {
-  total: number;
-  pending: number;
-  syncing: number;
-  completed: number;
-  failed: number;
-  next_sync_time: string;
-}
-
-interface PeriodicSyncStats {
-  running: boolean;
-  interval_hours: number;
-  last_sync_time: string | null;
-  next_sync_time: string | null;
-  priority: number;
-}
-
 const stats = ref<{
   cache: CacheStats | null;
-  jobs: JobStats | null;
-  midnightSync: MidnightSyncStats | null;
-  periodicSync: PeriodicSyncStats | null;
 }>({
-  cache: null,
-  jobs: null,
-  midnightSync: null,
-  periodicSync: null
+  cache: null
 });
 
 // Admin authentication functions
@@ -896,17 +752,8 @@ async function changePassword() {
 async function refreshStats() {
   statsLoading.value = true;
   try {
-    const [healthResponse, jobStatsResponse, midnightSyncResponse, periodicSyncResponse] = await Promise.all([
-      api.get('/health'),
-      api.get('/admin/jobs/stats'),
-      api.get('/admin/midnight-sync/stats'),
-      api.get('/admin/periodic-sync/stats')
-    ]);
-
+    const healthResponse = await api.get('/health');
     stats.value.cache = healthResponse.data.cache_stats;
-    stats.value.jobs = jobStatsResponse.data;
-    stats.value.midnightSync = midnightSyncResponse.data;
-    stats.value.periodicSync = periodicSyncResponse.data;
     $q.notify({
       type: 'positive',
       message: t('admin.messages.statsRefreshed'),
@@ -921,72 +768,6 @@ async function refreshStats() {
     });
   } finally {
     statsLoading.value = false;
-  }
-}
-
-async function enqueueUnfinished() {
-  actionLoading.value.enqueue = true;
-  try {
-    const response = await api.post('/admin/midnight-sync/enqueue-unfinished');
-    $q.notify({
-      type: 'positive',
-      message: t('admin.messages.enqueuedBooks', { count: response.data.added_count }),
-      position: 'top'
-    });
-    void refreshStats();
-  } catch (error) {
-    console.error('Failed to enqueue:', error);
-    $q.notify({
-      type: 'negative',
-      message: t('admin.messages.enqueueFailed'),
-      position: 'top'
-    });
-  } finally {
-    actionLoading.value.enqueue = false;
-  }
-}
-
-async function triggerSync() {
-  actionLoading.value.trigger = true;
-  try {
-    await api.post('/admin/midnight-sync/trigger');
-    $q.notify({
-      type: 'positive',
-      message: t('admin.messages.syncTriggered'),
-      position: 'top'
-    });
-    void refreshStats();
-  } catch (error) {
-    console.error('Failed to trigger sync:', error);
-    $q.notify({
-      type: 'negative',
-      message: t('admin.messages.triggerFailed'),
-      position: 'top'
-    });
-  } finally {
-    actionLoading.value.trigger = false;
-  }
-}
-
-async function clearCompleted() {
-  actionLoading.value.clear = true;
-  try {
-    const response = await api.post('/admin/midnight-sync/clear-completed');
-    $q.notify({
-      type: 'positive',
-      message: t('admin.messages.clearedEntries', { count: response.data.removed_count }),
-      position: 'top'
-    });
-    void refreshStats();
-  } catch (error) {
-    console.error('Failed to clear:', error);
-    $q.notify({
-      type: 'negative',
-      message: t('admin.messages.clearFailed'),
-      position: 'top'
-    });
-  } finally {
-    actionLoading.value.clear = false;
   }
 }
 
@@ -1016,37 +797,6 @@ function clearCache() {
         });
       } finally {
         actionLoading.value.clearCache = false;
-      }
-    })();
-  });
-}
-
-function clearJobHistory() {
-  $q.dialog({
-    title: t('admin.confirm.title'),
-    message: t('admin.confirm.clearHistory'),
-    cancel: true,
-    persistent: true
-  }).onOk(() => {
-    actionLoading.value.clearHistory = true;
-    void (async () => {
-      try {
-        const response = await api.post('/admin/jobs/clear_history');
-        $q.notify({
-          type: 'positive',
-          message: t('admin.messages.historyCleared', { count: response.data.removed }),
-          position: 'top'
-        });
-        void refreshStats();
-      } catch (error) {
-        console.error('Failed to clear job history:', error);
-        $q.notify({
-          type: 'negative',
-          message: t('admin.messages.historyClearFailed'),
-          position: 'top'
-        });
-      } finally {
-        actionLoading.value.clearHistory = false;
       }
     })();
   });

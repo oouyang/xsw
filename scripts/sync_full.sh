@@ -12,7 +12,7 @@
 #   --fast          Use faster sync (higher risk of blocking)
 #   --slow          Use slower sync (safer, default)
 #   --ultra-slow    Use ultra-slow sync (maximum safety)
-#   --categories N  Sync N categories (default: 7)
+#   --categories N  Limit to first N categories (default: all discovered)
 #   --pages N       Pages per category (default: 10)
 #   --resume        Resume from last checkpoint
 #   --dry-run       Show what would be synced without syncing
@@ -45,7 +45,7 @@ declare -A RATE_PROFILES=(
 
 # Default configuration
 PROFILE="slow"
-MAX_CATEGORIES=7
+MAX_CATEGORIES=0
 PAGES_PER_CATEGORY=10
 RESUME_MODE=false
 DRY_RUN=false
@@ -162,7 +162,11 @@ display_plan() {
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo ""
     echo "Profile:              ${PROFILE}"
-    echo "Categories to sync:   ${MAX_CATEGORIES}"
+    if [[ $MAX_CATEGORIES -eq 0 ]]; then
+        echo "Categories to sync:   all (discovered from API)"
+    else
+        echo "Categories to sync:   ${MAX_CATEGORIES}"
+    fi
     echo "Pages per category:   ${PAGES_PER_CATEGORY}"
     echo "API Base URL:         ${API_BASE}"
     echo ""
@@ -172,7 +176,7 @@ display_plan() {
     echo "  - Chapter delay:    ${CHAPTER_DELAY}s"
     echo ""
     echo "Estimated sync phases:"
-    echo "  1. Categories       (~$((MAX_CATEGORIES * PAGES_PER_CATEGORY)) requests)"
+    echo "  1. Categories       (discover + ${PAGES_PER_CATEGORY} pages each)"
     echo "  2. Book metadata    (variable, based on discovery)"
     echo "  3. Chapter lists    (variable, based on books found)"
     echo "  4. Chapter content  (high volume, throttled)"
@@ -216,7 +220,7 @@ phase2_sync_books() {
     log_info "PHASE 2: Syncing book metadata"
 
     if [[ "$DRY_RUN" == true ]]; then
-        local book_count=$(find "$DATA_DIR" -name "c*_p*.json" -exec jq -r '.[].book_id' {} \; 2>/dev/null | sort -u | wc -l)
+        local book_count=$(find "$DATA_DIR" -name "c_*_p*.json" -exec jq -r '.[].book_id' {} \; 2>/dev/null | sort -u | wc -l)
         log_info "Would sync metadata for ~${book_count} books"
         return 0
     fi
@@ -245,7 +249,7 @@ phase3_sync_chapters() {
     export API_BASE
     export DATA_DIR
 
-    bash "${SYNC_DIR}/sync_chapters.sh"
+    bash "${SYNC_DIR}/sync_chapters_enhanced.sh"
 
     save_checkpoint "PHASE3" "COMPLETE"
     log_success "Phase 3 complete: Chapter lists synced"
@@ -290,7 +294,7 @@ generate_report() {
         echo "Statistics:"
 
         # Count categories
-        local cat_count=$(find "$DATA_DIR" -name "c*_p*.json" -type f 2>/dev/null | wc -l)
+        local cat_count=$(find "$DATA_DIR" -name "c_*_p*.json" -type f 2>/dev/null | wc -l)
         echo "  Categories synced:    ${cat_count}"
 
         # Count unique books
