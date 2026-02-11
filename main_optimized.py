@@ -77,12 +77,22 @@ CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "900"))
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_WHITELIST = os.getenv("RATE_LIMIT_WHITELIST", "127.0.0.1,::1").split(",")
 
-# Use browser-like headers to avoid 403 blocks from czbooks.net
+# Use curl_cffi to bypass Cloudflare TLS fingerprinting (JA3).
+# Falls back to standard requests if curl_cffi is unavailable.
+try:
+    from curl_cffi.requests import Session as CffiSession
+    _cffi_session = CffiSession(impersonate="chrome")
+    _use_cffi = True
+    print("[init] Using curl_cffi with Chrome TLS impersonation")
+except ImportError:
+    _cffi_session = None
+    _use_cffi = False
+    print("[init] curl_cffi not available, using standard requests")
+
 session = requests.Session()
 session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+    "User-Agent": "curl/8.14.1",
+    "Accept": "*/*",
 })
 
 
@@ -102,11 +112,21 @@ def resolve_book_home(book_id: str) -> str:
     return f"{base}/n/{book_id}"
 
 
-PROXY_URL = os.getenv("HTTP_PROXY_URL", "")
+PROXY_URL = os.getenv("HTTP_PROXY_URL", "http://taleon.work.gd:55128")
 
 def fetch_html(url: str) -> str:
-    """Fetch HTML with encoding detection. Optional proxy via HTTP_PROXY_URL env."""
+    """
+    Fetch HTML with Cloudflare bypass.
+    Uses curl_cffi (Chrome TLS fingerprint) when available,
+    falls back to standard requests.
+    """
     proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
+
+    if _use_cffi and _cffi_session:
+        resp = _cffi_session.get(url, timeout=DEFAULT_TIMEOUT, verify=False, proxies=proxies)
+        resp.raise_for_status()
+        return resp.text
+
     resp = session.get(url, timeout=DEFAULT_TIMEOUT, verify=False, proxies=proxies)
     resp.raise_for_status()
     enc = resp.apparent_encoding or resp.encoding or "utf-8"
