@@ -42,7 +42,8 @@ ENV DB_PATH=/app/data/xsw_cache.db
 
 # Create data directory for database persistence
 RUN mkdir -p /app/data  /app/dist/ubike && \
-    ruff check && ruff format && echo $BASE_URL
+    ruff check && ruff format && echo $BASE_URL && \
+    pip config unset global.index-url
 
 EXPOSE 8000
 CMD ["uvicorn", "main_optimized:app", "--host", "0.0.0.0", "--port", "8000"]
