@@ -115,7 +115,7 @@ async function loadCategoryBooks(catId: string) {
 
   try {
     loadedCategories.value.add(catId);
-    const books = await listBooksInCategory(Number(catId), 1);
+    const books = await listBooksInCategory(catId, 1);
     topBooks.value[catId] = books.slice(0, 8);
 
     // Update cache with newly loaded category

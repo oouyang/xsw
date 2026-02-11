@@ -1,6 +1,6 @@
 # parser.py
 """
-HTML parsing functions extracted from main.py for better modularity.
+HTML parsing functions for czbooks.net.
 All parsing logic centralized here for easier testing and maintenance.
 """
 from typing import Dict, List, Any, Optional
@@ -24,6 +24,20 @@ def extract_text_by_id(html_content: str, element_id: str) -> str:
     return normalized
 
 
+def extract_text_by_selector(html_content: str, selector: str) -> str:
+    """
+    Extract and normalize text from an element matched by CSS selector.
+    Preserves logical breaks, normalizes whitespace.
+    """
+    soup = BeautifulSoup(html_content, "html.parser")
+    target = soup.select_one(selector)
+    if not target:
+        return ""
+    text_content = html_unescape.unescape(target.get_text(separator="\n"))
+    normalized = re.sub(r"\s+", " ", text_content).strip()
+    return normalized
+
+
 def extract_chapter_title(html_content: str) -> Optional[str]:
     """
     Extract chapter title from a chapter page.
@@ -31,20 +45,29 @@ def extract_chapter_title(html_content: str) -> Optional[str]:
     """
     soup = BeautifulSoup(html_content, "html.parser")
 
-    # Strategy 1: Look for h1 with chapter pattern
+    # Strategy 1 (czbooks): Look for div.name inside .chapter-detail
+    chapter_detail = soup.select_one(".chapter-detail")
+    if chapter_detail:
+        name_div = chapter_detail.select_one("div.name")
+        if name_div:
+            title = name_div.get_text(strip=True)
+            if title:
+                return title
+
+    # Strategy 2: Look for h1 with chapter pattern
     h1 = soup.find("h1")
     if h1:
         title = h1.get_text(strip=True)
         if re.search(r"第.+章", title):
             return title
 
-    # Strategy 2: Look for div/h2 with class containing "title" or "chapter"
+    # Strategy 3: Look for div/h2 with class containing "title" or "chapter"
     for tag in soup.find_all(["h1", "h2", "h3", "div"], class_=re.compile(r"(title|chapter|tit)", re.I)):
         title = tag.get_text(strip=True)
         if re.search(r"第.+章", title):
             return title
 
-    # Strategy 3: Look in page title
+    # Strategy 4: Look in page title
     title_tag = soup.find("title")
     if title_tag:
         title = title_tag.get_text(strip=True)
@@ -93,42 +116,71 @@ def get_page_count(html_content: str) -> int:
 
 def parse_book_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     """
-    Parse <div class="block_txt2"> for book details.
+    Parse book detail page from czbooks.net.
+    Looks for div.novel-detail with .info and .description sections.
     """
     soup = BeautifulSoup(html_content, "html.parser")
-    block = soup.find("div", class_="block_txt2")
-    if not block:
+
+    # czbooks.net structure: div.novel-detail
+    detail = soup.select_one("div.novel-detail")
+    if not detail:
         return {}
 
-    name = block.find("h2").get_text(strip=True) if block.find("h2") else ""
+    # Book name from .info .title
+    name = ""
+    title_el = detail.select_one(".info .title")
+    if title_el:
+        name = title_el.get_text(strip=True)
+        # Strip surrounding 《》 if present
+        name = re.sub(r'^[《\u300a]|[》\u300b]$', '', name).strip()
 
-    status_tag = block.find("p", string=lambda t: t and "狀態" in t)
-    status = status_tag.get_text(strip=True).replace("狀態：", "") if status_tag else ""
-
-    update_tag = block.find("p", string=lambda t: t and "更新" in t)
-    update = update_tag.get_text(strip=True).replace("更新：", "") if update_tag else ""
-
+    # Author from .info .author a
     author = ""
+    author_el = detail.select_one(".info .author a")
+    if author_el:
+        author = author_el.get_text(strip=True)
+
+    # Status and stats from .state table
+    status = ""
+    update = ""
+    state_table = detail.select_one(".state table")
+    if state_table:
+        rows = state_table.select("tr")
+        for row in rows:
+            cells = row.select("td")
+            for i in range(0, len(cells) - 1, 2):
+                label = cells[i].get_text(strip=True)
+                value = cells[i + 1].get_text(strip=True) if i + 1 < len(cells) else ""
+                if "狀態" in label or "状态" in label:
+                    status = value
+                elif "更新" in label:
+                    update = value
+
+    # Category from a#novel-category
     book_type = ""
+    cat_el = detail.select_one("a#novel-category")
+    if cat_el:
+        book_type = cat_el.get_text(strip=True)
+
+    # Description
+    desc = ""
+    desc_el = detail.select_one(".description")
+    if desc_el:
+        desc = desc_el.get_text(strip=True)
+
+    # Count chapters from ul.chapter-list to get last chapter info
     last_chapter_title = ""
     last_chapter_url = ""
     last_chapter_number: Optional[int] = None
 
-    for p in block.find_all("p"):
-        text = p.get_text(strip=True)
-        if text.startswith("作者"):
-            a_tag = p.find("a")
-            author = a_tag.get_text(strip=True) if a_tag else ""
-        elif text.startswith("分類"):
-            a_tag = p.find("a")
-            book_type = a_tag.get_text(strip=True) if a_tag else ""
-        elif text.startswith("最新"):
-            a_tag = p.find("a")
-            if a_tag:
-                last_chapter_title = a_tag.get_text(strip=True)
-                href = a_tag.get("href", "")
-                last_chapter_url = urljoin(base_url or "", href)
-                last_chapter_number = chapter_title_to_number(last_chapter_title)
+    chapter_list = soup.select("ul.chapter-list li a")
+    if chapter_list:
+        # Filter out volume markers (li.volume items don't have <a> children usually)
+        last_a = chapter_list[-1]
+        last_chapter_title = last_a.get_text(strip=True)
+        href = last_a.get("href", "")
+        last_chapter_url = _normalize_czbooks_url(href, base_url)
+        last_chapter_number = len(chapter_list)
 
     return {
         "name": name,
@@ -136,37 +188,64 @@ def parse_book_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         "type": book_type,
         "status": status,
         "update": update,
+        "description": desc,
         "last_chapter_title": last_chapter_title,
         "last_chapter_url": last_chapter_url,
         "last_chapter_number": last_chapter_number,
     }
 
 
+def _normalize_czbooks_url(href: str, base_url: str) -> str:
+    """
+    Normalize czbooks.net URLs which may be protocol-relative (//czbooks.net/...).
+    """
+    if href.startswith("//"):
+        return "https:" + href
+    return urljoin(base_url or "", href)
+
+
 def parse_books(html: str, base_url: str = "") -> List[Dict[str, str]]:
     """
-    Parse book list boxes:
-    returns [{bookname, author, lastchapter, intro, bookurl}, ...]
+    Parse book list from czbooks.net category page.
+    Each book is in li.novel-item-wrapper > div.novel-item.
+    returns [{bookname, author, lastchapter, intro, bookurl, date}, ...]
     """
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
     out: List[Dict[str, str]] = []
-    for box in soup.select("div.bookbox"):
-        name_tag = box.select_one("div.bookinfo h4.bookname i.iTit a")
-        bookname = (name_tag.get_text(strip=True) if name_tag else "").strip()
-        href = name_tag.get("href", "") if name_tag else ""
-        bookurl = urljoin(base_url or "", href)
 
-        author_tag = box.select_one("div.bookinfo div.author")
-        author_raw = author_tag.get_text(" ", strip=True) if author_tag else ""
-        author = author_raw.replace("作者：", "").replace("作者:", "").strip()
+    for wrapper in soup.select("li.novel-item-wrapper"):
+        item = wrapper.select_one("div.novel-item")
+        if not item:
+            continue
 
-        chapter_tag = box.select_one("div.bookinfo div.update a")
-        lastchapter = chapter_tag.get_text(strip=True).strip() if chapter_tag else ""
-        href = chapter_tag.get("href", "") if chapter_tag else ""
-        lasturl = urljoin(base_url or "", href) if href else ""
+        # Title and book URL from .novel-item-cover-wrapper a
+        bookname = ""
+        bookurl = ""
+        cover_link = item.select_one(".novel-item-cover-wrapper a[href]")
+        if cover_link:
+            href = cover_link.get("href", "")
+            bookurl = _normalize_czbooks_url(href, base_url)
+            title_el = cover_link.select_one(".novel-item-title")
+            if title_el:
+                bookname = title_el.get_text(strip=True)
 
-        intro_tag = box.select_one("div.bookinfo div.intro_line")
-        intro_text = intro_tag.get_text(" ", strip=True) if intro_tag else ""
-        intro = intro_text.replace("簡介：", "").replace("简介：", "").strip()
+        # Author
+        author = ""
+        author_el = item.select_one(".novel-item-author a")
+        if author_el:
+            author = author_el.get_text(strip=True)
+
+        # Last chapter
+        lastchapter = ""
+        lasturl = ""
+        chapter_el = item.select_one(".novel-item-newest-chapter a")
+        if chapter_el:
+            lastchapter = chapter_el.get_text(strip=True)
+            href = chapter_el.get("href", "")
+            lasturl = _normalize_czbooks_url(href, base_url)
+
+        # No intro field on czbooks list pages
+        intro = ""
 
         out.append(
             {
@@ -278,11 +357,14 @@ def fetch_chapters_from_liebiao(
     html_content: str, page_url: str, canonical_base: str, start_index: int = 1
 ) -> List[Dict[str, Any]]:
     """
-    Parse chapter list from either <div class="liebiao"> or <ul class="chapter">.
-    - `page_url` should be the book HOME URL (so relative hrefs join correctly)
-    - Rewrites final URLs to the canonical site host to avoid mixing m/www
-    - Uses sequential indices starting from `start_index` instead of parsing chapter numbers from titles
-    - This prevents gaps when chapter titles don't contain numbers
+    Parse chapter list from czbooks.net book page.
+    czbooks.net has all chapters in ul.chapter-list on the book detail page.
+    Falls back to old selectors (div.liebiao, ul.chapter) for cached pages.
+
+    - `page_url` should be the book page URL (so relative hrefs join correctly)
+    - Rewrites final URLs to the canonical site host
+    - Uses sequential indices starting from `start_index`
+    - Skips volume markers (li.volume)
 
     Returns: [{ 'url': absolute_url, 'title': str, 'number': int }, ...]
     """
@@ -290,23 +372,52 @@ def fetch_chapters_from_liebiao(
 
     soup = BeautifulSoup(html_content, "html.parser")
 
-    # Try to find chapter container (mobile uses ul.chapter, desktop uses div.liebiao)
+    # Strategy 1 (czbooks.net): ul.chapter-list
+    container = soup.select_one("ul.chapter-list")
+    if container:
+        out: List[Dict[str, Any]] = []
+        chapter_index = start_index
+        for li in container.find_all("li", recursive=False):
+            # Skip volume markers (li.volume)
+            if "volume" in li.get("class", []):
+                continue
+            a_tag = li.find("a", href=True)
+            if not a_tag:
+                continue
+            href = a_tag["href"]
+            title = a_tag.get_text(strip=True)
+            # Normalize URL (czbooks uses protocol-relative //czbooks.net/...)
+            absolute = _normalize_czbooks_url(href, page_url)
+            # Rewrite host to canonical
+            target = urlparse(absolute)
+            base = urlparse(canonical_base)
+            absolute = urlunparse(
+                (base.scheme, base.netloc, target.path, target.params, target.query, target.fragment)
+            )
+            out.append(
+                {
+                    "url": absolute,
+                    "title": title,
+                    "number": chapter_index,
+                }
+            )
+            chapter_index += 1
+        return out
+
+    # Strategy 2 (legacy): div.liebiao or ul.chapter
     container = soup.find("div", class_="liebiao")
     if not container:
         container = soup.find("ul", class_="chapter")
     if not container:
         return []
 
-    out: List[Dict[str, Any]] = []
-    # For div.liebiao, chapters are in ul li a; for ul.chapter, chapters are direct li a
+    out = []
     selector = "ul li a[href]" if container.name == "div" else "li a[href]"
     chapter_index = start_index
     for a_tag in container.select(selector):
         href = a_tag["href"]
         title = a_tag.get_text(strip=True)
-        # join using the page URL (book home) to keep folder context intact
         absolute = urljoin(page_url, href)
-        # rewrite host to canonical (prevents mixing m/www)
         target = urlparse(absolute)
         base = urlparse(canonical_base)
         absolute = urlunparse(
@@ -316,7 +427,7 @@ def fetch_chapters_from_liebiao(
             {
                 "url": absolute,
                 "title": title,
-                "number": chapter_index,  # Use sequential index instead of parsed number
+                "number": chapter_index,
             }
         )
         chapter_index += 1
@@ -325,23 +436,52 @@ def fetch_chapters_from_liebiao(
 
 def find_categories_from_nav(home_html: str, base_url: str) -> List[Dict[str, str]]:
     """
-    Best-effort approach: find anchors linking to 'fenleiX_1.html' in nav/header.
+    Parse category links from czbooks.net navigation.
+    Looks for anchors with href matching /c/{slug} pattern.
+    Falls back to old fenlei pattern for cached pages.
     """
     soup = BeautifulSoup(home_html, "html.parser")
     cats: List[Dict[str, str]] = []
-    anchors = soup.find_all("a", href=True)
-    for a in anchors:
-        href = a["href"]
-        if re.search(r"fenlei(\d+)_1\.html", href):
-            m = re.search(r"fenlei(\d+)_1\.html", href)
-            cat_id = m.group(1) if m else ""
+
+    # Strategy 1 (czbooks.net): Look for /c/{slug} links in nav menu
+    nav_links = soup.select("ul.nav.menu li a[href]")
+    if not nav_links:
+        # Broader search: any anchor with /c/ pattern
+        nav_links = soup.find_all("a", href=True)
+
+    for a in nav_links:
+        href = a.get("href", "")
+        # Match czbooks category pattern: //czbooks.net/c/{slug} or /c/{slug}
+        m = re.search(r"(?:https?:)?//czbooks\.net/c/(\w+)", href)
+        if not m:
+            m = re.search(r"^/c/(\w+)$", href)
+        if m:
+            cat_slug = m.group(1)
+            full_url = _normalize_czbooks_url(href, base_url)
             cats.append(
                 {
-                    "id": cat_id,
-                    "name": a.get_text(),
-                    "url": urljoin(base_url + "/", href),
+                    "id": cat_slug,
+                    "name": a.get_text(strip=True),
+                    "url": full_url,
                 }
             )
+
+    # Strategy 2 (legacy): fenlei pattern
+    if not cats:
+        anchors = soup.find_all("a", href=True)
+        for a in anchors:
+            href = a["href"]
+            if re.search(r"fenlei(\d+)_1\.html", href):
+                m = re.search(r"fenlei(\d+)_1\.html", href)
+                cat_id = m.group(1) if m else ""
+                cats.append(
+                    {
+                        "id": cat_id,
+                        "name": a.get_text(),
+                        "url": urljoin(base_url + "/", href),
+                    }
+                )
+
     # Deduplicate by id
     seen = set()
     uniq = []
@@ -353,6 +493,15 @@ def find_categories_from_nav(home_html: str, base_url: str) -> List[Dict[str, st
 
 
 def extract_book_id_from_url(bookurl: str) -> Optional[str]:
-    """Extract book ID from URL pattern."""
+    """
+    Extract book ID from URL pattern.
+    czbooks.net: //czbooks.net/n/{book_id} or https://czbooks.net/n/{book_id}
+    Legacy: https://m.xsw.tw/{book_id}/
+    """
+    # czbooks.net pattern: /n/{book_id}
+    m = re.search(r"/n/([^/?#]+)", bookurl)
+    if m:
+        return m.group(1)
+    # Legacy pattern: /{numeric_id}/
     m = re.search(r"https?://[^/]+/(\d+)/", bookurl)
     return m.group(1) if m else None

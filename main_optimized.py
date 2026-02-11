@@ -3,7 +3,6 @@
 Optimized FastAPI backend with SQLite database-first caching.
 Strategy: Check DB → Fetch from web → Store to DB
 """
-import re
 import asyncio
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -40,6 +39,7 @@ from cache_manager import (
 )
 from parser import (
     extract_text_by_id,
+    extract_text_by_selector,
     extract_chapter_title,
     chapter_title_to_number,
     parse_book_info,
@@ -67,8 +67,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # -----------------------
 # Configuration
 # -----------------------
-BASE_URL = os.getenv("BASE_URL", "https://m.xsw.tw")
-WWW_BASE = os.getenv("WWW_BASE", "https://www.xsw.tw")
+BASE_URL = os.getenv("BASE_URL", "https://czbooks.net")
+WWW_BASE = os.getenv("WWW_BASE", "https://czbooks.net")
 DEFAULT_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "10"))
 DB_PATH = os.getenv("DB_PATH", "xsw_cache.db")
 CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "900"))
@@ -95,12 +95,9 @@ def canonical_base() -> str:
 
 
 def resolve_book_home(book_id: str) -> str:
-    """Resolve book home URL."""
+    """Resolve book home URL. czbooks.net uses /n/{book_id}."""
     base = canonical_base()
-    if "m.xsw.tw" in base:
-        return f"{base}/{book_id}/"
-    else:
-        return f"{base}/book/{book_id}/"
+    return f"{base}/n/{book_id}"
 
 
 def fetch_html(url: str) -> str:
@@ -313,30 +310,14 @@ def get_categories():
         home_url = BASE_URL + "/"
         print(f"[API] Fetching categories from {home_url}")
         html_content = fetch_html(home_url)
-        print(f"[API] Got HTML, length: {len(html_content)}")
-        # Save HTML to file for debugging
-        debug_file = "/tmp/categories_debug.html"
-        with open(debug_file, "w") as f:
-            f.write(html_content)
-        print(f"[API] Saved HTML to {debug_file}")
-        # Check if HTML contains fenlei links
-        import re
-        fenlei_matches = re.findall(r"fenlei\d+_1\.html", html_content)
-        print(f"[API] Found {len(fenlei_matches)} fenlei matches in HTML")
-        if fenlei_matches:
-            print(f"[API] First 5 matches: {fenlei_matches[:5]}")
         cats = find_categories_from_nav(html_content, BASE_URL)
         print(f"[API] Found {len(cats)} categories")
-        if cats:
-            print(f"[API] First category: {cats[0]}")
         result = [Category(**c) for c in cats]
-        print(f"[API] Returning {len(result)} Category objects")
         return result
     except requests.HTTPError as e:
-        print(f"[API] HTTP Error: {e}")
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
-        print(f"[API] Exception: {e}")
+        print(f"[API] Exception fetching categories: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -344,12 +325,16 @@ def get_categories():
 
 @api_router.get("/categories/{cat_id}/books", response_model=List[BookSummary])
 def list_books_in_category(
-    cat_id: int,
+    cat_id: str,
     page: int = Query(1, ge=1),
 ):
     """List books in category (not cached, real-time)."""
     try:
-        url = f"{BASE_URL}/fenlei{cat_id}_{page}.html"
+        # czbooks.net: /c/{slug}/{page}  (page 1 is just /c/{slug})
+        if page == 1:
+            url = f"{BASE_URL}/c/{cat_id}"
+        else:
+            url = f"{BASE_URL}/c/{cat_id}/{page}"
         html_content = fetch_html(url)
         books = parse_books(html_content, BASE_URL)
 
@@ -426,7 +411,14 @@ def get_book_chapters(
             # Check if we have chapters in DB
             all_chapters = cache_mgr.cache_manager.get_chapter_list(book_id)
             if all_chapters:
-                print(f"[API] Chapters for {book_id} - DB hit ({len(all_chapters)} chapters)")
+                # Validate cached chapters: must start at 1 (sequential indexing)
+                # Stale data from old parser may have non-sequential numbers parsed from titles
+                first_num = min(c.number for c in all_chapters)
+                if first_num != 1:
+                    print(f"[API] Chapters for {book_id} - DB stale (first chapter is {first_num}, expected 1), re-fetching")
+                    all_chapters = None
+                else:
+                    print(f"[API] Chapters for {book_id} - DB hit ({len(all_chapters)} chapters)")
 
         if not all_chapters:
             # Cache miss or nocache - fetch from web
@@ -521,72 +513,17 @@ def get_book_chapters(
 
 def fetch_all_chapters_from_pagination(book_id: str) -> list:
     """
-    Fetch all chapters by scanning pagination pages.
-    Mobile site uses /book_id/page-N.html format.
+    Fetch all chapters for a book.
+    czbooks.net lists all chapters on the book detail page (no pagination).
     """
-    from bs4 import BeautifulSoup
-    import re
-
     base = canonical_base()
+    book_url = f"{base}/n/{book_id}"
+    html_content = fetch_html(book_url)
 
-    # Start with page 1
-    page_url = f"{base}/{book_id}/page-1.html"
-    html_content = fetch_html(page_url)
-
-    # Get total pages from pagination info
-    soup = BeautifulSoup(html_content, "html.parser")
-    page_divs = soup.find_all("div", class_="page")
-    total_pages = 1
-
-    # Try both page divs (there are usually 2)
-    for page_div in page_divs:
-        text = page_div.get_text(strip=True)
-        print(f"[API] DEBUG: Checking page div text: '{text[:100]}'")
-
-        # Try multiple patterns to match pagination
-        # Pattern 1: (第1/71頁) - with parentheses
-        m = re.search(r"\(第\d+/(\d+)頁\)", text)
-        if m:
-            total_pages = int(m.group(1))
-            print(f"[API] Detected {total_pages} pages from pattern 1: {text[:50]}")
-            break
-
-        # Pattern 2: 第1/71頁 - without parentheses
-        m = re.search(r"第\d+/(\d+)頁", text)
-        if m:
-            total_pages = int(m.group(1))
-            print(f"[API] Detected {total_pages} pages from pattern 2: {text[:50]}")
-            break
-
-        # Pattern 3: Look for "尾頁" (last page) link to extract page number
-        last_page_link = page_div.find("a", string=re.compile("尾頁"))
-        if not last_page_link:
-            last_page_link = page_div.find("a", class_="ngroup")
-
-        if last_page_link:
-            href = last_page_link.get("href", "")
-            m = re.search(r"/page-(\d+)\.html", href)
-            if m:
-                total_pages = int(m.group(1))
-                print(f"[API] Detected {total_pages} pages from last page link: {href}")
-                break
-
-    print(f"[API] Found {total_pages} pages for book {book_id}")
-
-    # Collect all chapters from all pages with sequential indexing
-    all_items = []
-    current_chapter_index = 1  # Start from chapter 1
-    for page_num in range(1, total_pages + 1):
-        page_url = f"{base}/{book_id}/page-{page_num}.html"
-        html_content = fetch_html(page_url)
-        # Pass start_index to ensure sequential numbering across pages
-        items = fetch_chapters_from_liebiao(html_content, page_url, base, start_index=current_chapter_index)
-        all_items.extend(items)
-        print(f"[API] Page {page_num}/{total_pages}: found {len(items)} chapters (indices {current_chapter_index}-{current_chapter_index + len(items) - 1})")
-        # Update index for next page
-        current_chapter_index += len(items)
-
-    return all_items
+    # czbooks.net has all chapters on a single page in ul.chapter-list
+    items = fetch_chapters_from_liebiao(html_content, book_url, base, start_index=1)
+    print(f"[API] Fetched {len(items)} chapters for book {book_id} from {book_url}")
+    return items
 
 
 @api_router.get("/books/{book_id}/chapters/{chapter_num}", response_model=ChapterContent)
@@ -649,8 +586,10 @@ def get_chapter_content(
 
         # Fetch chapter content
         chapter_html = fetch_html(chapter_url)
+        # Try czbooks.net selector first, then fall back to legacy selectors
         text = (
-            extract_text_by_id(chapter_html, "nr1")
+            extract_text_by_selector(chapter_html, ".chapter-detail div.content")
+            or extract_text_by_id(chapter_html, "nr1")
             or extract_text_by_id(chapter_html, "nr")
             or extract_text_by_id(chapter_html, "content")
         )
@@ -1617,14 +1556,11 @@ def send_chapter_validation_alert(
 @api_router.get("/by-url/chapters", response_model=List[ChapterRef])
 def chapters_by_url(book_url: str = Query(...)):
     """
-    Fetch chapters by raw book URL (root or page-1).
+    Fetch chapters by raw book URL.
+    czbooks.net: all chapters are on the book detail page.
     """
     try:
-        # normalize: if URL ends with '/', use page-1; else use given
-        if re.search(r"/\d+/$", book_url):
-            url = book_url.rstrip("/") + "/page-1.html"
-        else:
-            url = book_url
+        url = book_url
         html_content = fetch_html(url)
         chaps = fetch_chapters_from_liebiao(html_content, url, canonical_base(), start_index=1)
         return [
@@ -1645,11 +1581,16 @@ def content_by_url(chapter_url: str = Query(...)):
     """
     try:
         chapter_html = fetch_html(chapter_url)
-        text = extract_text_by_id(chapter_html, "nr1")
+        # Try czbooks selector first, then legacy
+        text = (
+            extract_text_by_selector(chapter_html, ".chapter-detail div.content")
+            or extract_text_by_id(chapter_html, "nr1")
+            or extract_text_by_id(chapter_html, "nr")
+            or extract_text_by_id(chapter_html, "content")
+        )
 
-        # Extract book_id from URL
-        m_id = re.search(r"/(\d+)/", chapter_url)
-        book_id = m_id.group(1) if m_id else None
+        # Extract book_id from URL (czbooks: /n/{book_id}/{chapter_id})
+        book_id = extract_book_id_from_url(chapter_url)
 
         # Extract chapter title from HTML
         title = extract_chapter_title(chapter_html)
