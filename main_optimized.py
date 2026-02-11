@@ -102,10 +102,10 @@ def resolve_book_home(book_id: str) -> str:
     return f"{base}/n/{book_id}"
 
 
-PROXY_URL = os.getenv("HTTP_PROXY_URL", "http://taleon.work.gd:55128")
+PROXY_URL = os.getenv("HTTP_PROXY_URL", "")
 
 def fetch_html(url: str) -> str:
-    """Fetch HTML with encoding detection, routing through proxy."""
+    """Fetch HTML with encoding detection. Optional proxy via HTTP_PROXY_URL env."""
     proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
     resp = session.get(url, timeout=DEFAULT_TIMEOUT, verify=False, proxies=proxies)
     resp.raise_for_status()
