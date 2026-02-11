@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-看小說 (XSW) is a full-stack Chinese novel reading platform with a **FastAPI backend** and **Vue 3 + Quasar frontend**. The architecture is intentionally **simple and synchronous** - all operations happen on-demand when requested by the frontend. There are no background workers, automatic syncing, or job queues.
+看小說 (XSW) is a full-stack Chinese novel reading platform with a **FastAPI backend** and **Vue 3 + Quasar frontend**. The scraping source is **czbooks.net** (previously m.xsw.tw). The architecture is intentionally **simple and synchronous** - all operations happen on-demand when requested by the frontend. There are no background workers, automatic syncing, or job queues.
 
 ## Commands
 
@@ -108,9 +108,13 @@ This makes the system much simpler to understand and maintain.
   - `CacheManager` class with get/store methods
   - Thread-safe TTL cache implementation
 
-- **`parser.py`** - HTML parsing with BeautifulSoup
-  - `fetch_chapters_from_liebiao()` - **Uses sequential indexing**
-  - `parse_book_info()` - Extract book metadata
+- **`parser.py`** - HTML parsing with BeautifulSoup (czbooks.net selectors)
+  - `fetch_chapters_from_liebiao()` - Parses `ul.chapter-list` (all chapters on one page), **uses sequential indexing**
+  - `parse_book_info()` - Parses `div.novel-detail` for book metadata
+  - `parse_books()` - Parses `li.novel-item-wrapper` for category book lists
+  - `find_categories_from_nav()` - Parses `/c/{slug}` links from nav menu
+  - `extract_book_id_from_url()` - Extracts book ID from `/n/{book_id}` URL pattern
+  - `extract_text_by_selector()` - CSS selector-based text extraction (for `div.content`)
   - `chapter_title_to_number()` - Supports Chinese numerals
 
 - **`db_models.py`** - SQLAlchemy ORM models
@@ -182,6 +186,22 @@ const start = (page - 1) * pageSize;
 const end = start + pageSize;
 pageChapters = allChapters.slice(start, end);  // DON'T DO THIS
 ```
+
+### czbooks.net URL Patterns
+| Resource | URL Pattern | Example |
+|----------|------------|---------|
+| Book detail | `/n/{book_id}` | `https://czbooks.net/n/cr382b` |
+| Chapter | `/n/{book_id}/{chapter_id}` | `https://czbooks.net/n/cr382b/crdic` |
+| Category | `/c/{slug}` | `https://czbooks.net/c/xuanhuan` |
+| Category page N | `/c/{slug}/{page}` | `https://czbooks.net/c/xuanhuan/2` |
+| Search | `/s?q=...` | `https://czbooks.net/s?q=keyword` |
+
+**Key differences from old m.xsw.tw**:
+- Book IDs are **alphanumeric** (e.g. `cr382b`), not numeric
+- Chapter IDs are **alphanumeric** (e.g. `crdic`), not numeric
+- Categories use **slugs** (`xuanhuan`), not numeric IDs
+- **All chapters on one page** — no pagination for chapter lists
+- Protocol-relative URLs (`//czbooks.net/...`) must be normalized to `https:`
 
 ### API Parameters
 - `?all=true` returns ALL chapters (no pagination)
@@ -287,7 +307,7 @@ curl -X DELETE http://localhost:8000/xsw/api/admin/cache/chapters/{book_id}
 
 Required `.env` variables:
 ```bash
-BASE_URL=https://m.xsw.tw      # Scraping target
+BASE_URL=https://czbooks.net   # Scraping target (czbooks.net)
 DB_PATH=xsw_cache.db           # SQLite database
 CACHE_TTL_SECONDS=900          # Memory cache TTL
 HTTP_TIMEOUT=10                # Request timeout
@@ -313,7 +333,61 @@ docker compose up -d
 
 ## Testing
 
-Currently no automated tests. Manual testing workflow:
+### Automated Tests (Backend)
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_parser.py -v
+pytest tests/test_cache.py -v
+pytest tests/test_api.py -v
+```
+
+Test suite (73 tests, all offline with mocked HTML):
+- **`tests/test_parser.py`** (~45 tests) — Pure parser function unit tests: `extract_text_by_id`, `extract_text_by_selector`, `extract_chapter_title`, `chinese_to_arabic`, `chapter_title_to_number`, `extract_book_id_from_url`, `find_categories_from_nav`, `parse_books`, `parse_book_info`, `fetch_chapters_from_liebiao`, `_normalize_czbooks_url`
+- **`tests/test_cache.py`** (16 tests) — TTLCache and CacheManager tests with in-memory SQLite
+- **`tests/test_api.py`** (12 tests) — API endpoint integration tests via FastAPI TestClient with mocked `fetch_html`
+
+Key test design:
+- `tests/html_fixtures.py` — Inline HTML snippets matching czbooks.net structure
+- `tests/conftest.py` — `FetchMock` class patches `main_optimized.fetch_html`; `AUTH_ENABLED=false` and `DB_PATH=:memory:` set before app import
+- No network calls — all HTTP responses are mocked
+- Each test gets a fresh in-memory SQLite database via TestClient lifespan
+
+### Automated Tests (Frontend)
+
+```bash
+# Run all frontend tests
+npm test
+
+# Run with verbose output
+npx vitest run --reporter=verbose
+
+# Run specific test file
+npx vitest run src/__tests__/utils.test.ts
+npx vitest run src/__tests__/basePath.test.ts
+npx vitest run src/__tests__/bookStore.test.ts
+
+# Watch mode (re-runs on file changes)
+npx vitest
+```
+
+Test suite (54 tests, all offline with mocked imports):
+- **`src/__tests__/utils.test.ts`** (14 tests) — Pure utility functions: `toArr`, `dedupeBy`, `normalizeNum`, `syncLastChapter`
+- **`src/__tests__/basePath.test.ts`** (15 tests) — Base path detection: `detectBasePath`, `getFullPath`, `getAssetPath`
+- **`src/__tests__/bookStore.test.ts`** (25 tests) — Pinia book store: `setBookId`, `setPage`, `setChapter`, `maxPages`, `pageSlice`, `nextChapter`/`prevChapter`, `validateChapters`
+
+Key test design:
+- `vi.mock('quasar')` — Stubs `LocalStorage`, `Dialog`, `Dark` to break Quasar runtime dependency
+- `vi.mock('src/services/bookApi')` — Stubs API calls to break `boot/axios` → `#q-app/wrappers` chain
+- `vi.mock('src/services/useAppConfig')` — Breaks circular import with utils.ts
+- Uses real `createPinia()` + `setActivePinia()` per test for isolated store state
+- No network calls, no Quasar runtime needed
+
+### Manual Testing
+
 1. Start backend: `uvicorn main_optimized:app --reload`
 2. Start frontend: `npm run dev`
 3. Test via browser at http://localhost:9000
@@ -332,7 +406,20 @@ Currently no automated tests. Manual testing workflow:
 
 ### February 2026
 
-1. **API Routing Refactor** (Feb 1, 2026) - Fixed 404 errors for all API endpoints
+1. **czbooks.net Migration** (Feb 11, 2026) - Switched scraping source from m.xsw.tw to czbooks.net
+   - m.xsw.tw returned 404 for all pages; czbooks.net is a working alternative
+   - Completely different HTML structure and URL scheme:
+     - Book URLs: `/n/{book_id}` (alphanumeric IDs like `cr382b`)
+     - Chapter URLs: `/n/{book_id}/{chapter_id}`
+     - Category URLs: `/c/{slug}` (e.g. `/c/xuanhuan`)
+     - All chapters listed on single book page (no pagination)
+   - Rewrote all parser functions for czbooks.net CSS selectors
+   - Simplified `fetch_all_chapters_from_pagination()` (single page fetch)
+   - Category `cat_id` changed from `int` to `str` (slug-based)
+   - Added `extract_text_by_selector()` for CSS selector-based content extraction
+   - Legacy parser fallbacks retained for backward compatibility with cached data
+
+2. **API Routing Refactor** (Feb 1, 2026) - Fixed 404 errors for all API endpoints
    - Introduced APIRouter pattern for all `/xsw/api/*` routes
    - Removed blocking StaticFiles mount at root
    - Proper route precedence over static file serving
