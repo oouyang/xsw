@@ -1,0 +1,58 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm test",
+      "type": "shell",
+      "command": "npm test",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "npm test (watch)",
+      "type": "shell",
+      "command": "npx vitest",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^\\s*❯\\s+(.+):(\\d+):(\\d+)",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 0
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^\\s*RUN\\s",
+          "endsPattern": "^\\s*Tests\\s"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "pytest (backend)",
+      "type": "shell",
+      "command": "pytest tests/ -v",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}
