@@ -33,8 +33,11 @@ import BookCard from 'components/BookCard.vue';
 import type { BookSummary, Category } from 'src/types/book-api';
 import { listBooksInCategory, getCategories } from 'src/services/bookApi';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { useRoute, useRouter } from 'vue-router';
 
 const { convertIfNeeded } = useTextConversion();
+const route = useRoute();
+const router = useRouter();
 
 const props = defineProps<{ catId: string }>();
 const books = ref<BookSummary[]>([]);
@@ -54,6 +57,8 @@ async function load() {
   try {
     error.value = '';
     books.value = await listBooksInCategory(props.catId, page.value);
+    // Sync URL with current page
+    void router.replace({ query: { ...route.query, page: page.value } });
     // Scroll to top when page changes
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) {
@@ -62,6 +67,12 @@ async function load() {
   }
 }
 onMounted(async () => {
+  // Read page from URL query if present
+  const queryPage = Number(route.query.page);
+  if (Number.isFinite(queryPage) && queryPage > 0) {
+    page.value = queryPage;
+  }
+
   try {
     const cats: Category[] = await getCategories();
     catName.value = cats.find((c) => c.id === props.catId)?.name || props.catId;
@@ -70,5 +81,8 @@ onMounted(async () => {
   }
   await load();
 });
-watch(() => props.catId, load);
+watch(() => props.catId, () => {
+  page.value = 1;
+  void load();
+});
 </script>
