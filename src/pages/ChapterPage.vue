@@ -82,7 +82,7 @@
           :class="`text-h${fontsize}`"
           style="white-space: pre-wrap"
         >
-          <p v-for="(value, index) in displayContent" :key="index" class="q-my-xl">{{ value }}</p>
+          <p v-for="(value, index) in displayContent" :key="index">{{ value }}</p>
         </div>
       </q-card-section>
     </q-card>
@@ -658,6 +658,7 @@ onBeforeUnmount(() => {
 p {
   text-indent: 2em;
   line-height: 1.8;
+  margin: 0.6em 0;
 }
 
 .chapter-content {
