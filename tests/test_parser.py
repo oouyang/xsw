@@ -164,6 +164,67 @@ class TestParseBooks:
         assert books[1]["bookname"] == "第二本書"
         assert books[1]["author"] == "作者二"
 
+    def test_bookmark_and_view_counts(self):
+        books = parse_books(CZBOOKS_CATEGORY_PAGE_HTML, "https://czbooks.net")
+        assert books[0]["bookmark_count"] == 1234
+        assert books[0]["view_count"] == 56789
+        assert books[1]["bookmark_count"] == 999
+        assert books[1]["view_count"] == 42000
+
+    def test_no_status_section(self):
+        html = """<html><body>
+        <li class="novel-item-wrapper">
+          <div class="novel-item">
+            <div class="novel-item-cover-wrapper">
+              <a href="//czbooks.net/n/book1"><div class="novel-item-title">Book</div></a>
+            </div>
+          </div>
+        </li></body></html>"""
+        books = parse_books(html, "https://czbooks.net")
+        assert books[0]["bookmark_count"] == 0
+        assert books[0]["view_count"] == 0
+
+    def test_only_bookmark_icon(self):
+        """Only fa-bookmark present, no fa-eye."""
+        html = """<html><body>
+        <li class="novel-item-wrapper">
+          <div class="novel-item">
+            <div class="novel-item-cover-wrapper">
+              <a href="//czbooks.net/n/b1"><div class="novel-item-title">B</div></a>
+            </div>
+            <div class="novel-item-status">
+              <ul class="nav"><li><i class="fas fa-bookmark"></i> 500</li></ul>
+            </div>
+          </div>
+        </li></body></html>"""
+        books = parse_books(html, "https://czbooks.net")
+        assert books[0]["bookmark_count"] == 500
+        assert books[0]["view_count"] == 0
+
+    def test_only_eye_icon(self):
+        """Only fa-eye present, no fa-bookmark."""
+        html = """<html><body>
+        <li class="novel-item-wrapper">
+          <div class="novel-item">
+            <div class="novel-item-cover-wrapper">
+              <a href="//czbooks.net/n/b1"><div class="novel-item-title">B</div></a>
+            </div>
+            <div class="novel-item-status">
+              <ul class="nav"><li><i class="fas fa-eye"></i> 7777</li></ul>
+            </div>
+          </div>
+        </li></body></html>"""
+        books = parse_books(html, "https://czbooks.net")
+        assert books[0]["bookmark_count"] == 0
+        assert books[0]["view_count"] == 7777
+
+    def test_bookmark_view_keys_always_present(self):
+        """bookmark_count and view_count keys exist in every result dict."""
+        books = parse_books(CZBOOKS_CATEGORY_PAGE_HTML, "https://czbooks.net")
+        for b in books:
+            assert "bookmark_count" in b
+            assert "view_count" in b
+
     def test_url_normalization(self):
         books = parse_books(CZBOOKS_CATEGORY_PAGE_HTML, "https://czbooks.net")
         for book in books:
@@ -185,6 +246,78 @@ class TestParseBookInfo:
         assert info["status"] == "連載中"
         assert info["update"] == "2026-02-01"
         assert info["last_chapter_number"] == 3
+
+    def test_description(self):
+        info = parse_book_info(CZBOOKS_BOOK_DETAIL_HTML, "https://czbooks.net")
+        assert info["description"] == "這是一本測試小說。"
+
+    def test_description_missing(self):
+        """No .description div → empty string."""
+        html = """<html><body><div class="novel-detail">
+            <div class="info"><div class="title">Book</div></div>
+        </div></body></html>"""
+        info = parse_book_info(html, "https://czbooks.net")
+        assert info["description"] == ""
+
+    def test_bookmark_and_view_counts(self):
+        info = parse_book_info(CZBOOKS_BOOK_DETAIL_HTML, "https://czbooks.net")
+        assert info["bookmark_count"] == 5678
+        assert info["view_count"] == 123456
+
+    def test_counts_no_space_labels(self):
+        """Labels without spaces (收藏數 / 觀看數) should also parse correctly."""
+        html = """<html><body><div class="novel-detail">
+            <div class="info"><div class="title">Book</div></div>
+            <div class="state"><table>
+                <tr><td>收藏數：</td><td>42</td><td>觀看數：</td><td>999</td></tr>
+            </table></div>
+        </div></body></html>"""
+        info = parse_book_info(html, "https://czbooks.net")
+        assert info["bookmark_count"] == 42
+        assert info["view_count"] == 999
+
+    def test_counts_simplified_chinese_labels(self):
+        """Simplified Chinese labels (收藏数 / 观看数) should also parse."""
+        html = """<html><body><div class="novel-detail">
+            <div class="info"><div class="title">Book</div></div>
+            <div class="state"><table>
+                <tr><td>收藏数：</td><td>100</td><td>观看数：</td><td>200</td></tr>
+            </table></div>
+        </div></body></html>"""
+        info = parse_book_info(html, "https://czbooks.net")
+        assert info["bookmark_count"] == 100
+        assert info["view_count"] == 200
+
+    def test_counts_missing(self):
+        """No 收藏數/觀看數 rows → None for both."""
+        html = """<html><body><div class="novel-detail">
+            <div class="info"><div class="title">Book</div></div>
+            <div class="state"><table>
+                <tr><td>狀態：</td><td>完結</td></tr>
+            </table></div>
+        </div></body></html>"""
+        info = parse_book_info(html, "https://czbooks.net")
+        assert info["bookmark_count"] is None
+        assert info["view_count"] is None
+
+    def test_counts_non_numeric_value(self):
+        """Non-numeric count value → None."""
+        html = """<html><body><div class="novel-detail">
+            <div class="info"><div class="title">Book</div></div>
+            <div class="state"><table>
+                <tr><td>收藏數：</td><td>N/A</td><td>觀看數：</td><td></td></tr>
+            </table></div>
+        </div></body></html>"""
+        info = parse_book_info(html, "https://czbooks.net")
+        assert info["bookmark_count"] is None
+        assert info["view_count"] is None
+
+    def test_all_new_keys_present(self):
+        """description, bookmark_count, view_count keys always present in result."""
+        info = parse_book_info(CZBOOKS_BOOK_DETAIL_HTML, "https://czbooks.net")
+        assert "description" in info
+        assert "bookmark_count" in info
+        assert "view_count" in info
 
     def test_last_chapter_info(self):
         info = parse_book_info(CZBOOKS_BOOK_DETAIL_HTML, "https://czbooks.net")

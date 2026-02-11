@@ -43,6 +43,18 @@ class TestCategories:
         assert books[0]["book_id"] == "book1"
         assert books[1]["book_id"] == "book2"
 
+    def test_categories_books_include_counts(self, client, mock_fetch):
+        mock_fetch.register(
+            "https://czbooks.net/c/fantasy", CZBOOKS_CATEGORY_PAGE_HTML
+        )
+        resp = client.get(f"{BASE}/categories/fantasy/books")
+        assert resp.status_code == 200
+        books = resp.json()
+        assert books[0]["bookmark_count"] == 1234
+        assert books[0]["view_count"] == 56789
+        assert books[1]["bookmark_count"] == 999
+        assert books[1]["view_count"] == 42000
+
 
 class TestBookInfo:
     def test_get_book_info(self, client, mock_fetch):
@@ -58,6 +70,25 @@ class TestBookInfo:
         assert data["status"] == "連載中"
         assert data["book_id"] == "testbook"
 
+    def test_get_book_info_includes_description(self, client, mock_fetch):
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        resp = client.get(f"{BASE}/books/testbook")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["description"] == "這是一本測試小說。"
+
+    def test_get_book_info_includes_counts(self, client, mock_fetch):
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        resp = client.get(f"{BASE}/books/testbook")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["bookmark_count"] == 5678
+        assert data["view_count"] == 123456
+
     def test_get_book_info_cached(self, client, mock_fetch):
         mock_fetch.register(
             "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
@@ -68,6 +99,18 @@ class TestBookInfo:
         assert resp2.status_code == 200
         # fetch_html should have been called only once
         assert len(mock_fetch.call_log) == 1
+
+    def test_get_book_info_cached_preserves_new_fields(self, client, mock_fetch):
+        """New fields should survive the cache round-trip."""
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        client.get(f"{BASE}/books/testbook")  # populate cache
+        resp = client.get(f"{BASE}/books/testbook")  # cache hit
+        data = resp.json()
+        assert data["description"] == "這是一本測試小說。"
+        assert data["bookmark_count"] == 5678
+        assert data["view_count"] == 123456
 
 
 class TestChapters:
@@ -111,6 +154,41 @@ class TestChapters:
         resp = client.get(f"{BASE}/books/testbook/chapters/999")
         assert resp.status_code == 404
         assert "999" in resp.json()["detail"]
+
+
+class TestChapterFetchStoresBookInfo:
+    """fetch_all_chapters_from_pagination now also stores book info."""
+
+    def test_chapter_fetch_stores_book_info(self, client, mock_fetch):
+        """Fetching chapters should also store description and counts."""
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        # Fetch chapters (triggers fetch_all_chapters_from_pagination)
+        resp = client.get(f"{BASE}/books/testbook/chapters?all=true")
+        assert resp.status_code == 200
+
+        # Now book info should be populated from the same HTML
+        resp2 = client.get(f"{BASE}/books/testbook")
+        assert resp2.status_code == 200
+        data = resp2.json()
+        assert data["name"] == "測試小說"
+        assert data["description"] == "這是一本測試小說。"
+        assert data["bookmark_count"] == 5678
+        assert data["view_count"] == 123456
+        # Should not have made a second fetch — book info was stored during chapter fetch
+        assert len(mock_fetch.call_log) == 1
+
+    def test_chapter_fetch_stores_last_chapter(self, client, mock_fetch):
+        """Chapter fetch should set last_chapter_number from actual chapters."""
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        client.get(f"{BASE}/books/testbook/chapters?all=true")
+        resp = client.get(f"{BASE}/books/testbook")
+        data = resp.json()
+        assert data["last_chapter_number"] == 3
+        assert data["last_chapter_title"] == "第3章 結局"
 
 
 class TestSearch:

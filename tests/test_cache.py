@@ -90,6 +90,121 @@ class TestCacheManagerBookInfo:
         assert result.last_chapter_number == 50
 
 
+class TestCacheManagerBookInfoNewFields:
+    """Tests for description, bookmark_count, view_count fields."""
+
+    def _base_info(self, **overrides):
+        base = {
+            "name": "Book", "author": "Author", "type": "Fantasy",
+            "status": "連載中", "update": "2026-01-01",
+            "last_chapter_title": "Ch 1", "last_chapter_url": "https://x.com/1",
+            "last_chapter_number": 1,
+        }
+        base.update(overrides)
+        return base
+
+    def test_store_and_get_with_new_fields(self, cache_mgr_fixture):
+        mgr = cache_mgr_fixture
+        info = self._base_info(
+            description="A great novel.",
+            bookmark_count=5678,
+            view_count=123456,
+        )
+        mgr.store_book_info("bk_new", info)
+        result = mgr.get_book_info("bk_new")
+        assert result is not None
+        assert result.description == "A great novel."
+        assert result.bookmark_count == 5678
+        assert result.view_count == 123456
+
+    def test_new_fields_default_none(self, cache_mgr_fixture):
+        """When not provided, new fields should be None."""
+        mgr = cache_mgr_fixture
+        info = self._base_info()  # no description/bookmark/view
+        mgr.store_book_info("bk_defaults", info)
+        result = mgr.get_book_info("bk_defaults")
+        assert result is not None
+        assert result.description is None
+        assert result.bookmark_count is None
+        assert result.view_count is None
+
+    def test_update_preserves_counts_when_not_provided(self, cache_mgr_fixture):
+        """Updating without counts should not overwrite existing counts."""
+        mgr = cache_mgr_fixture
+        info = self._base_info(bookmark_count=100, view_count=200)
+        mgr.store_book_info("bk_preserve", info)
+
+        # Update without counts
+        update = self._base_info(name="Updated Name")
+        mgr.store_book_info("bk_preserve", update)
+
+        result = mgr.get_book_info("bk_preserve")
+        assert result.name == "Updated Name"
+        assert result.bookmark_count == 100  # preserved
+        assert result.view_count == 200  # preserved
+
+    def test_update_overwrites_counts_when_provided(self, cache_mgr_fixture):
+        """Updating with new counts should overwrite old ones."""
+        mgr = cache_mgr_fixture
+        info = self._base_info(bookmark_count=100, view_count=200)
+        mgr.store_book_info("bk_overwrite", info)
+
+        update = self._base_info(bookmark_count=999, view_count=888)
+        mgr.store_book_info("bk_overwrite", update)
+
+        result = mgr.get_book_info("bk_overwrite")
+        assert result.bookmark_count == 999
+        assert result.view_count == 888
+
+    def test_description_update(self, cache_mgr_fixture):
+        """Description can be updated."""
+        mgr = cache_mgr_fixture
+        info = self._base_info(description="Original description")
+        mgr.store_book_info("bk_desc", info)
+
+        update = self._base_info(description="Updated description")
+        mgr.store_book_info("bk_desc", update)
+
+        result = mgr.get_book_info("bk_desc")
+        assert result.description == "Updated description"
+
+    def test_round_trip_via_memory_cache(self, cache_mgr_fixture):
+        """New fields survive memory cache round-trip (not just DB)."""
+        mgr = cache_mgr_fixture
+        info = self._base_info(
+            description="Desc", bookmark_count=42, view_count=7777
+        )
+        mgr.store_book_info("bk_mem", info)
+
+        # First call populates memory cache during store
+        result1 = mgr.get_book_info("bk_mem")
+        assert result1 is not None
+        assert result1.description == "Desc"
+        assert result1.bookmark_count == 42
+        assert result1.view_count == 7777
+
+        # Second call should hit memory cache
+        result2 = mgr.get_book_info("bk_mem")
+        assert result2.description == "Desc"
+        assert result2.bookmark_count == 42
+
+    def test_invalidate_and_reload_from_db(self, cache_mgr_fixture):
+        """After memory invalidation, new fields reload from DB."""
+        mgr = cache_mgr_fixture
+        info = self._base_info(
+            description="Persisted", bookmark_count=10, view_count=20
+        )
+        mgr.store_book_info("bk_inv", info)
+        mgr.invalidate_book("bk_inv")
+
+        # Should reload from DB
+        result = mgr.get_book_info("bk_inv")
+        assert result is not None
+        assert result.description == "Persisted"
+        assert result.bookmark_count == 10
+        assert result.view_count == 20
+
+
 class TestCacheManagerChapters:
     def test_store_and_get_content(self, cache_mgr_fixture):
         mgr = cache_mgr_fixture

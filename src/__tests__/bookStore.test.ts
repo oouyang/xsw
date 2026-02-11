@@ -85,6 +85,90 @@ describe('setBookId', () => {
 });
 
 // ──────────────────────────────────────────────────────────────
+// BookInfo new optional fields (description, bookmark_count, view_count)
+// ──────────────────────────────────────────────────────────────
+describe('BookInfo new fields', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it('stores and exposes description, bookmark_count, view_count', () => {
+    const store = useBookStore();
+    store.info = {
+      name: 'Test', author: 'A', type: 'Fantasy', status: '連載中', update: '2026-01-01',
+      last_chapter_title: 'Ch 10', last_chapter_url: '/ch/10', last_chapter_number: 10,
+      description: 'A great novel about adventures.',
+      bookmark_count: 5678,
+      view_count: 123456,
+    };
+
+    expect(store.info.description).toBe('A great novel about adventures.');
+    expect(store.info.bookmark_count).toBe(5678);
+    expect(store.info.view_count).toBe(123456);
+  });
+
+  it('handles null/undefined new fields gracefully', () => {
+    const store = useBookStore();
+    store.info = {
+      name: 'Test', author: 'A', type: '', status: '', update: '',
+      last_chapter_title: '', last_chapter_url: '',
+      description: null,
+      bookmark_count: null,
+      view_count: null,
+    };
+
+    expect(store.info.description).toBeNull();
+    expect(store.info.bookmark_count).toBeNull();
+    expect(store.info.view_count).toBeNull();
+  });
+
+  it('works without new fields (backward compat)', () => {
+    const store = useBookStore();
+    // BookInfo without the new optional fields (simulates old API response)
+    store.info = {
+      name: 'Old', author: 'B', type: '', status: '', update: '',
+      last_chapter_title: '', last_chapter_url: '',
+    };
+
+    expect(store.info.name).toBe('Old');
+    expect(store.info.description).toBeUndefined();
+    expect(store.info.bookmark_count).toBeUndefined();
+    expect(store.info.view_count).toBeUndefined();
+  });
+
+  it('setBookId clears info including new fields', () => {
+    const store = useBookStore();
+    store.bookId = 'old-book';
+    store.info = {
+      name: 'Old', author: '', type: '', status: '', update: '',
+      last_chapter_title: '', last_chapter_url: '',
+      description: 'Some description',
+      bookmark_count: 100,
+      view_count: 200,
+    };
+
+    store.setBookId('new-book');
+
+    expect(store.info).toBeNull();
+  });
+
+  it('maxPages still works with info containing new fields', () => {
+    const store = useBookStore();
+    store.pageSize = 20;
+    store.info = {
+      name: 'Test', author: '', type: '', status: '', update: '',
+      last_chapter_title: '', last_chapter_url: '',
+      last_chapter_number: 100,
+      description: 'Desc',
+      bookmark_count: 42,
+      view_count: 9999,
+    };
+
+    expect(store.maxPages).toBe(5); // 100 / 20
+  });
+});
+
+// ──────────────────────────────────────────────────────────────
 // setPage — CRITICAL: number-based filtering
 // ──────────────────────────────────────────────────────────────
 describe('setPage', () => {

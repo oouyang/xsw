@@ -36,6 +36,9 @@ class Book(Base):
     type = Column(String)  # category
     status = Column(String)  # 進行中/已完成
     update = Column(String)  # last update date from site
+    description = Column(Text)  # book intro/synopsis
+    bookmark_count = Column(Integer)  # 收藏數
+    view_count = Column(Integer)  # 觀看數
 
     # Last chapter info
     last_chapter_num = Column(Integer)

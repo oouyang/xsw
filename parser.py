@@ -143,6 +143,8 @@ def parse_book_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     # Status and stats from .state table
     status = ""
     update = ""
+    bookmark_count = None
+    view_count = None
     state_table = detail.select_one(".state table")
     if state_table:
         rows = state_table.select("tr")
@@ -151,10 +153,18 @@ def parse_book_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
             for i in range(0, len(cells) - 1, 2):
                 label = cells[i].get_text(strip=True)
                 value = cells[i + 1].get_text(strip=True) if i + 1 < len(cells) else ""
-                if "狀態" in label or "状态" in label:
+                # Normalize label by removing spaces (czbooks uses spaced chars like "收 藏 數")
+                label_compact = label.replace(" ", "").replace("\u3000", "")
+                if "狀態" in label_compact or "状态" in label_compact:
                     status = value
-                elif "更新" in label:
+                elif "更新" in label_compact:
                     update = value
+                elif "收藏數" in label_compact or "收藏数" in label_compact:
+                    num = re.sub(r'\D', '', value)
+                    bookmark_count = int(num) if num else None
+                elif "觀看數" in label_compact or "观看数" in label_compact:
+                    num = re.sub(r'\D', '', value)
+                    view_count = int(num) if num else None
 
     # Category from a#novel-category
     book_type = ""
@@ -189,6 +199,8 @@ def parse_book_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         "status": status,
         "update": update,
         "description": desc,
+        "bookmark_count": bookmark_count,
+        "view_count": view_count,
         "last_chapter_title": last_chapter_title,
         "last_chapter_url": last_chapter_url,
         "last_chapter_number": last_chapter_number,
@@ -247,6 +259,22 @@ def parse_books(html: str, base_url: str = "") -> List[Dict[str, str]]:
         # No intro field on czbooks list pages
         intro = ""
 
+        # Bookmark and view counts from .novel-item-status
+        bookmark_count = 0
+        view_count_val = 0
+        status_el = item.select_one(".novel-item-status")
+        if status_el:
+            for li in status_el.select("ul.nav li"):
+                icon = li.select_one("i")
+                if icon:
+                    text = li.get_text(strip=True)
+                    num = int(re.sub(r'\D', '', text) or 0)
+                    classes = icon.get("class", [])
+                    if "fa-bookmark" in classes:
+                        bookmark_count = num
+                    elif "fa-eye" in classes:
+                        view_count_val = num
+
         out.append(
             {
                 "bookname": bookname,
@@ -255,6 +283,8 @@ def parse_books(html: str, base_url: str = "") -> List[Dict[str, str]]:
                 "lasturl": lasturl,
                 "intro": intro,
                 "bookurl": bookurl,
+                "bookmark_count": bookmark_count,
+                "view_count": view_count_val,
             }
         )
     return out

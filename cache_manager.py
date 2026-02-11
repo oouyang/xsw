@@ -29,6 +29,9 @@ class BookInfo(BaseModel):
     type: str
     status: str
     update: str
+    description: Optional[str] = None
+    bookmark_count: Optional[int] = None
+    view_count: Optional[int] = None
     last_chapter_title: str
     last_chapter_url: str
     last_chapter_number: Optional[int] = None
@@ -134,6 +137,9 @@ class CacheManager:
                     type=book.type or "",
                     status=book.status or "",
                     update=book.update or "",
+                    description=book.description,
+                    bookmark_count=book.bookmark_count,
+                    view_count=book.view_count,
                     last_chapter_title=book.last_chapter_title or "",
                     last_chapter_url=book.last_chapter_url or "",
                     last_chapter_number=book.last_chapter_num,
@@ -164,6 +170,11 @@ class CacheManager:
                 book.type = info.get("type", book.type)
                 book.status = info.get("status", book.status)
                 book.update = info.get("update", book.update)
+                book.description = info.get("description", book.description)
+                if info.get("bookmark_count") is not None:
+                    book.bookmark_count = info["bookmark_count"]
+                if info.get("view_count") is not None:
+                    book.view_count = info["view_count"]
                 book.last_chapter_title = info.get("last_chapter_title", book.last_chapter_title)
                 book.last_chapter_url = info.get("last_chapter_url", book.last_chapter_url)
                 book.last_chapter_num = info.get("last_chapter_number", book.last_chapter_num)
@@ -181,6 +192,9 @@ class CacheManager:
                     type=info.get("type"),
                     status=info.get("status"),
                     update=info.get("update"),
+                    description=info.get("description"),
+                    bookmark_count=info.get("bookmark_count"),
+                    view_count=info.get("view_count"),
                     last_chapter_title=info.get("last_chapter_title"),
                     last_chapter_url=info.get("last_chapter_url"),
                     last_chapter_num=info.get("last_chapter_number"),
@@ -190,9 +204,22 @@ class CacheManager:
 
             session.commit()
 
-            # Cache in memory - merge book_id and public_id into info dict
-            info_with_id = {**info, "book_id": book_id, "public_id": book.public_id}
-            book_info = BookInfo(**info_with_id)
+            # Cache in memory — read back from ORM object to capture preserved DB values
+            book_info = BookInfo(
+                name=book.name or "",
+                author=book.author or "",
+                type=book.type or "",
+                status=book.status or "",
+                update=book.update or "",
+                description=book.description,
+                bookmark_count=book.bookmark_count,
+                view_count=book.view_count,
+                last_chapter_title=book.last_chapter_title or "",
+                last_chapter_url=book.last_chapter_url or "",
+                last_chapter_number=book.last_chapter_num,
+                book_id=book_id,
+                public_id=book.public_id,
+            )
             cache_key = f"book:{book_id}"
             self.memory_cache.set(cache_key, book_info)
 

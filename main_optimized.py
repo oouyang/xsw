@@ -203,10 +203,15 @@ def resolve_chapter(book_czid: str, chapter_input: str) -> tuple:
         session.close()
 
 
-def get_book_public_id(book_czid: str, book_name: str = "") -> Optional[str]:
+def get_book_public_id(
+    book_czid: str,
+    book_name: str = "",
+    bookmark_count: Optional[int] = None,
+    view_count: Optional[int] = None,
+) -> Optional[str]:
     """Get or create a public_id for a book given its czbooks ID.
 
-    If the book exists in DB, returns its public_id.
+    If the book exists in DB, returns its public_id (and updates stats if provided).
     If the book doesn't exist, creates a minimal record with a public_id.
     """
     import db_models as _db
@@ -220,8 +225,17 @@ def get_book_public_id(book_czid: str, book_name: str = "") -> Optional[str]:
     try:
         book = session.query(Book).filter(Book.id == book_czid).first()
         if book:
+            changed = False
             if not book.public_id:
                 book.public_id = generate_public_id()
+                changed = True
+            if bookmark_count is not None:
+                book.bookmark_count = bookmark_count
+                changed = True
+            if view_count is not None:
+                book.view_count = view_count
+                changed = True
+            if changed:
                 session.commit()
             return book.public_id
 
@@ -231,6 +245,8 @@ def get_book_public_id(book_czid: str, book_name: str = "") -> Optional[str]:
             id=book_czid,
             public_id=pub_id,
             name=book_name or book_czid,
+            bookmark_count=bookmark_count,
+            view_count=view_count,
         )
         session.add(book)
         session.commit()
@@ -264,6 +280,8 @@ class BookSummary(BaseModel):
     bookurl: str
     book_id: Optional[str] = None
     public_id: Optional[str] = None
+    bookmark_count: Optional[int] = None
+    view_count: Optional[int] = None
 
 
 # -----------------------
@@ -277,7 +295,7 @@ def _backfill_public_ids():
     if not _db.db_manager:
         return
 
-    # Migrate: add public_id columns if they don't exist yet
+    # Migrate: add columns if they don't exist yet
     engine = _db.db_manager.engine
     inspector = sa_inspect(engine)
     with engine.connect() as conn:
@@ -287,6 +305,21 @@ def _backfill_public_ids():
             conn.execute(sa_text("CREATE UNIQUE INDEX IF NOT EXISTS ix_books_public_id ON books (public_id)"))
             conn.commit()
             print("[Migration] Added public_id column to books table")
+
+        if "description" not in book_cols:
+            conn.execute(sa_text("ALTER TABLE books ADD COLUMN description TEXT"))
+            conn.commit()
+            print("[Migration] Added description column to books table")
+
+        if "bookmark_count" not in book_cols:
+            conn.execute(sa_text("ALTER TABLE books ADD COLUMN bookmark_count INTEGER"))
+            conn.commit()
+            print("[Migration] Added bookmark_count column to books table")
+
+        if "view_count" not in book_cols:
+            conn.execute(sa_text("ALTER TABLE books ADD COLUMN view_count INTEGER"))
+            conn.commit()
+            print("[Migration] Added view_count column to books table")
 
         ch_cols = {c["name"] for c in inspector.get_columns("chapters")}
         if "public_id" not in ch_cols:
@@ -525,7 +558,9 @@ def list_books_in_category(
         book_summaries = []
         for b in books:
             czid = extract_book_id_from_url(b["bookurl"])
-            pub_id = get_book_public_id(czid, b.get("bookname", ""))
+            bm = b.get("bookmark_count")
+            vc = b.get("view_count")
+            pub_id = get_book_public_id(czid, b.get("bookname", ""), bookmark_count=bm, view_count=vc)
             book_summaries.append(
                 BookSummary(**b, book_id=czid, public_id=pub_id)
             )
@@ -666,38 +701,8 @@ def get_book_chapters(
                     all_chapters.sort(key=lambda c: c.number)
                     print(f"[API] Sorted {len(all_chapters)} chapters by number")
 
-                    # Sync book info with actual last chapter from fetched chapters
-                    # Only do this for full fetches (www=false) as partial fetches may have incorrect numbering
-                    if all_chapters and not www:
-                        last_chapter = max(all_chapters, key=lambda c: c.number)
-                        print(f"[API] Syncing book {book_id} with last chapter: {last_chapter.number} - {last_chapter.title}")
-
-                        # Get or create book info
-                        book_info = cache_mgr.cache_manager.get_book_info(book_id)
-                        if book_info:
-                            # Update existing book info
-                            book_info_dict = book_info.dict()
-                            book_info_dict["last_chapter_number"] = last_chapter.number
-                            book_info_dict["last_chapter_title"] = last_chapter.title
-                            book_info_dict["last_chapter_url"] = last_chapter.url
-                            cache_mgr.cache_manager.store_book_info(book_id, book_info_dict)
-                            print(f"[API] Updated book {book_id} last_chapter_number to {last_chapter.number}")
-                        else:
-                            # Book info not in cache - fetch and update it
-                            try:
-                                url = resolve_book_home(book_id)
-                                html_content = fetch_html(url)
-                                info = parse_book_info(html_content, BASE_URL)
-                                if info:
-                                    info["book_id"] = book_id
-                                    info["source_url"] = url
-                                    info["last_chapter_number"] = last_chapter.number
-                                    info["last_chapter_title"] = last_chapter.title
-                                    info["last_chapter_url"] = last_chapter.url
-                                    cache_mgr.cache_manager.store_book_info(book_id, info)
-                                    print(f"[API] Created book info for {book_id} with last_chapter_number: {last_chapter.number}")
-                            except Exception as e:
-                                print(f"[API] Warning: Failed to fetch book info during sync: {e}")
+                    # Note: book info (description, stats, last chapter) is already stored
+                    # by fetch_all_chapters_from_pagination() for www=false fetches.
 
         # Return based on 'all' parameter
         if all_chapters_flag:
@@ -727,6 +732,7 @@ def fetch_all_chapters_from_pagination(book_id: str) -> list:
     """
     Fetch all chapters for a book.
     czbooks.net lists all chapters on the book detail page (no pagination).
+    Also parses and stores book info (description, stats) from the same page.
     """
     base = canonical_base()
     book_url = f"{base}/n/{book_id}"
@@ -735,6 +741,20 @@ def fetch_all_chapters_from_pagination(book_id: str) -> list:
     # czbooks.net has all chapters on a single page in ul.chapter-list
     items = fetch_chapters_from_liebiao(html_content, book_url, base, start_index=1)
     print(f"[API] Fetched {len(items)} chapters for book {book_id} from {book_url}")
+
+    # Parse and store book info from the same HTML (description, bookmark/view counts)
+    info = parse_book_info(html_content, BASE_URL)
+    if info:
+        info["book_id"] = book_id
+        info["source_url"] = book_url
+        # Preserve last chapter info from the parsed chapters
+        if items:
+            last = items[-1]
+            info["last_chapter_number"] = last["number"]
+            info["last_chapter_title"] = last["title"]
+            info["last_chapter_url"] = last["url"]
+        cache_mgr.cache_manager.store_book_info(book_id, info)
+
     return items
 
 

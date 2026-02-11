@@ -21,6 +21,12 @@ CZBOOKS_CATEGORY_PAGE_HTML = """\
     </div>
     <div class="novel-item-author"><a href="/a/auth1">作者一</a></div>
     <div class="novel-item-newest-chapter"><a href="//czbooks.net/n/book1/ch99">第99章</a></div>
+    <div class="novel-item-status">
+      <ul class="nav">
+        <li><i class="fas fa-bookmark"></i> 1234</li>
+        <li><i class="fas fa-eye"></i> 56789</li>
+      </ul>
+    </div>
   </div>
 </li>
 <li class="novel-item-wrapper">
@@ -32,6 +38,12 @@ CZBOOKS_CATEGORY_PAGE_HTML = """\
     </div>
     <div class="novel-item-author"><a href="/a/auth2">作者二</a></div>
     <div class="novel-item-newest-chapter"><a href="//czbooks.net/n/book2/ch50">第50章</a></div>
+    <div class="novel-item-status">
+      <ul class="nav">
+        <li><i class="fas fa-bookmark"></i> 999</li>
+        <li><i class="fas fa-eye"></i> 42000</li>
+      </ul>
+    </div>
   </div>
 </li>
 </body></html>
@@ -45,10 +57,16 @@ CZBOOKS_BOOK_DETAIL_HTML = """\
     <div class="author"><a href="/a/testauthor">測試作者</a></div>
   </div>
   <div class="state">
-    <table><tr>
-      <td>狀態：</td><td>連載中</td>
-      <td>更新：</td><td>2026-02-01</td>
-    </tr></table>
+    <table>
+      <tr>
+        <td>狀態：</td><td>連載中</td>
+        <td>更新：</td><td>2026-02-01</td>
+      </tr>
+      <tr>
+        <td>收 藏 數：</td><td>5,678</td>
+        <td>觀 看 數：</td><td>123,456</td>
+      </tr>
+    </table>
   </div>
   <a id="novel-category" href="/c/xuanhuan">玄幻</a>
   <div class="description">這是一本測試小說。</div>

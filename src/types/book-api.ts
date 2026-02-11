@@ -13,6 +13,8 @@ export interface BookSummary {
   bookurl: string;
   book_id?: string | null;
   public_id?: string | null;
+  bookmark_count?: number | null;
+  view_count?: number | null;
 }
 export interface BookInfo {
   name: string;
@@ -20,6 +22,9 @@ export interface BookInfo {
   type: string;
   status: string;
   update: string;
+  description?: string | null;
+  bookmark_count?: number | null;
+  view_count?: number | null;
   last_chapter_title: string;
   last_chapter_url: string;
   last_chapter_number?: number | null;
