@@ -243,52 +243,48 @@ class BookSummary(BaseModel):
 # FastAPI App with Lifespan
 # -----------------------
 def _backfill_public_ids():
-    """Backfill public_id for any rows where it is NULL."""
-    from db_models import Book, Chapter
+    """Add public_id columns if missing (migration) and backfill NULLs."""
     import db_models as _db
-    from cache_manager import generate_public_id
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
 
     if not _db.db_manager:
         return
 
-    session = _db.db_manager.get_session()
-    try:
+    # Migrate: add public_id columns if they don't exist yet
+    engine = _db.db_manager.engine
+    inspector = sa_inspect(engine)
+    with engine.connect() as conn:
+        book_cols = {c["name"] for c in inspector.get_columns("books")}
+        if "public_id" not in book_cols:
+            conn.execute(sa_text("ALTER TABLE books ADD COLUMN public_id TEXT"))
+            conn.execute(sa_text("CREATE UNIQUE INDEX IF NOT EXISTS ix_books_public_id ON books (public_id)"))
+            conn.commit()
+            print("[Migration] Added public_id column to books table")
+
+        ch_cols = {c["name"] for c in inspector.get_columns("chapters")}
+        if "public_id" not in ch_cols:
+            conn.execute(sa_text("ALTER TABLE chapters ADD COLUMN public_id TEXT"))
+            conn.execute(sa_text("CREATE UNIQUE INDEX IF NOT EXISTS ix_chapters_public_id ON chapters (public_id)"))
+            conn.commit()
+            print("[Migration] Added public_id column to chapters table")
+
+    # Use raw SQL for fast bulk backfill — Python-level ORM is too slow for 1M+ rows
+    with engine.connect() as conn:
         # Backfill books
-        books = session.query(Book).filter(Book.public_id.is_(None)).all()
-        for book in books:
-            book.public_id = generate_public_id()
-        if books:
-            session.commit()
-            print(f"[Backfill] Assigned public_id to {len(books)} books")
+        result = conn.execute(sa_text(
+            "UPDATE books SET public_id = lower(hex(randomblob(5))) WHERE public_id IS NULL"
+        ))
+        if result.rowcount:
+            conn.commit()
+            print(f"[Backfill] Assigned public_id to {result.rowcount} books")
 
         # Backfill chapters
-        batch_size = 500
-        offset = 0
-        total = 0
-        while True:
-            chapters = (
-                session.query(Chapter)
-                .filter(Chapter.public_id.is_(None))
-                .limit(batch_size)
-                .all()
-            )
-            if not chapters:
-                break
-            for ch in chapters:
-                ch.public_id = generate_public_id()
-            session.commit()
-            total += len(chapters)
-            offset += batch_size
-        if total:
-            print(f"[Backfill] Assigned public_id to {total} chapters")
-    except Exception as e:
-        print(f"[Backfill] Error: {e}")
-        try:
-            session.rollback()
-        except Exception:
-            pass
-    finally:
-        session.close()
+        result = conn.execute(sa_text(
+            "UPDATE chapters SET public_id = lower(hex(randomblob(5))) WHERE public_id IS NULL"
+        ))
+        if result.rowcount:
+            conn.commit()
+            print(f"[Backfill] Assigned public_id to {result.rowcount} chapters")
 
 
 @asynccontextmanager

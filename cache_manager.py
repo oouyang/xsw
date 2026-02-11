@@ -18,8 +18,8 @@ from pydantic import BaseModel
 
 
 def generate_public_id() -> str:
-    """Generate a short random ID for public URLs."""
-    return uuid.uuid4().hex[:8]
+    """Generate a short random ID for public URLs (10 hex chars = 5 bytes)."""
+    return uuid.uuid4().hex[:10]
 
 
 # Pydantic models for API responses
