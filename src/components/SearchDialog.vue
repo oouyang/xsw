@@ -122,6 +122,7 @@ interface SearchMatch {
 
 interface SearchBookResult {
   book_id: string;
+  public_id?: string | null;
   book_name: string;
   author: string;
   matches: SearchMatch[];
@@ -210,9 +211,9 @@ function navigateToMatch(book: SearchBookResult, match: SearchMatch) {
   onDialogOK();
 
   // Always navigate to chapters page instead of specific chapter
-  // because database may have old non-sequential chapter numbers that don't match
-  // the current sequential indexing system (1, 2, 3...)
-  const url = `/book/${book.book_id}/chapters`;
+  // Use public_id if available, fall back to book_id
+  const id = book.public_id || book.book_id;
+  const url = `/book/${id}/chapters`;
   console.log('[SearchDialog] Navigating to book chapters:', url);
   void router.push(url);
 }

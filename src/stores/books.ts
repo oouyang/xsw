@@ -112,14 +112,22 @@ export const useBookStore = defineStore('book', {
     setChapter(chapter: ChapterRef | null | undefined) {
       if (!chapter) return;
 
-      // First try to match by both number and title
-      let index = this.allChapters.findIndex(
-        (c) => c.number === chapter.number && c.title === chapter.title,
-      );
+      // First try to match by public_id if available
+      let index = -1;
+      if (chapter.id) {
+        index = this.allChapters.findIndex((c) => c.id === chapter.id);
+      }
+
+      // Then try by both number and title
+      if (index === -1) {
+        index = this.allChapters.findIndex(
+          (c) => c.number === chapter.number && c.title === chapter.title,
+        );
+      }
 
       // If not found, try matching by number only (title might differ slightly)
       if (index === -1) {
-        console.log(`[setChapter] Chapter not found by number+title, trying number only. Looking for: ${chapter.number} "${chapter.title}"`);
+        console.log(`[setChapter] Chapter not found by id/number+title, trying number only. Looking for: ${chapter.number} "${chapter.title}"`);
         index = this.allChapters.findIndex((c) => c.number === chapter.number);
 
         if (index !== -1) {
@@ -129,6 +137,24 @@ export const useBookStore = defineStore('book', {
 
       this.currentChapterIndex = index;
       console.log(`[setChapter] Set currentChapterIndex to ${index} for chapter ${chapter.number}`);
+    },
+
+    /**
+     * Find a chapter by its public_id (string).
+     * Falls back to finding by sequential number if input is numeric.
+     */
+    findChapterById(chapterId: string): ChapterRef | null {
+      // Try matching by public_id first
+      const byId = this.allChapters.find((c) => c.id === chapterId);
+      if (byId) return byId;
+
+      // Fall back to sequential number
+      const num = Number(chapterId);
+      if (Number.isFinite(num)) {
+        return this.allChapters.find((c) => c.number === num) ?? null;
+      }
+
+      return null;
     },
 
     setCurrentChapterIndex(i: number | null) {

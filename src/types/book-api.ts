@@ -12,6 +12,7 @@ export interface BookSummary {
   intro: string;
   bookurl: string;
   book_id?: string | null;
+  public_id?: string | null;
 }
 export interface BookInfo {
   name: string;
@@ -23,11 +24,13 @@ export interface BookInfo {
   last_chapter_url: string;
   last_chapter_number?: number | null;
   book_id?: string | null;
+  public_id?: string | null;
 }
 export interface ChapterRef {
   number: number;
   title: string;
   url: string;
+  id?: string | null;
 }
 export interface Chapters {
   chapters: ChapterRef[];
@@ -39,4 +42,5 @@ export interface ChapterContent {
   title?: string | null;
   url: string;
   text: string;
+  chapter_id?: string | null;
 }

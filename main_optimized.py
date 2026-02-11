@@ -149,6 +149,77 @@ def fetch_html(url: str) -> str:
 
 
 # -----------------------
+# ID Resolution Helpers
+# -----------------------
+def resolve_book_id(input_id: str) -> str:
+    """
+    Resolve public_id or czbooks_id to internal czbooks book_id.
+    Accepts both our public IDs and original czbooks IDs (transparent resolution).
+    """
+    import db_models as _db
+    from db_models import Book
+
+    if not _db.db_manager:
+        return input_id
+
+    session = _db.db_manager.get_session()
+    try:
+        # Try public_id first
+        book = session.query(Book).filter(Book.public_id == input_id).first()
+        if book:
+            return book.id  # return czbooks ID
+        # Fall back to czbooks ID directly
+        return input_id
+    finally:
+        session.close()
+
+
+def resolve_chapter(book_czid: str, chapter_input: str) -> tuple:
+    """
+    Resolve chapter public_id to (book_czid, chapter_num).
+    Falls back to treating input as sequential number.
+    """
+    import db_models as _db
+    from db_models import Chapter
+
+    if not _db.db_manager:
+        return book_czid, int(chapter_input)
+
+    session = _db.db_manager.get_session()
+    try:
+        ch = (
+            session.query(Chapter)
+            .filter(Chapter.book_id == book_czid, Chapter.public_id == chapter_input)
+            .first()
+        )
+        if ch:
+            return book_czid, ch.chapter_num
+        # Fall back: treat as sequential number
+        return book_czid, int(chapter_input)
+    except ValueError:
+        # Not a valid integer and not a known public_id
+        return book_czid, -1
+    finally:
+        session.close()
+
+
+def get_book_public_id(book_czid: str) -> Optional[str]:
+    """Get the public_id for a book given its czbooks ID."""
+    import db_models as _db
+    from db_models import Book
+
+    if not _db.db_manager:
+        return None
+
+    session = _db.db_manager.get_session()
+    try:
+        book = session.query(Book).filter(Book.id == book_czid).first()
+        return book.public_id if book else None
+    finally:
+        session.close()
+
+
+# -----------------------
 # Pydantic Models
 # -----------------------
 class Category(BaseModel):
@@ -165,11 +236,61 @@ class BookSummary(BaseModel):
     intro: str
     bookurl: str
     book_id: Optional[str] = None
+    public_id: Optional[str] = None
 
 
 # -----------------------
 # FastAPI App with Lifespan
 # -----------------------
+def _backfill_public_ids():
+    """Backfill public_id for any rows where it is NULL."""
+    from db_models import Book, Chapter
+    import db_models as _db
+    from cache_manager import generate_public_id
+
+    if not _db.db_manager:
+        return
+
+    session = _db.db_manager.get_session()
+    try:
+        # Backfill books
+        books = session.query(Book).filter(Book.public_id.is_(None)).all()
+        for book in books:
+            book.public_id = generate_public_id()
+        if books:
+            session.commit()
+            print(f"[Backfill] Assigned public_id to {len(books)} books")
+
+        # Backfill chapters
+        batch_size = 500
+        offset = 0
+        total = 0
+        while True:
+            chapters = (
+                session.query(Chapter)
+                .filter(Chapter.public_id.is_(None))
+                .limit(batch_size)
+                .all()
+            )
+            if not chapters:
+                break
+            for ch in chapters:
+                ch.public_id = generate_public_id()
+            session.commit()
+            total += len(chapters)
+            offset += batch_size
+        if total:
+            print(f"[Backfill] Assigned public_id to {total} chapters")
+    except Exception as e:
+        print(f"[Backfill] Error: {e}")
+        try:
+            session.rollback()
+        except Exception:
+            pass
+    finally:
+        session.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown."""
@@ -177,6 +298,9 @@ async def lifespan(app: FastAPI):
     print(f"[App] Starting with BASE_URL={BASE_URL}, DB_PATH={DB_PATH}")
     init_database(f"sqlite:///{DB_PATH}")
     init_cache_manager(ttl_seconds=CACHE_TTL)
+
+    # Backfill public_id for existing rows
+    _backfill_public_ids()
 
     # Initialize admin users
     from auth import init_admin_users
@@ -375,10 +499,13 @@ def list_books_in_category(
         html_content = fetch_html(url)
         books = parse_books(html_content, BASE_URL)
 
-        book_summaries = [
-            BookSummary(**b, book_id=extract_book_id_from_url(b["bookurl"]))
-            for b in books
-        ]
+        book_summaries = []
+        for b in books:
+            czid = extract_book_id_from_url(b["bookurl"])
+            pub_id = get_book_public_id(czid)
+            book_summaries.append(
+                BookSummary(**b, book_id=czid, public_id=pub_id)
+            )
 
         return book_summaries
     except requests.HTTPError as e:
@@ -392,29 +519,37 @@ def get_book_info(book_id: str):
     """
     Get book metadata.
     Strategy: Check DB → Fetch from web → Store to DB
+    Accepts both public_id and czbooks ID (transparent resolution).
     """
     try:
+        # Resolve public_id to czbooks ID
+        czbooks_id = resolve_book_id(book_id)
+
         # Check cache first
-        cached_info = cache_mgr.cache_manager.get_book_info(book_id)
+        cached_info = cache_mgr.cache_manager.get_book_info(czbooks_id)
         if cached_info:
-            print(f"[API] Book {book_id} - cache hit")
+            print(f"[API] Book {czbooks_id} - cache hit")
             return cached_info
 
         # Cache miss - fetch from web
-        print(f"[API] Book {book_id} - cache miss, fetching from web")
-        url = resolve_book_home(book_id)
+        print(f"[API] Book {czbooks_id} - cache miss, fetching from web")
+        url = resolve_book_home(czbooks_id)
         html_content = fetch_html(url)
         info = parse_book_info(html_content, BASE_URL)
 
         if not info:
             raise HTTPException(status_code=404, detail="Book info not found")
 
-        info["book_id"] = book_id
+        info["book_id"] = czbooks_id
         info["source_url"] = url
 
-        # Store to cache (DB + memory)
-        cache_mgr.cache_manager.store_book_info(book_id, info)
+        # Store to cache (DB + memory) — this also assigns public_id
+        cache_mgr.cache_manager.store_book_info(czbooks_id, info)
 
+        # Re-read from cache to get the public_id
+        cached_info = cache_mgr.cache_manager.get_book_info(czbooks_id)
+        if cached_info:
+            return cached_info
         return BookInfo(**info)
     except requests.HTTPError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
@@ -433,6 +568,7 @@ def get_book_chapters(
     """
     Get chapter list for a book.
     Strategy: Check DB → Fetch from web → Store to DB
+    Accepts both public_id and czbooks ID (transparent resolution).
 
     - www=true: Fetch from home page only (latest ~10 chapters)
     - www=false (default): Fetch from pagination pages (all chapters)
@@ -441,6 +577,8 @@ def get_book_chapters(
     - page: Page number for server-side pagination (when all=false)
     """
     try:
+        # Resolve public_id to czbooks ID
+        book_id = resolve_book_id(book_id)
         # First, try to get all chapters from DB or web
         all_chapters = None
 
@@ -577,36 +715,46 @@ def fetch_all_chapters_from_pagination(book_id: str) -> list:
     return items
 
 
-@api_router.get("/books/{book_id}/chapters/{chapter_num}", response_model=ChapterContent)
+@api_router.get("/books/{book_id}/chapters/{chapter_id}", response_model=ChapterContent)
 def get_chapter_content(
     book_id: str,
-    chapter_num: int,
+    chapter_id: str,
     nocache: bool = Query(False),
 ):
     """
     Get chapter content.
     Strategy: Check DB → Fetch from web → Store to DB
+    Accepts both public_id and czbooks ID for book_id.
+    Accepts both chapter public_id and sequential number for chapter_id.
     """
     try:
+        # Resolve public_id to czbooks ID
+        czbooks_book_id = resolve_book_id(book_id)
+
+        # Resolve chapter_id (public_id or sequential number)
+        _, chapter_num = resolve_chapter(czbooks_book_id, chapter_id)
+        if chapter_num < 0:
+            raise HTTPException(status_code=404, detail=f"Chapter '{chapter_id}' not found")
+
         if not nocache:
             # Check cache first
-            cached_content = cache_mgr.cache_manager.get_chapter_content(book_id, chapter_num)
+            cached_content = cache_mgr.cache_manager.get_chapter_content(czbooks_book_id, chapter_num)
             if cached_content:
-                print(f"[API] Chapter {book_id}:{chapter_num} - cache hit")
+                print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - cache hit")
                 return cached_content
 
         # Cache miss - need to fetch
-        print(f"[API] Chapter {book_id}:{chapter_num} - cache miss, fetching from web")
+        print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - cache miss, fetching from web")
 
         # Strategy: Try to get chapter URL from DB first (fastest)
-        chapter_url = get_chapter_url_from_db(book_id, chapter_num)
+        chapter_url = get_chapter_url_from_db(czbooks_book_id, chapter_num)
 
         if not chapter_url:
             # Chapter URL not in DB - need to fetch chapter list first
-            print(f"[API] Chapter {book_id}:{chapter_num} - URL not in DB, fetching chapter list")
+            print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - URL not in DB, fetching chapter list")
 
             # Try home page first (for recent chapters)
-            home_url = resolve_book_home(book_id)
+            home_url = resolve_book_home(czbooks_book_id)
             home_html = fetch_html(home_url)
             items = fetch_chapters_from_liebiao(home_html, home_url, canonical_base(), start_index=1)
 
@@ -616,10 +764,10 @@ def get_chapter_content(
             if not target:
                 # Not in home page - fetch all chapters from pagination
                 print(f"[API] Chapter {chapter_num} not in home page, fetching all chapters")
-                items = fetch_all_chapters_from_pagination(book_id)
+                items = fetch_all_chapters_from_pagination(czbooks_book_id)
 
                 # Store all chapters to DB for future use
-                cache_mgr.cache_manager.store_chapter_refs(book_id, items)
+                cache_mgr.cache_manager.store_chapter_refs(czbooks_book_id, items)
 
                 # Find target chapter
                 target = next((it for it in items if it.get("number") == chapter_num), None)
@@ -632,8 +780,8 @@ def get_chapter_content(
             chapter_title = target["title"]
         else:
             # Got URL from DB - get title too
-            chapter_title = get_chapter_title_from_db(book_id, chapter_num) or f"Chapter {chapter_num}"
-            print(f"[API] Chapter {book_id}:{chapter_num} - found URL in DB: {chapter_url}")
+            chapter_title = get_chapter_title_from_db(czbooks_book_id, chapter_num) or f"Chapter {chapter_num}"
+            print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - found URL in DB: {chapter_url}")
 
         # Fetch chapter content
         chapter_html = fetch_html(chapter_url)
@@ -650,16 +798,21 @@ def get_chapter_content(
                 status_code=404, detail=f"No content found in {chapter_url}"
             )
 
-        # Store to cache (DB + memory)
+        # Store to cache (DB + memory) — this also assigns chapter public_id
         content_data = {
             "title": chapter_title,
             "url": chapter_url,
             "text": text,
         }
-        cache_mgr.cache_manager.store_chapter_content(book_id, chapter_num, content_data)
+        cache_mgr.cache_manager.store_chapter_content(czbooks_book_id, chapter_num, content_data)
+
+        # Re-read from cache to get the chapter_id (public_id)
+        cached = cache_mgr.cache_manager.get_chapter_content(czbooks_book_id, chapter_num)
+        if cached:
+            return cached
 
         return ChapterContent(
-            book_id=book_id,
+            book_id=czbooks_book_id,
             chapter_num=chapter_num,
             title=chapter_title,
             url=chapter_url,
@@ -667,6 +820,8 @@ def get_chapter_content(
         )
     except requests.HTTPError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -722,6 +877,7 @@ def get_chapter_title_from_db(book_id: str, chapter_num: int) -> Optional[str]:
 class SearchResult(BaseModel):
     """Search result with match context."""
     book_id: str
+    public_id: Optional[str] = None  # book public_id
     book_name: str
     author: Optional[str] = None
     match_type: str  # 'book_name', 'author', 'chapter_title', 'chapter_content'
@@ -825,6 +981,7 @@ def search_comprehensive(
                     results.append(
                         SearchResult(
                             book_id=book.id,
+                            public_id=book.public_id,
                             book_name=book.name,
                             author=book.author,
                             match_type=match_type,
@@ -846,9 +1003,12 @@ def search_comprehensive(
                 )
 
                 for chapter, book_name, author in chapters:
+                    # Get book public_id for the result
+                    book_pub_id = get_book_public_id(chapter.book_id)
                     results.append(
                         SearchResult(
                             book_id=chapter.book_id,
+                            public_id=book_pub_id,
                             book_name=book_name,
                             author=author,
                             match_type="chapter_title",
@@ -880,9 +1040,11 @@ def search_comprehensive(
                     text = chapter.text or ""
                     snippet = _extract_snippet(text, search_query, context_chars=100)
 
+                    book_pub_id = get_book_public_id(chapter.book_id)
                     results.append(
                         SearchResult(
                             book_id=chapter.book_id,
+                            public_id=book_pub_id,
                             book_name=book_name,
                             author=author,
                             match_type="chapter_content",
@@ -908,6 +1070,7 @@ def search_comprehensive(
             if result.book_id not in grouped_results:
                 grouped_results[result.book_id] = {
                     "book_id": result.book_id,
+                    "public_id": result.public_id,
                     "book_name": result.book_name,
                     "author": result.author,
                     "matches": [],
@@ -1168,6 +1331,7 @@ def clear_memory_cache(auth: TokenPayload = Depends(require_admin_auth)):
 @api_router.post("/admin/cache/invalidate/{book_id}")
 def invalidate_book_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
     """Invalidate memory cache for a specific book (DB remains intact)."""
+    book_id = resolve_book_id(book_id)
     cache_mgr.cache_manager.invalidate_book(book_id)
     return {"status": "invalidated", "book_id": book_id, "scope": "memory_only"}
 
@@ -1175,6 +1339,7 @@ def invalidate_book_cache(book_id: str, auth: TokenPayload = Depends(require_adm
 @api_router.delete("/admin/cache/chapters/{book_id}")
 def delete_book_chapters_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
     """Delete all chapter records for a book from database and memory cache."""
+    book_id = resolve_book_id(book_id)
     deleted_count = cache_mgr.cache_manager.delete_book_chapters(book_id)
     return {
         "status": "deleted",

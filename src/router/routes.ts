@@ -19,12 +19,12 @@ const routes: RouteRecordRaw[] = [
         props: true,
       },
       {
-        path: 'book/:bookId/chapter/:chapterNum/:chapterTitle?',
+        path: 'book/:bookId/chapter/:chapterId/:chapterTitle?',
         name: 'Chapter',
         component: () => import('pages/ChapterPage.vue'),
         props: route => ({
             bookId: route.params.bookId,
-            chapterNum: Number(route.params.chapterNum), 
+            chapterId: String(route.params.chapterId),
             chapterTitle: route.params.chapterTitle
           }),
       },

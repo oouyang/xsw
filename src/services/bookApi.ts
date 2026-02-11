@@ -46,11 +46,11 @@ export async function getBookChapters(
 }
 export async function getChapterContent(
   bookId: string,
-  chapterNum: number,
+  chapterId: string,
   nocache = false,
 ): Promise<ChapterContent> {
   // Use extended timeout for chapter content (up to 2 minutes for slow networks/scraping)
-  const { data } = await api.get(`/books/${bookId}/chapters/${chapterNum}`, {
+  const { data } = await api.get(`/books/${bookId}/chapters/${chapterId}`, {
     params: { nocache },
     timeout: 120000, // 2 minutes
   });

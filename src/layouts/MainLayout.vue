@@ -54,9 +54,9 @@
       >
         <q-scroll-area class="fit" :key="book.bookId">
           <div class="q-pa-sm">
-            <div v-for="(c,index) in book.allChapters" :key="`${book.bookId}-${c.number}`">
+            <div v-for="(c,index) in book.allChapters" :key="`${book.bookId}-${c.id || c.number}`">
               <q-btn dense
-                      flat :to="chapterLink(c.number, c.title)"
+                      flat :to="chapterLink(c.id ?? String(c.number), c.title)"
                       :disable="index === book.getChapterIndex"
                       class="chapter-btn"
                       :class="{ current: index === book.getChapterIndex }"
@@ -273,19 +273,19 @@ watch(drawerRight, async (open) => {
 
 // Update config.chapter immediately when route changes to Chapter page
 watch(() => route.params, (params) => {
-  if (route.name === 'Chapter' && params.chapterNum && params.chapterTitle) {
+  if (route.name === 'Chapter' && params.chapterId && params.chapterTitle) {
     // Skip if chapters not loaded yet
     if (book.allChapters.length === 0) {
       console.log('[MainLayout] Skipping chapter update - chapters not loaded yet')
       return
     }
 
-    const chapterNum = Number(params.chapterNum)
+    const chapterId = String(params.chapterId)
     const chapterTitle = String(params.chapterTitle)
 
-    // Find the matching chapter in the chapters list (with type-safe comparison)
+    // Find the matching chapter by public_id or number
     const matchingChapter = book.allChapters.find(
-      c => Number(c.number) === chapterNum && String(c.title) === chapterTitle
+      c => (c.id === chapterId || String(c.number) === chapterId) && String(c.title) === chapterTitle
     )
 
     if (matchingChapter) {
@@ -293,7 +293,7 @@ watch(() => route.params, (params) => {
       update({ chapter: JSON.stringify(matchingChapter) })
       console.log('[MainLayout] Updated chapter from route:', matchingChapter)
     } else {
-      console.warn('[MainLayout] Chapter not found in list:', chapterNum, chapterTitle)
+      console.warn('[MainLayout] Chapter not found in list:', chapterId, chapterTitle)
     }
   }
 }, { immediate: true, deep: true })
@@ -327,12 +327,12 @@ watch(() => route.params, (params) => {
 
 const navPrev = computed(() => {
   if (!book.prevChapter) return null
-  return chapterLink(book.prevChapter.number, book.prevChapter.title)
+  return chapterLink(book.prevChapter.id ?? String(book.prevChapter.number), book.prevChapter.title)
 })
 
 const navNext = computed(() => {
   if (!book.nextChapter) return null
-  return chapterLink(book.nextChapter.number, book.nextChapter.title)
+  return chapterLink(book.nextChapter.id ?? String(book.nextChapter.number), book.nextChapter.title)
 })
 
 function nav(pos: 'next' | 'prev') {

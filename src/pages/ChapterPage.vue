@@ -13,9 +13,6 @@
         <div class="row items-center">
           <div class="col">
             <div class="text-h6">{{ displayChapterTitle || displayTitle }}</div>
-            <div class="text-caption q-mt-xs">
-              第 {{ props.chapterNum }} / {{ book.info?.last_chapter_number || '?' }} 章
-            </div>
           </div>
           <div class="col-auto">
             <div class="column items-end q-gutter-xs">
@@ -39,8 +36,8 @@
             outline
             color="primary"
             size="sm"
-            :disable="!book.prevChapter || props.chapterNum <= 1"
-            :to="chapterLink(book.prevChapter?.number??0, book.prevChapter?.title??'')"
+            :disable="!book.prevChapter"
+            :to="book.prevChapter ? chapterLink(book.prevChapter.id ?? String(book.prevChapter.number), book.prevChapter.title) : undefined"
             icon="chevron_left"
             :label="$t('nav.prevChapter')"
           >
@@ -60,8 +57,8 @@
             outline
             color="primary"
             size="sm"
-            :disable="!book.nextChapter || Boolean(book.info?.last_chapter_number && props.chapterNum >= book.info.last_chapter_number)"
-            :to="chapterLink(book.nextChapter?.number??0, book.nextChapter?.title??'')"
+            :disable="!book.nextChapter"
+            :to="book.nextChapter ? chapterLink(book.nextChapter.id ?? String(book.nextChapter.number), book.nextChapter.title) : undefined"
             icon-right="chevron_right"
             :label="$t('nav.nextChapter')"
           >
@@ -98,8 +95,8 @@
       <q-btn
         outline
         color="primary"
-        :disable="!book.prevChapter || props.chapterNum <= 1"
-        :to="chapterLink(book.prevChapter?.number??0, book.prevChapter?.title??'')"
+        :disable="!book.prevChapter"
+        :to="book.prevChapter ? chapterLink(book.prevChapter.id ?? String(book.prevChapter.number), book.prevChapter.title) : undefined"
         icon="chevron_left"
         :label="$t('nav.prevChapter')"
       >
@@ -117,8 +114,8 @@
       <q-btn
         outline
         color="primary"
-        :disable="!book.nextChapter || Boolean(book.info?.last_chapter_number && props.chapterNum >= book.info.last_chapter_number)"
-        :to="chapterLink(book.nextChapter?.number??0, book.nextChapter?.title??'')"
+        :disable="!book.nextChapter"
+        :to="book.nextChapter ? chapterLink(book.nextChapter.id ?? String(book.nextChapter.number), book.nextChapter.title) : undefined"
         icon-right="chevron_right"
         :label="$t('nav.nextChapter')"
       >
@@ -127,15 +124,15 @@
     </div>
 
     <!-- Progress indicator -->
-    <div v-if="book.info?.last_chapter_number" class="q-mt-md">
+    <div v-if="book.info?.last_chapter_number && currentChapterNum > 0" class="q-mt-md">
       <q-linear-progress
-        :value="props.chapterNum / (book.info.last_chapter_number || 1)"
+        :value="currentChapterNum / (book.info.last_chapter_number || 1)"
         color="primary"
         size="8px"
         rounded
       />
       <div class="text-caption text-center text-grey-7 q-mt-xs">
-        {{ $t('chapter.readingProgress') }}: {{ Math.round((props.chapterNum / (book.info.last_chapter_number || 1)) * 100) }}%
+        {{ $t('chapter.readingProgress') }}: {{ Math.round((currentChapterNum / (book.info.last_chapter_number || 1)) * 100) }}%
       </div>
     </div>
   </q-page>
@@ -158,14 +155,19 @@ const fontsize = computed(() => Number(config.value.fontsize) || 7)
 const { convertIfNeeded } = useTextConversion();
 const router = useRouter();
 
-const props = defineProps<{ bookId: string; chapterNum: number; chapterTitle?: string }>();
+const props = defineProps<{ bookId: string; chapterId: string; chapterTitle?: string }>();
 const title = ref('');
 const content = ref<Array<string>>([]);
 const loading = ref(false);
 const error = ref('');
-// const lastChapterNum = ref<number | null>(null);
 
 const book = useBookStore();
+
+// Resolve the current chapter's sequential number from the store
+const currentChapterNum = computed(() => {
+  const ch = book.findChapterById(props.chapterId);
+  return ch?.number ?? 0;
+});
 // const chapterIndex = computed(() => {
 //   const index = chapters.value.findIndex(
 //     c => c.number === chapterNum && c.title === chapterTitle
@@ -282,7 +284,8 @@ const estimatedReadingTimeText = computed(() => {
 
 async function loadMeta() {
   try {
-    if (!book.info || book.info?.book_id !== props.bookId) {
+    const infoMatches = book.info && (book.info.public_id === props.bookId || book.info.book_id === props.bookId);
+    if (!infoMatches) {
       await book.loadInfo(props.bookId);
     }
     // lastChapterNum.value = book.info?.last_chapter_number ?? null;
@@ -336,21 +339,21 @@ const HIGH_PRIORITY_COUNT = 2;
 const LOW_PRIORITY_COUNT = 3;
 const PREFETCH_DELAY_MS = 2000;
 
-interface PrefetchItem { bookId: string; chapterNum: number }
+interface PrefetchItem { bookId: string; chapterId: string }
 const hiQueue: PrefetchItem[] = [];
 const loQueue: PrefetchItem[] = [];
-const prefetchDone = new Set<string>(); // "bookId:num" already fetched
+const prefetchDone = new Set<string>(); // "bookId:chapterId" already fetched
 let workerActive = false;
 let workerBookId = '';
 
-function prefetchKey(bookId: string, num: number) { return `${bookId}:${num}`; }
+function prefetchKey(bookId: string, chapterId: string) { return `${bookId}:${chapterId}`; }
 
-function isQueued(bookId: string, num: number) {
-  return hiQueue.some(q => q.bookId === bookId && q.chapterNum === num)
-      || loQueue.some(q => q.bookId === bookId && q.chapterNum === num);
+function isQueued(bookId: string, chapterId: string) {
+  return hiQueue.some(q => q.bookId === bookId && q.chapterId === chapterId)
+      || loQueue.some(q => q.bookId === bookId && q.chapterId === chapterId);
 }
 
-function enqueuePrefetch(bookId: string, currentNum: number) {
+function enqueuePrefetch(bookId: string, currentChapterId: string) {
   // Book changed — flush everything
   if (bookId !== workerBookId) {
     hiQueue.length = 0;
@@ -360,18 +363,26 @@ function enqueuePrefetch(bookId: string, currentNum: number) {
   }
 
   // Mark current chapter as done (user already loaded it)
-  prefetchDone.add(prefetchKey(bookId, currentNum));
+  prefetchDone.add(prefetchKey(bookId, currentChapterId));
 
-  const lastChapter = book.info?.last_chapter_number ?? Infinity;
+  // Find current chapter index in allChapters
+  const currentIndex = book.allChapters.findIndex(
+    c => c.id === currentChapterId || String(c.number) === currentChapterId
+  );
+  if (currentIndex < 0) return;
+
   const total = HIGH_PRIORITY_COUNT + LOW_PRIORITY_COUNT;
 
   for (let i = 1; i <= total; i++) {
-    const num = currentNum + i;
-    if (num > lastChapter) break;
-    const key = prefetchKey(bookId, num);
-    if (prefetchDone.has(key) || isQueued(bookId, num)) continue;
+    const nextIndex = currentIndex + i;
+    if (nextIndex >= book.allChapters.length) break;
+    const nextChapter = book.allChapters[nextIndex];
+    if (!nextChapter) break;
+    const chId = nextChapter.id ?? String(nextChapter.number);
+    const key = prefetchKey(bookId, chId);
+    if (prefetchDone.has(key) || isQueued(bookId, chId)) continue;
 
-    const item: PrefetchItem = { bookId, chapterNum: num };
+    const item: PrefetchItem = { bookId, chapterId: chId };
     if (i <= HIGH_PRIORITY_COUNT) {
       hiQueue.push(item);
     } else {
@@ -389,7 +400,7 @@ async function runPrefetchWorker() {
   // Always prefer high-priority queue; fall back to low
   while (hiQueue.length > 0 || loQueue.length > 0) {
     const item = hiQueue.length > 0 ? hiQueue.shift()! : loQueue.shift()!;
-    const key = prefetchKey(item.bookId, item.chapterNum);
+    const key = prefetchKey(item.bookId, item.chapterId);
 
     if (prefetchDone.has(key)) continue;
     prefetchDone.add(key);
@@ -397,9 +408,9 @@ async function runPrefetchWorker() {
     await new Promise(r => setTimeout(r, PREFETCH_DELAY_MS));
 
     try {
-      await getChapterContent(item.bookId, item.chapterNum);
+      await getChapterContent(item.bookId, item.chapterId);
       const tag = hiQueue.length > 0 || loQueue.length > 0 ? '' : ' (queue empty)';
-      console.log(`[Prefetch] Cached chapter ${item.chapterNum}${tag}`);
+      console.log(`[Prefetch] Cached chapter ${item.chapterId}${tag}`);
     } catch {
       // Best-effort — remove from done so a future enqueue can retry
       prefetchDone.delete(key);
@@ -432,24 +443,31 @@ async function load() {
       // await loadAllChapters();
     }
 
-    console.log(`Loading chapter ${props.chapterNum}: ${props.chapterTitle}`);
-    const data = await getChapterContent(props.bookId, Number(props.chapterNum));
+    console.log(`Loading chapter ${props.chapterId}: ${props.chapterTitle}`);
+    const data = await getChapterContent(props.bookId, props.chapterId);
 
     if (!data || !data.text) {
       throw new Error('No content returned from API');
     }
 
-    title.value = data.title || props.chapterTitle || `${props.chapterNum}`;
+    title.value = data.title || props.chapterTitle || '';
     content.value = data.text.split(' ');
     removeTitleWordsFromContent()
     content.value = content.value.filter(Boolean)
 
     // Set the current chapter in the store for prev/next navigation
-    book.setChapter({
-      number: props.chapterNum,
-      title: title.value,
-      url: data.url || ''
-    });
+    // Try to find the chapter in allChapters by public_id or number
+    const matchedChapter = book.findChapterById(props.chapterId);
+    if (matchedChapter) {
+      book.setChapter(matchedChapter);
+    } else if (data.chapter_num) {
+      book.setChapter({
+        number: data.chapter_num,
+        title: title.value,
+        url: data.url || '',
+        id: data.chapter_id ?? null,
+      });
+    }
 
     // Update browser title with book name and chapter title
     if (book.info?.name && title.value) {
@@ -458,10 +476,10 @@ async function load() {
       document.title = `${config.value.name} - ${title.value}`;
     }
 
-    console.log(`Successfully loaded chapter ${props.chapterNum}, index: ${book.currentChapterIndex}`);
+    console.log(`Successfully loaded chapter ${props.chapterId}, index: ${book.currentChapterIndex}`);
 
     // Enqueue next chapters for background prefetch
-    enqueuePrefetch(props.bookId, props.chapterNum);
+    enqueuePrefetch(props.bookId, props.chapterId);
   } catch (e: unknown) {
     let errorMsg = 'Unknown error';
     let is404 = false;
@@ -502,24 +520,27 @@ async function load() {
 
     // Handle 404: Try to find the nearest available chapter
     if (is404 && book.allChapters.length > 0) {
-      console.warn(`[ChapterPage] Chapter ${props.chapterNum} not found (404), looking for nearest available chapter...`);
+      console.warn(`[ChapterPage] Chapter ${props.chapterId} not found (404), looking for nearest available chapter...`);
 
-      // Find the nearest chapter (prefer next chapter, fallback to previous)
-      const requestedNum = props.chapterNum;
+      // Find current chapter index
+      const currentIdx = book.allChapters.findIndex(
+        ch => ch.id === props.chapterId || String(ch.number) === props.chapterId
+      );
       const chapters = book.allChapters;
 
-      // Find next available chapter
-      const nextChapter = chapters.find(ch => ch.number > requestedNum);
-      if (nextChapter) {
-        console.log(`[ChapterPage] Redirecting to next available chapter: ${nextChapter.number}`);
-        error.value = `章節 ${requestedNum} 不存在，已跳轉至下一可用章節 ${nextChapter.number}`;
-        // Redirect to the nearest chapter
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Show message briefly
+      // Find next available chapter (by index position)
+      const nextIdx = currentIdx >= 0 ? currentIdx + 1 : 0;
+      if (nextIdx < chapters.length) {
+        const nextChapter = chapters[nextIdx]!;
+        const nextId = nextChapter.id ?? String(nextChapter.number);
+        console.log(`[ChapterPage] Redirecting to next available chapter: ${nextId}`);
+        error.value = `章節不存在，已跳轉至下一可用章節`;
+        await new Promise(resolve => setTimeout(resolve, 1500));
         void router.replace({
           name: 'Chapter',
           params: {
             bookId: props.bookId,
-            chapterNum: nextChapter.number,
+            chapterId: nextId,
             chapterTitle: nextChapter.title
           }
         });
@@ -527,16 +548,18 @@ async function load() {
       }
 
       // No next chapter found, try previous
-      const prevChapter = [...chapters].reverse().find(ch => ch.number < requestedNum);
-      if (prevChapter) {
-        console.log(`[ChapterPage] Redirecting to previous available chapter: ${prevChapter.number}`);
-        error.value = `章節 ${requestedNum} 不存在，已跳轉至上一可用章節 ${prevChapter.number}`;
+      const prevIdx = currentIdx >= 0 ? currentIdx - 1 : chapters.length - 1;
+      if (prevIdx >= 0) {
+        const prevChapter = chapters[prevIdx]!;
+        const prevId = prevChapter.id ?? String(prevChapter.number);
+        console.log(`[ChapterPage] Redirecting to previous available chapter: ${prevId}`);
+        error.value = `章節不存在，已跳轉至上一可用章節`;
         await new Promise(resolve => setTimeout(resolve, 1500));
         void router.replace({
           name: 'Chapter',
           params: {
             bookId: props.bookId,
-            chapterNum: prevChapter.number,
+            chapterId: prevId,
             chapterTitle: prevChapter.title
           }
         });
@@ -545,7 +568,7 @@ async function load() {
 
       // No chapters available at all - fall back to chapters list
       console.warn('[ChapterPage] No nearby chapters found, redirecting to chapters list');
-      error.value = `章節 ${requestedNum} 不存在，正在返回章節列表...`;
+      error.value = `章節不存在，正在返回章節列表...`;
       await new Promise(resolve => setTimeout(resolve, 1500));
       void router.replace({
         name: 'Chapters',
@@ -557,7 +580,7 @@ async function load() {
     error.value = `${t('chapter.loadContentFailed')}: ${errorMsg}`;
     console.error('Failed to load chapter content:', {
       bookId: props.bookId,
-      chapterNum: props.chapterNum,
+      chapterId: props.chapterId,
       chapterTitle: props.chapterTitle,
       error: e,
       response: typeof e === 'object' && e !== null && 'response' in e ? (e as { response?: unknown }).response : undefined,
@@ -593,9 +616,8 @@ function handleKeyPress(event: KeyboardEvent) {
   if (key === 'p') {
     // Previous chapter
     event.preventDefault();
-    const canGoPrev = book.prevChapter && props.chapterNum > 1;
-    if (canGoPrev && book.prevChapter) {
-      void router.push(chapterLink(book.prevChapter.number, book.prevChapter.title));
+    if (book.prevChapter) {
+      void router.push(chapterLink(book.prevChapter.id ?? String(book.prevChapter.number), book.prevChapter.title));
     }
     return;
   }
@@ -603,10 +625,8 @@ function handleKeyPress(event: KeyboardEvent) {
   if (key === 'n') {
     // Next chapter
     event.preventDefault();
-    const isLastChapter = book.info?.last_chapter_number && props.chapterNum >= book.info.last_chapter_number;
-    const canGoNext = book.nextChapter && !isLastChapter;
-    if (canGoNext && book.nextChapter) {
-      void router.push(chapterLink(book.nextChapter.number, book.nextChapter.title));
+    if (book.nextChapter) {
+      void router.push(chapterLink(book.nextChapter.id ?? String(book.nextChapter.number), book.nextChapter.title));
     }
     return;
   }
@@ -632,8 +652,8 @@ onMounted(async () => {
 let currentLoadRequest = 0;
 let debounceTimer: NodeJS.Timeout | null = null;
 
-// Watch both chapterNum and chapterTitle to reload when navigation happens
-watch(() => [props.chapterNum, props.chapterTitle], () => {
+// Watch both chapterId and chapterTitle to reload when navigation happens
+watch(() => [props.chapterId, props.chapterTitle], () => {
   // Clear existing debounce timer
   if (debounceTimer) {
     clearTimeout(debounceTimer);

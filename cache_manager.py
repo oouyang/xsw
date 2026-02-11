@@ -10,9 +10,16 @@ import threading
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
+import uuid
+
 import db_models
 from db_models import Book, Chapter
 from pydantic import BaseModel
+
+
+def generate_public_id() -> str:
+    """Generate a short random ID for public URLs."""
+    return uuid.uuid4().hex[:8]
 
 
 # Pydantic models for API responses
@@ -26,12 +33,14 @@ class BookInfo(BaseModel):
     last_chapter_url: str
     last_chapter_number: Optional[int] = None
     book_id: Optional[str] = None
+    public_id: Optional[str] = None
 
 
 class ChapterRef(BaseModel):
     number: int
     title: str
     url: str
+    id: Optional[str] = None  # chapter public_id
 
 
 class ChapterContent(BaseModel):
@@ -40,6 +49,7 @@ class ChapterContent(BaseModel):
     title: Optional[str] = None
     url: str
     text: str
+    chapter_id: Optional[str] = None  # chapter public_id
 
 
 # Simple TTL Cache for in-memory caching
@@ -128,6 +138,7 @@ class CacheManager:
                     last_chapter_url=book.last_chapter_url or "",
                     last_chapter_number=book.last_chapter_num,
                     book_id=book.id,
+                    public_id=book.public_id,
                 )
                 # Cache in memory
                 self.memory_cache.set(cache_key, book_info)
@@ -157,10 +168,14 @@ class CacheManager:
                 book.last_chapter_url = info.get("last_chapter_url", book.last_chapter_url)
                 book.last_chapter_num = info.get("last_chapter_number", book.last_chapter_num)
                 book.last_scraped_at = datetime.utcnow()
+                # Assign public_id if not set
+                if not book.public_id:
+                    book.public_id = generate_public_id()
             else:
                 # Create new
                 book = Book(
                     id=book_id,
+                    public_id=generate_public_id(),
                     name=info.get("name", ""),
                     author=info.get("author"),
                     type=info.get("type"),
@@ -175,8 +190,8 @@ class CacheManager:
 
             session.commit()
 
-            # Cache in memory - merge book_id into info dict to avoid duplicate argument error
-            info_with_id = {**info, "book_id": book_id}
+            # Cache in memory - merge book_id and public_id into info dict
+            info_with_id = {**info, "book_id": book_id, "public_id": book.public_id}
             book_info = BookInfo(**info_with_id)
             cache_key = f"book:{book_id}"
             self.memory_cache.set(cache_key, book_info)
@@ -218,6 +233,7 @@ class CacheManager:
                     title=chapter.title,
                     url=chapter.url,
                     text=chapter.text,
+                    chapter_id=chapter.public_id,
                 )
                 # Cache in memory
                 self.memory_cache.set(cache_key, content)
@@ -252,11 +268,15 @@ class CacheManager:
                 chapter.text = text
                 chapter.word_count = word_count
                 chapter.updated_at = datetime.utcnow()
+                # Assign public_id if not set
+                if not chapter.public_id:
+                    chapter.public_id = generate_public_id()
             else:
                 # Create new
                 chapter = Chapter(
                     book_id=book_id,
                     chapter_num=chapter_num,
+                    public_id=generate_public_id(),
                     title=content_data.get("title"),
                     url=content_data.get("url", ""),
                     text=text,
@@ -273,6 +293,7 @@ class CacheManager:
                 title=content_data.get("title"),
                 url=content_data.get("url", ""),
                 text=text,
+                chapter_id=chapter.public_id,
             )
             cache_key = f"chapter:{book_id}:{chapter_num}"
             self.memory_cache.set(cache_key, content)
@@ -299,7 +320,7 @@ class CacheManager:
             )
             if chapters:
                 return [
-                    ChapterRef(number=c.chapter_num, title=c.title or "", url=c.url)
+                    ChapterRef(number=c.chapter_num, title=c.title or "", url=c.url, id=c.public_id)
                     for c in chapters
                 ]
         except SQLAlchemyError as e:
@@ -336,6 +357,9 @@ class CacheManager:
                         # Update metadata only (don't overwrite text if it exists)
                         chapter.title = ch_data.get("title", chapter.title)
                         chapter.url = ch_data.get("url", chapter.url)
+                        # Assign public_id if not set
+                        if not chapter.public_id:
+                            chapter.public_id = generate_public_id()
                         updated_count += 1
                         pending_commit = True
                     else:
@@ -343,6 +367,7 @@ class CacheManager:
                         chapter = Chapter(
                             book_id=book_id,
                             chapter_num=chapter_num,
+                            public_id=generate_public_id(),
                             title=ch_data.get("title"),
                             url=ch_data.get("url", ""),
                             text=None,  # Will be filled when content is fetched

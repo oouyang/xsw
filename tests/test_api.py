@@ -109,9 +109,7 @@ class TestChapters:
             "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
         )
         resp = client.get(f"{BASE}/books/testbook/chapters/999")
-        # Returns 500 because the broad `except Exception` in get_chapter_content
-        # catches HTTPException(404) and re-raises as HTTPException(500)
-        assert resp.status_code == 500
+        assert resp.status_code == 404
         assert "999" in resp.json()["detail"]
 
 

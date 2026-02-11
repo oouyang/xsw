@@ -14,9 +14,9 @@
           <q-btn
             flat
             style="width: 230px"
-            :to="lastLink"
+            @click="goToLastChapter"
             size="sm"
-            :disable="!lastLink"
+            :disable="!bookId"
             class="text-wrap"
           >
             <div class="ellipsis text-right">
@@ -38,9 +38,9 @@
           ><q-btn
             flat
             style="width: 250px"
-            :to="lastLink"
+            @click="goToLastChapter"
             size="sm"
-            :disable="!lastLink"
+            :disable="!bookId"
             class="text-wrap"
           >
             <div class="ellipsis">
@@ -55,7 +55,7 @@
     </q-card-section>
     <q-separator v-if="useItem" />
     <q-card-actions align="between">
-      <q-btn flat :label="lastLabel" :to="lastLink" :disable="!lastLink" class="text-wrap" />
+      <q-btn flat :label="lastLabel" @click="goToLastChapter" :disable="!bookId" class="text-wrap" />
       <q-btn v-if="false" color="primary" :to="bookLink" label="Open" />
     </q-card-actions>
   </q-card>
@@ -63,13 +63,15 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useRouter } from 'vue-router';
 import type { BookSummary } from 'src/types/book-api';
 import { useTextConversion } from 'src/composables/useTextConversion';
 
 const { convertIfNeeded } = useTextConversion();
+const router = useRouter();
 
 const props = defineProps<{ book: BookSummary }>();
-const bookId = computed(() => props.book.book_id || extractBookIdFromUrl(props.book.bookurl));
+const bookId = computed(() => props.book.public_id || props.book.book_id || extractBookIdFromUrl(props.book.bookurl));
 const bookLink = computed(() => ({ name: 'Chapters', params: { bookId: bookId.value } }));
 const useItem = true;
 
@@ -78,16 +80,12 @@ const displayBookName = computed(() => convertIfNeeded(props.book.bookname));
 const displayAuthor = computed(() => convertIfNeeded(props.book.author));
 const displayIntro = computed(() => convertIfNeeded(props.book.intro));
 
-// Last chapter link - always go to chapters page since we use sequential indexing
-// The source website's chapter numbers may not match our sequential index
-const lastLink = computed(() => {
+// Navigate to chapters page at last page so user sees newest chapters
+function goToLastChapter() {
   const id = bookId.value;
-  if (!id) return null;
-
-  // Link to chapters page instead of specific chapter to avoid mismatches
-  // between source website chapter numbers and our sequential indexing
-  return { name: 'Chapters', params: { bookId: id } };
-});
+  if (!id) return;
+  void router.push({ name: 'Chapters', params: { bookId: id }, query: { page: 'last' } });
+}
 
 const lastLabel = computed(() => {
   const lc = props.book.lastchapter?.trim();

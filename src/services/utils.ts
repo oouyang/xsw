@@ -66,11 +66,11 @@ export function isDarkActive() {
   return Dark.isActive;
 }
 
-export function chapterLink(num: number, title: string) {
+export function chapterLink(chapterId: string, title: string) {
   const { config } = getAppConfig();
   return {
     name: 'Chapter',
-    params: { bookId: config.value.bookId, chapterNum: Number(num), chapterTitle: title },
+    params: { bookId: config.value.bookId, chapterId, chapterTitle: title },
   };
 }
 

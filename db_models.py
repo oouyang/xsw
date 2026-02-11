@@ -29,7 +29,8 @@ class Book(Base):
 
     __tablename__ = "books"
 
-    id = Column(String, primary_key=True)  # book_id
+    id = Column(String, primary_key=True)  # book_id (czbooks ID)
+    public_id = Column(String, unique=True, index=True)  # our random ID for URLs
     name = Column(String, nullable=False)
     author = Column(String)
     type = Column(String)  # category
@@ -59,6 +60,7 @@ class Chapter(Base):
     __tablename__ = "chapters"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String, unique=True, index=True)  # our random ID for URLs
     book_id = Column(String, ForeignKey("books.id"), nullable=False)
     chapter_num = Column(Integer, nullable=False)
     title = Column(String)

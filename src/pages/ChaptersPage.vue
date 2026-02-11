@@ -159,16 +159,11 @@
       >
         <q-item
           v-for="c in displayChapters"
-          :key="c.number"
+          :key="c.id || c.number"
           clickable
-          :to="chapterLink(c.number, c.title)"
+          :to="chapterLink(c.id ?? String(c.number), c.title)"
           class="chapter-item"
         >
-          <q-item-section avatar style="min-width: 50px">
-            <div class="text-caption text-grey-7 text-weight-medium">
-              {{ c.number }}
-            </div>
-          </q-item-section>
           <q-item-section>
             <q-item-label class="text-body2">{{ c.title }}</q-item-label>
           </q-item-section>
@@ -362,7 +357,7 @@ function jumpToChapter() {
   const targetChapter = book.allChapters.find(c => c.number === chapterNum);
   if (targetChapter) {
     // Navigate to chapter content directly
-    void router.push(chapterLink(targetChapter.number, targetChapter.title));
+    void router.push(chapterLink(targetChapter.id ?? String(targetChapter.number), targetChapter.title));
   } else {
     // Switch to the page containing the chapter
     void switchPage(targetPage);
@@ -744,11 +739,12 @@ onMounted(async () => {
   // IMPORTANT: Always set bookId FIRST to clear old book's data if switching books
   book.setBookId(props.bookId);
 
-  if (route.query.page) {
+  const wantsLastPage = route.query.page === 'last';
+  if (route.query.page && !wantsLastPage) {
     const queryPage = Number(route.query.page);
     const currentPage = Number.isFinite(queryPage) && queryPage > 0 ? queryPage : 1;
     book.setPage(currentPage);
-  } else if (storedBookId === props.bookId && Number.isFinite(storedPage) && storedPage > 0) {
+  } else if (!wantsLastPage && storedBookId === props.bookId && Number.isFinite(storedPage) && storedPage > 0) {
     book.setPage(storedPage);
   } else {
     book.setPage(1);
@@ -777,6 +773,11 @@ onMounted(async () => {
           loadingPhase.value = 'complete';
           isPhase2Loading.value = false;
           phase2Message.value = '';
+
+          // Jump to last page after all chapters are loaded
+          if (wantsLastPage && book.maxPages > 0) {
+            book.setPage(book.maxPages);
+          }
         }
       }
     });

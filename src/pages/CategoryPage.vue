@@ -53,7 +53,7 @@ const displayBooks = computed(() => books.value.slice(0, BOOKS_PER_PAGE));
 async function load() {
   try {
     error.value = '';
-    books.value = await listBooksInCategory(Number(props.catId), page.value);
+    books.value = await listBooksInCategory(props.catId, page.value);
     // Scroll to top when page changes
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) {
