@@ -2,7 +2,6 @@
 import pytest
 import jwt
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
 
 import os
 
@@ -18,9 +17,8 @@ from user_auth import (
     build_auth_response,
     JWT_SECRET,
     JWT_ALGORITHM,
-    UserTokenPayload,
 )
-from db_models import User, UserOAuth, init_database
+from db_models import UserOAuth, init_database
 
 
 @pytest.fixture

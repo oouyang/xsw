@@ -70,7 +70,6 @@ from user_auth import (
     find_or_create_user,
     build_auth_response,
     require_user_auth,
-    optional_user_auth,
     UserAuthResponse,
     UserProfile,
     UserTokenPayload,

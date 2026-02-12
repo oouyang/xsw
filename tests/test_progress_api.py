@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from user_auth import create_user_jwt
-from db_models import User, ReadingProgress, init_database
+from db_models import User
 
 import main_optimized
 from main_optimized import app
