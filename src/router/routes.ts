@@ -28,6 +28,11 @@ const routes: RouteRecordRaw[] = [
             chapterTitle: route.params.chapterTitle
           }),
       },
+      {
+        path: 'auth/wechat/callback',
+        name: 'WeChatCallback',
+        component: () => import('pages/WeChatCallbackPage.vue'),
+      },
     ],
   },
   { path: '/:catchAll(.*)*', component: () => import('pages/ErrorNotFound.vue') },

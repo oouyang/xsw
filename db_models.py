@@ -172,6 +172,85 @@ class SmtpSettings(Base):
         return f"<SmtpSettings(host='{self.smtp_host}', port={self.smtp_port}, user='{self.smtp_user}')>"
 
 
+class User(Base):
+    """Regular reader accounts (separate from AdminUser)."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    display_name = Column(String, nullable=False)
+    email = Column(String, nullable=True)  # WeChat may not provide email
+    avatar_url = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    oauth_accounts = relationship("UserOAuth", back_populates="user", cascade="all, delete-orphan")
+    reading_progress = relationship("ReadingProgress", back_populates="user", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<User(id={self.id}, display_name='{self.display_name}', email='{self.email}')>"
+
+
+class UserOAuth(Base):
+    """Links multiple OAuth providers to one user."""
+
+    __tablename__ = "user_oauth"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    provider = Column(String, nullable=False)  # google/facebook/apple/wechat
+    provider_user_id = Column(String, nullable=False)
+    provider_email = Column(String, nullable=True)
+    provider_name = Column(String, nullable=True)
+    provider_avatar = Column(String, nullable=True)
+    access_token = Column(Text, nullable=True)
+    refresh_token = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="oauth_accounts")
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_oauth_provider_user", "provider", "provider_user_id", unique=True),
+        Index("idx_oauth_user_id", "user_id"),
+    )
+
+    def __repr__(self):
+        return f"<UserOAuth(provider='{self.provider}', provider_user_id='{self.provider_user_id}')>"
+
+
+class ReadingProgress(Base):
+    """Per-user per-book reading position."""
+
+    __tablename__ = "reading_progress"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    book_id = Column(String, nullable=False)  # public_id
+    book_name = Column(String, nullable=True)
+    chapter_number = Column(Integer, nullable=False)
+    chapter_title = Column(String, nullable=True)
+    chapter_id = Column(String, nullable=True)
+    scroll_position = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="reading_progress")
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_progress_user_book", "user_id", "book_id", unique=True),
+        Index("idx_progress_updated", "updated_at"),
+    )
+
+    def __repr__(self):
+        return f"<ReadingProgress(user_id={self.user_id}, book_id='{self.book_id}', chapter={self.chapter_number})>"
+
+
 class AdminUser(Base):
     """Admin user authentication records for Google OAuth and password authentication."""
 

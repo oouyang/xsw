@@ -12,6 +12,8 @@ export default {
     loading: 'Loading...',
     error: 'Error',
     success: 'Success',
+    remove: 'Remove',
+    clear: 'Clear',
   },
 
   // Navigation
@@ -107,6 +109,28 @@ export default {
     scrollBottom: 'Scroll to bottom',
     goBack: 'Go back',
     showHeader: 'Show Header',
+    share: 'Share',
+    copyLink: 'Copy Link',
+    continueReading: 'Continue',
+  },
+
+  // Dashboard
+  dashboard: {
+    continueReading: 'Continue Reading',
+  },
+
+  // User Auth
+  userAuth: {
+    login: 'Login',
+    logout: 'Logout',
+    loginTitle: 'Login to Save Progress',
+    loginSubtitle: 'Reading progress syncs across all your devices.',
+    signInGoogle: 'Sign in with Google',
+    signInFacebook: 'Sign in with Facebook',
+    signInApple: 'Sign in with Apple',
+    signInWeChat: 'Sign in with WeChat',
+    syncMessage: 'Reading progress syncs across all your devices.',
+    loggingIn: 'Logging in...',
   },
 
   // Search

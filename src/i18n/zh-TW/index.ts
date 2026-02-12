@@ -12,6 +12,8 @@ export default {
     loading: '載入中...',
     error: '錯誤',
     success: '成功',
+    remove: '移除',
+    clear: '清除',
   },
 
   // 導航
@@ -107,6 +109,28 @@ export default {
     scrollBottom: '到達底部',
     goBack: '返回',
     showHeader: '顯示標題列',
+    share: '分享',
+    copyLink: '複製連結',
+    continueReading: '繼續閱讀',
+  },
+
+  // 首頁
+  dashboard: {
+    continueReading: '繼續閱讀',
+  },
+
+  // 使用者認證
+  userAuth: {
+    login: '登入',
+    logout: '登出',
+    loginTitle: '登入以儲存進度',
+    loginSubtitle: '閱讀進度將在所有裝置間同步。',
+    signInGoogle: '使用 Google 登入',
+    signInFacebook: '使用 Facebook 登入',
+    signInApple: '使用 Apple 登入',
+    signInWeChat: '使用微信登入',
+    syncMessage: '閱讀進度將在所有裝置間同步。',
+    loggingIn: '登入中...',
   },
 
   // 搜尋

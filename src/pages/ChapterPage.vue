@@ -22,6 +22,11 @@
               <q-chip v-if="!loading && estimatedReadingTimeText" dense size="sm" color="white" text-color="primary" icon="schedule">
                 {{ estimatedReadingTimeText }}
               </q-chip>
+              <ShareMenu
+                :title="displayChapterTitle || displayTitle"
+                :text="`${book.info?.name || ''} - ${displayChapterTitle || displayTitle}`"
+                size="xs"
+              />
             </div>
           </div>
         </div>
@@ -146,13 +151,16 @@ import { getChapterContent } from 'src/services/bookApi';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { nextTick } from 'process';
 import { chapterLink } from 'src/services/utils';
+import ShareMenu from 'src/components/ShareMenu.vue';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { useReadingHistory } from 'src/composables/useReadingHistory';
 import { useBookStore } from 'src/stores/books';
 
 const { t } = useI18n();
 const { config, update } = useAppConfig();
 const fontsize = computed(() => Number(config.value.fontsize) || 7)
 const { convertIfNeeded } = useTextConversion();
+const { updateProgress: saveReadingProgress } = useReadingHistory();
 const router = useRouter();
 
 const props = defineProps<{ bookId: string; chapterId: string; chapterTitle?: string }>();
@@ -464,12 +472,34 @@ async function load() {
     const matchedChapter = book.findChapterById(props.chapterId);
     if (matchedChapter) {
       book.setChapter(matchedChapter);
+
+      // Save reading progress
+      saveReadingProgress({
+        bookId: props.bookId,
+        bookName: book.info?.name || '',
+        chapterNumber: matchedChapter.number,
+        chapterTitle: matchedChapter.title,
+        chapterId: matchedChapter.id || String(matchedChapter.number),
+        totalChapters: book.info?.last_chapter_number || book.allChapters.length,
+        updatedAt: Date.now(),
+      });
     } else if (data.chapter_num) {
       book.setChapter({
         number: data.chapter_num,
         title: title.value,
         url: data.url || '',
         id: data.chapter_id ?? null,
+      });
+
+      // Save reading progress
+      saveReadingProgress({
+        bookId: props.bookId,
+        bookName: book.info?.name || '',
+        chapterNumber: data.chapter_num,
+        chapterTitle: title.value,
+        chapterId: data.chapter_id || String(data.chapter_num),
+        totalChapters: book.info?.last_chapter_number || book.allChapters.length,
+        updatedAt: Date.now(),
       });
     }
 

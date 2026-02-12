@@ -34,6 +34,32 @@
 
         <q-space />
 
+        <!-- User login/avatar -->
+        <q-btn v-if="!userAuth.isLoggedIn" flat round dense icon="person_outline" @click="showLoginDialog">
+          <q-tooltip>{{ $t('userAuth.login') }}</q-tooltip>
+        </q-btn>
+        <q-btn v-else flat round dense>
+          <q-avatar size="28px" v-if="userAuth.avatarUrl">
+            <img :src="userAuth.avatarUrl" />
+          </q-avatar>
+          <q-icon v-else name="account_circle" />
+          <q-menu>
+            <q-list style="min-width: 180px">
+              <q-item>
+                <q-item-section>
+                  <q-item-label>{{ userAuth.displayName }}</q-item-label>
+                  <q-item-label caption>{{ userAuth.user?.email }}</q-item-label>
+                </q-item-section>
+              </q-item>
+              <q-separator />
+              <q-item clickable v-close-popup @click="userAuth.logout()">
+                <q-item-section avatar><q-icon name="logout" /></q-item-section>
+                <q-item-section>{{ $t('userAuth.logout') }}</q-item-section>
+              </q-item>
+            </q-list>
+          </q-menu>
+        </q-btn>
+
         <q-btn flat @click="showDialog({ component: ConfigCard, position: 'bottom' })" icon="settings" :label="$q.screen.gt.xs ? $t('common.settings') : undefined">
           <q-tooltip>{{ $t('settings.title') }}</q-tooltip>
         </q-btn>
@@ -119,8 +145,10 @@ import { chapterLink, isDarkActive, scrollToWindow } from 'src/services/utils';
 import { showDialog } from 'src/services/utils';
 import ConfigCard from 'src/components/ConfigCard.vue';
 import SearchDialog from 'src/components/SearchDialog.vue';
+import UserLoginDialog from 'src/components/UserLoginDialog.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useBookStore } from 'src/stores/books';
+import { useUserAuthStore } from 'src/stores/userAuth';
 import { useQuasar } from 'quasar';
 
 const $q = useQuasar();
@@ -128,6 +156,11 @@ const { update } = useAppConfig();
 const route = useRoute()
 const router = useRouter()
 const book = useBookStore()
+const userAuth = useUserAuthStore()
+
+function showLoginDialog() {
+  showDialog({ component: UserLoginDialog })
+}
 
 const showScrollTo = ref({top: false, bottom: false, right: false, left: false,
   topleft: false, topright: false, bottomleft: false, bottomright: false

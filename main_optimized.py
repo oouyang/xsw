@@ -62,6 +62,20 @@ from auth import (
     TokenPayload,
     JWT_EXPIRATION_HOURS
 )
+from user_auth import (
+    verify_google_user,
+    verify_facebook_user,
+    verify_apple_user,
+    verify_wechat_user,
+    find_or_create_user,
+    build_auth_response,
+    require_user_auth,
+    optional_user_auth,
+    UserAuthResponse,
+    UserProfile,
+    UserTokenPayload,
+)
+from db_models import User, ReadingProgress
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -478,17 +492,68 @@ if os.path.exists(spa_dir):
             return FileResponse(filepath)
         raise HTTPException(status_code=404, detail="File not found")
 
-    # 5) SPA history-mode fallback:
+    # 5) Social crawler OG meta tags
+    SOCIAL_CRAWLERS = ("facebookexternalhit", "Twitterbot", "LinkedInBot", "Line", "Slackbot")
+
+    def _is_social_crawler(user_agent: str) -> bool:
+        ua_lower = user_agent.lower()
+        return any(c.lower() in ua_lower for c in SOCIAL_CRAWLERS)
+
+    def _build_og_html(title: str, description: str, url: str) -> str:
+        import html as html_mod
+        t = html_mod.escape(title)
+        d = html_mod.escape(description[:200] if description else "")
+        u = html_mod.escape(url)
+        return f"""<!DOCTYPE html>
+<html><head>
+<meta property="og:title" content="{t}" />
+<meta property="og:description" content="{d}" />
+<meta property="og:url" content="{u}" />
+<meta property="og:type" content="article" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="{t}" />
+<meta name="twitter:description" content="{d}" />
+<title>{t}</title>
+</head><body></body></html>"""
+
+    # 6) SPA history-mode fallback:
     #    - Only for paths under "/" that are NOT API calls and NOT obvious assets
     @app.middleware("http")
     async def spa_history_mode_fallback(request: Request, call_next):
+        # Check for social crawlers and serve OG meta tags
+        ua = request.headers.get("user-agent", "")
+        path = request.url.path or ""
+
+        if _is_social_crawler(ua) and not path.startswith("/xsw/api"):
+            import re
+            # Match /book/{bookId}/chapters or /book/{bookId}/chapter/{chapterId}/{title}
+            book_match = re.match(r"^/book/([^/]+)/(chapters|chapter/([^/]+)/?(.*))$", path)
+            if book_match:
+                book_id = book_match.group(1)
+                chapter_title = book_match.group(4) or ""
+                try:
+                    resolved = resolve_book_id(book_id)
+                    book_home_url = resolve_book_home(resolved)
+                    html = fetch_html(book_home_url)
+                    info = parse_book_info(html, book_home_url)
+                    title = info.get("name", "")
+                    desc = info.get("description", "") or f"by {info.get('author', '')}"
+                    if chapter_title:
+                        from urllib.parse import unquote
+                        title = f"{title} - {unquote(chapter_title)}"
+                    full_url = str(request.url)
+                    return Response(
+                        content=_build_og_html(title, desc, full_url),
+                        media_type="text/html",
+                    )
+                except Exception:
+                    pass  # Fall through to normal SPA serving
+
         # Let normal routing/StaticFiles try first (APIs, real files, etc.)
         response: Response = await call_next(request)
 
         if response.status_code != 404:
             return response
-
-        path = request.url.path or ""
 
         # DO NOT touch API paths (these are handled by routers behind root_path)
         # Externally, APIs are /xsw/api/**, but internally Starlette still sees paths
@@ -1900,6 +1965,306 @@ def content_by_url(chapter_url: str = Query(...)):
 #         return FileResponse(spa_index_html)
 
 #     raise HTTPException(status_code=404, detail="Vue SPA not built. Run 'npm run build' first.")
+
+# -----------------------
+# User Authentication Endpoints
+# -----------------------
+class GoogleUserLoginRequest(BaseModel):
+    id_token: str
+
+class FacebookUserLoginRequest(BaseModel):
+    access_token: str
+
+class AppleUserLoginRequest(BaseModel):
+    id_token: str
+    authorization_code: Optional[str] = None
+
+class WeChatUserLoginRequest(BaseModel):
+    code: str
+
+
+@api_router.post("/user/auth/google", response_model=UserAuthResponse)
+def user_login_google(req: GoogleUserLoginRequest):
+    """Login/register with Google for regular users."""
+    try:
+        info = verify_google_user(req.id_token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        user = find_or_create_user(
+            db,
+            provider="google",
+            provider_user_id=info["provider_user_id"],
+            email=info["email"],
+            name=info["name"],
+            avatar=info["avatar"],
+        )
+        return build_auth_response(user)
+    finally:
+        db.close()
+
+
+@api_router.post("/user/auth/facebook", response_model=UserAuthResponse)
+def user_login_facebook(req: FacebookUserLoginRequest):
+    """Login/register with Facebook for regular users."""
+    try:
+        info = verify_facebook_user(req.access_token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        user = find_or_create_user(
+            db,
+            provider="facebook",
+            provider_user_id=info["provider_user_id"],
+            email=info["email"],
+            name=info["name"],
+            avatar=info["avatar"],
+        )
+        return build_auth_response(user)
+    finally:
+        db.close()
+
+
+@api_router.post("/user/auth/apple", response_model=UserAuthResponse)
+def user_login_apple(req: AppleUserLoginRequest):
+    """Login/register with Apple for regular users."""
+    try:
+        info = verify_apple_user(req.id_token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        user = find_or_create_user(
+            db,
+            provider="apple",
+            provider_user_id=info["provider_user_id"],
+            email=info["email"],
+            name=info["name"],
+            avatar=info["avatar"],
+        )
+        return build_auth_response(user)
+    finally:
+        db.close()
+
+
+@api_router.post("/user/auth/wechat", response_model=UserAuthResponse)
+def user_login_wechat(req: WeChatUserLoginRequest):
+    """Login/register with WeChat for regular users."""
+    try:
+        info = verify_wechat_user(req.code)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        user = find_or_create_user(
+            db,
+            provider="wechat",
+            provider_user_id=info["provider_user_id"],
+            email=info["email"],
+            name=info["name"],
+            avatar=info["avatar"],
+            access_token=info.get("access_token"),
+            refresh_token=info.get("refresh_token"),
+        )
+        return build_auth_response(user)
+    finally:
+        db.close()
+
+
+@api_router.get("/user/auth/verify")
+def user_verify_token(auth: UserTokenPayload = Depends(require_user_auth)):
+    """Verify user JWT token."""
+    return {"valid": True, "user_id": auth.sub, "display_name": auth.display_name}
+
+
+@api_router.get("/user/auth/me", response_model=UserProfile)
+def user_get_profile(auth: UserTokenPayload = Depends(require_user_auth)):
+    """Get current user profile."""
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        user = db.query(User).filter(User.id == auth.sub).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return UserProfile(
+            id=user.id,
+            display_name=user.display_name,
+            email=user.email,
+            avatar_url=user.avatar_url,
+        )
+    finally:
+        db.close()
+
+
+# -----------------------
+# Reading Progress Endpoints
+# -----------------------
+class ProgressUpdateRequest(BaseModel):
+    chapter_number: int
+    chapter_title: Optional[str] = None
+    chapter_id: Optional[str] = None
+    book_name: Optional[str] = None
+    scroll_position: Optional[int] = 0
+
+
+class ProgressResponse(BaseModel):
+    book_id: str
+    book_name: Optional[str] = None
+    chapter_number: int
+    chapter_title: Optional[str] = None
+    chapter_id: Optional[str] = None
+    scroll_position: int = 0
+    updated_at: str
+
+
+@api_router.get("/user/progress")
+def user_list_progress(auth: UserTokenPayload = Depends(require_user_auth)):
+    """List all reading progress for the current user, sorted by most recent."""
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        progress_list = (
+            db.query(ReadingProgress)
+            .filter(ReadingProgress.user_id == auth.sub)
+            .order_by(ReadingProgress.updated_at.desc())
+            .all()
+        )
+        return [
+            ProgressResponse(
+                book_id=p.book_id,
+                book_name=p.book_name,
+                chapter_number=p.chapter_number,
+                chapter_title=p.chapter_title,
+                chapter_id=p.chapter_id,
+                scroll_position=p.scroll_position or 0,
+                updated_at=p.updated_at.isoformat() if p.updated_at else "",
+            )
+            for p in progress_list
+        ]
+    finally:
+        db.close()
+
+
+@api_router.get("/user/progress/{book_id}")
+def user_get_progress(
+    book_id: str,
+    auth: UserTokenPayload = Depends(require_user_auth),
+):
+    """Get reading progress for a specific book."""
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        progress = (
+            db.query(ReadingProgress)
+            .filter(
+                ReadingProgress.user_id == auth.sub,
+                ReadingProgress.book_id == book_id,
+            )
+            .first()
+        )
+        if not progress:
+            raise HTTPException(status_code=404, detail="No progress found for this book")
+        return ProgressResponse(
+            book_id=progress.book_id,
+            book_name=progress.book_name,
+            chapter_number=progress.chapter_number,
+            chapter_title=progress.chapter_title,
+            chapter_id=progress.chapter_id,
+            scroll_position=progress.scroll_position or 0,
+            updated_at=progress.updated_at.isoformat() if progress.updated_at else "",
+        )
+    finally:
+        db.close()
+
+
+@api_router.put("/user/progress/{book_id}")
+def user_upsert_progress(
+    book_id: str,
+    req: ProgressUpdateRequest,
+    auth: UserTokenPayload = Depends(require_user_auth),
+):
+    """Upsert reading progress for a specific book."""
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        progress = (
+            db.query(ReadingProgress)
+            .filter(
+                ReadingProgress.user_id == auth.sub,
+                ReadingProgress.book_id == book_id,
+            )
+            .first()
+        )
+        now = datetime.utcnow()
+
+        if progress:
+            progress.chapter_number = req.chapter_number
+            progress.chapter_title = req.chapter_title
+            progress.chapter_id = req.chapter_id
+            progress.book_name = req.book_name or progress.book_name
+            progress.scroll_position = req.scroll_position or 0
+            progress.updated_at = now
+        else:
+            progress = ReadingProgress(
+                user_id=auth.sub,
+                book_id=book_id,
+                book_name=req.book_name,
+                chapter_number=req.chapter_number,
+                chapter_title=req.chapter_title,
+                chapter_id=req.chapter_id,
+                scroll_position=req.scroll_position or 0,
+                updated_at=now,
+            )
+            db.add(progress)
+
+        db.commit()
+        return ProgressResponse(
+            book_id=progress.book_id,
+            book_name=progress.book_name,
+            chapter_number=progress.chapter_number,
+            chapter_title=progress.chapter_title,
+            chapter_id=progress.chapter_id,
+            scroll_position=progress.scroll_position or 0,
+            updated_at=progress.updated_at.isoformat() if progress.updated_at else "",
+        )
+    finally:
+        db.close()
+
+
+@api_router.delete("/user/progress/{book_id}")
+def user_delete_progress(
+    book_id: str,
+    auth: UserTokenPayload = Depends(require_user_auth),
+):
+    """Delete reading progress for a specific book."""
+    import db_models as _db
+    db = _db.db_manager.get_session()
+    try:
+        deleted = (
+            db.query(ReadingProgress)
+            .filter(
+                ReadingProgress.user_id == auth.sub,
+                ReadingProgress.book_id == book_id,
+            )
+            .delete()
+        )
+        db.commit()
+        if deleted == 0:
+            raise HTTPException(status_code=404, detail="No progress found for this book")
+        return {"deleted": True}
+    finally:
+        db.close()
+
 
 # -----------------------
 # Include API Router

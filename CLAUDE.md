@@ -99,10 +99,11 @@ This makes the system much simpler to understand and maintain.
 ## File Architecture
 
 ### Backend Core Files
-- **`main_optimized.py`** - Main FastAPI application (1540 lines)
-  - All REST endpoints
+- **`main_optimized.py`** - Main FastAPI application (~2280 lines)
+  - All REST endpoints (books, chapters, search, admin, email)
+  - User auth + reading progress endpoints
+  - OG meta tag injection for social crawlers
   - On-demand chapter/book fetching
-  - Search, admin, email endpoints
 
 - **`cache_manager.py`** - Hybrid caching system
   - `CacheManager` class with get/store methods
@@ -119,6 +120,13 @@ This makes the system much simpler to understand and maintain.
 
 - **`db_models.py`** - SQLAlchemy ORM models
   - `Book`, `Chapter`, `SmtpSettings` tables
+  - `User`, `UserOAuth`, `ReadingProgress` tables (reader accounts)
+
+- **`user_auth.py`** - Reader OAuth authentication (separate from admin `auth.py`)
+  - Google, Facebook, Apple, WeChat OAuth verification
+  - User JWT (30-day expiration, `role: "user"`)
+  - `find_or_create_user()` with email-based account merging
+  - `require_user_auth` / `optional_user_auth` FastAPI dependencies
 
 ### Frontend Core Files
 - **`src/stores/books.ts`** - Pinia store for book state (676 lines)
@@ -126,12 +134,34 @@ This makes the system much simpler to understand and maintain.
   - Two-phase loading: nearby pages first, then background load all
   - Chapter validation with retry logic
 
+- **`src/stores/userAuth.ts`** - Pinia store for reader auth state
+  - Login/logout actions for all 4 OAuth providers
+  - Reactive `isLoggedIn`, `displayName`, `avatarUrl`
+
 - **`src/pages/ChapterPage.vue`** - Chapter reading view
   - Keyboard navigation (arrow keys)
   - Adaptive loading with progress feedback
+  - Saves reading progress on chapter load
+  - Share button in header card
 
 - **`src/services/bookApi.ts`** - Axios API client
   - Type-safe wrappers for backend endpoints
+
+- **`src/services/userAuthService.ts`** - User auth + progress API client
+  - OAuth login, token management, progress CRUD
+  - Separate localStorage key (`xsw_user_token`)
+
+- **`src/composables/useReadingHistory.ts`** - Reading history (local-first)
+  - localStorage `xsw_reading_history` (max 20 entries)
+  - Server sync when logged in (fire-and-forget PUT)
+  - `syncOnLogin()` merges local+server by timestamp
+
+- **`src/composables/useShare.ts`** - Share functionality
+  - Web Share API (native mobile), platform fallbacks (FB, LINE, Twitter, WeChat QR)
+
+- **`src/components/UserLoginDialog.vue`** - 4-provider login dialog
+- **`src/components/ShareMenu.vue`** - Share button with platform menu
+- **`src/components/ContinueReadingCard.vue`** - Reading progress card
 
 ## State Management Patterns
 
@@ -215,6 +245,25 @@ With sequential indexing, validation is strict:
 3. **First chapter must be exactly 1**
 4. Total count should match book info (±5% tolerance)
 
+### User Auth & Progress API
+
+| Endpoint | Method | Auth | Purpose |
+|---|---|---|---|
+| `/user/auth/google` | POST | — | Google login `{id_token}` |
+| `/user/auth/facebook` | POST | — | Facebook login `{access_token}` |
+| `/user/auth/apple` | POST | — | Apple login `{id_token}` |
+| `/user/auth/wechat` | POST | — | WeChat login `{code}` |
+| `/user/auth/verify` | GET | User JWT | Verify token |
+| `/user/auth/me` | GET | User JWT | Get profile |
+| `/user/progress` | GET | User JWT | List all progress |
+| `/user/progress/{book_id}` | GET | User JWT | Get progress for one book |
+| `/user/progress/{book_id}` | PUT | User JWT | Upsert progress |
+| `/user/progress/{book_id}` | DELETE | User JWT | Delete progress |
+
+**JWT differentiation**: Admin tokens have `role: "admin"`, user tokens have `role: "user"`. Different expiration (24h vs 30 days). Separate localStorage keys (`xsw_admin_token` vs `xsw_user_token`).
+
+**Account merging**: When a new OAuth login occurs, `find_or_create_user()` checks: (1) exact `(provider, provider_user_id)` match, (2) email match across providers, (3) create new user. This allows a reader to link Google + Facebook to one account if they share an email.
+
 ### Data Consistency
 - Backend sorts chapters after fetching: `all_chapters.sort(key=lambda c: c.number)`
 - Frontend **always** searches by number, never by index
@@ -296,12 +345,14 @@ curl -X DELETE http://localhost:8000/xsw/api/admin/cache/chapters/{book_id}
 - SQLAlchemy for ORM
 - BeautifulSoup4 for HTML parsing
 - Requests for HTTP (with SSL verification disabled for corporate proxy)
+- PyJWT for user + admin JWT tokens (RS256 for Apple, HS256 for others)
 
 ### Frontend
 - Vue 3.5+ with Composition API
 - Quasar 2.16+ for UI components
 - Pinia 3.0+ for state management
 - OpenCC-JS for Traditional/Simplified Chinese conversion
+- qrcode for WeChat QR share
 
 ## Environment Configuration
 
@@ -312,6 +363,32 @@ DB_PATH=xsw_cache.db           # SQLite database
 CACHE_TTL_SECONDS=900          # Memory cache TTL
 HTTP_TIMEOUT=10                # Request timeout
 AUTH_ENABLED=true              # Enable/disable authentication (default: true)
+```
+
+### Social Login Environment Variables (Optional)
+
+All are optional — providers without credentials are simply unavailable:
+
+```bash
+# Google (shared with admin OAuth)
+GOOGLE_CLIENT_ID=...
+
+# Facebook
+FACEBOOK_APP_ID=...
+FACEBOOK_APP_SECRET=...
+
+# Apple Sign-In
+APPLE_CLIENT_ID=...
+APPLE_TEAM_ID=...
+APPLE_KEY_ID=...
+APPLE_PRIVATE_KEY=...          # PEM-encoded private key
+
+# WeChat
+WECHAT_APP_ID=...
+WECHAT_APP_SECRET=...
+
+# User JWT
+USER_JWT_EXPIRATION_DAYS=30    # Default 30 days (vs admin's 24h)
 ```
 
 ### Authentication Control
@@ -345,10 +422,12 @@ pytest tests/test_cache.py -v
 pytest tests/test_api.py -v
 ```
 
-Test suite (73 tests, all offline with mocked HTML):
+Test suite (122 tests, all offline with mocked HTML):
 - **`tests/test_parser.py`** (~45 tests) — Pure parser function unit tests: `extract_text_by_id`, `extract_text_by_selector`, `extract_chapter_title`, `chinese_to_arabic`, `chapter_title_to_number`, `extract_book_id_from_url`, `find_categories_from_nav`, `parse_books`, `parse_book_info`, `fetch_chapters_from_liebiao`, `_normalize_czbooks_url`
 - **`tests/test_cache.py`** (16 tests) — TTLCache and CacheManager tests with in-memory SQLite
 - **`tests/test_api.py`** (12 tests) — API endpoint integration tests via FastAPI TestClient with mocked `fetch_html`
+- **`tests/test_user_auth.py`** (13 tests) — User JWT create/decode, account merging (same provider, email merge, no-email isolation), token rejection
+- **`tests/test_progress_api.py`** (10 tests) — Reading progress CRUD, auth enforcement, user data isolation
 
 Key test design:
 - `tests/html_fixtures.py` — Inline HTML snippets matching czbooks.net structure
@@ -374,10 +453,10 @@ npx vitest run src/__tests__/bookStore.test.ts
 npx vitest
 ```
 
-Test suite (54 tests, all offline with mocked imports):
+Test suite (59 tests, all offline with mocked imports):
 - **`src/__tests__/utils.test.ts`** (14 tests) — Pure utility functions: `toArr`, `dedupeBy`, `normalizeNum`, `syncLastChapter`
 - **`src/__tests__/basePath.test.ts`** (15 tests) — Base path detection: `detectBasePath`, `getFullPath`, `getAssetPath`
-- **`src/__tests__/bookStore.test.ts`** (25 tests) — Pinia book store: `setBookId`, `setPage`, `setChapter`, `maxPages`, `pageSlice`, `nextChapter`/`prevChapter`, `validateChapters`
+- **`src/__tests__/bookStore.test.ts`** (30 tests) — Pinia book store: `setBookId`, `setPage`, `setChapter`, `maxPages`, `pageSlice`, `nextChapter`/`prevChapter`, `validateChapters`
 
 Key test design:
 - `vi.mock('quasar')` — Stubs `LocalStorage`, `Dialog`, `Dark` to break Quasar runtime dependency
@@ -406,7 +485,19 @@ Key test design:
 
 ### February 2026
 
-1. **czbooks.net Migration** (Feb 11, 2026) - Switched scraping source from m.xsw.tw to czbooks.net
+1. **Social Login, Share & Continue Reading** (Feb 12, 2026) - Major user-facing feature set
+   - **Social login** for readers via Google, Facebook, Apple, WeChat OAuth
+   - New DB tables: `User`, `UserOAuth`, `ReadingProgress`
+   - **Reading progress**: local-first (`localStorage`), server-synced when logged in
+   - **Continue Reading** section on dashboard with progress cards
+   - **Share** book/chapter links via Web Share API, Facebook, LINE, Twitter, WeChat QR
+   - **OG meta tags** for social crawler previews (Facebook, Twitter, LINE)
+   - User avatar/login button in toolbar
+   - WeChat redirect callback route
+   - 23 new backend tests (user auth + progress API)
+   - i18n translations for en-US, zh-TW, zh-CN
+
+2. **czbooks.net Migration** (Feb 11, 2026) - Switched scraping source from m.xsw.tw to czbooks.net
    - m.xsw.tw returned 404 for all pages; czbooks.net is a working alternative
    - Completely different HTML structure and URL scheme:
      - Book URLs: `/n/{book_id}` (alphanumeric IDs like `cr382b`)
@@ -448,3 +539,5 @@ When making changes, always verify:
 2. **Number-based filtering** - Never use index slicing, always filter by chapter.number
 3. **Router pattern** - All API routes use `@api_router`, included at end of file
 4. **No root mounts** - Never mount StaticFiles at `/`, use selective paths only
+5. **Dual auth systems** - Admin auth (`auth.py`, `role: "admin"`) and user auth (`user_auth.py`, `role: "user"`) are separate. Don't mix JWT tokens.
+6. **Local-first reading history** - Always write to localStorage first, server sync is fire-and-forget. Never block UI on server calls.

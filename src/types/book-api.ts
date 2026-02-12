@@ -49,3 +49,39 @@ export interface ChapterContent {
   text: string;
   chapter_id?: string | null;
 }
+
+// User auth types
+export interface UserProfile {
+  id: number;
+  display_name: string;
+  email?: string | null;
+  avatar_url?: string | null;
+}
+
+export interface UserAuthResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: UserProfile;
+}
+
+// Reading progress types
+export interface ReadingProgressEntry {
+  book_id: string;
+  book_name?: string | null;
+  chapter_number: number;
+  chapter_title?: string | null;
+  chapter_id?: string | null;
+  scroll_position: number;
+  updated_at: string;
+}
+
+export interface ReadingHistoryEntry {
+  bookId: string;
+  bookName: string;
+  chapterNumber: number;
+  chapterTitle: string;
+  chapterId: string;
+  totalChapters: number;
+  updatedAt: number; // Date.now()
+}

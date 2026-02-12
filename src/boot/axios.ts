@@ -2,6 +2,7 @@ import { defineBoot } from '#q-app/wrappers';
 import axios, { type AxiosInstance } from 'axios';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { authService } from 'src/services/authService';
+import { userAuthService } from 'src/services/userAuthService';
 
 declare module 'vue' {
   interface ComponentCustomProperties {
@@ -36,6 +37,13 @@ export default defineBoot(({ app }) => {
         const authHeaders = authService.getAuthHeaders();
         if (authHeaders.Authorization) {
           config.headers.Authorization = authHeaders.Authorization;
+        }
+      }
+      // Add user auth header for user endpoints
+      if (config.url?.startsWith('/user/')) {
+        const userHeaders = userAuthService.getAuthHeaders();
+        if (userHeaders.Authorization) {
+          config.headers.Authorization = userHeaders.Authorization;
         }
       }
       return config;

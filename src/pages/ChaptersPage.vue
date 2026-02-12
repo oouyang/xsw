@@ -11,6 +11,11 @@
         </div>
       </div>
       <q-space />
+      <ShareMenu
+        :title="displayBookName"
+        :text="`${displayBookName} - ${displayAuthor}`"
+        size="sm"
+      />
       <q-chip outline color="primary" size="sm">
         {{ book.info?.last_chapter_number || 0 }} 章
       </q-chip>
@@ -206,6 +211,7 @@ import { useMeta } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { chapterLink, dedupeBy, normalizeNum, toArr } from 'src/services/utils';
+import ShareMenu from 'src/components/ShareMenu.vue';
 import { useTextConversion } from 'src/composables/useTextConversion';
 import { useBookStore } from 'src/stores/books';
 

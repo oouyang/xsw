@@ -7,6 +7,24 @@
       <q-btn flat icon="refresh" @click="load" />
     </div>
 
+    <!-- Continue Reading section -->
+    <div v-if="readingHistory.length > 0" class="q-mb-lg">
+      <div class="row items-center q-mb-sm">
+        <div class="text-h6">{{ $t('dashboard.continueReading') }}</div>
+        <q-space />
+        <q-btn flat dense size="sm" :label="$t('common.clear')" @click="clearReadingHistory" />
+      </div>
+      <q-separator class="q-mb-sm" />
+      <div class="row q-gutter-sm" style="overflow-x: auto; flex-wrap: nowrap;">
+        <ContinueReadingCard
+          v-for="entry in readingHistory"
+          :key="entry.bookId"
+          :entry="entry"
+          @remove="removeHistoryEntry"
+        />
+      </div>
+    </div>
+
     <q-banner v-if="error" class="bg-red-2 text-red-10 q-mb-md">{{ error }}</q-banner>
 
     <q-skeleton v-if="loading" type="rect" height="36px" class="q-mb-md" />
@@ -44,12 +62,19 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import BookCard from 'components/BookCard.vue';
+import ContinueReadingCard from 'components/ContinueReadingCard.vue';
 import type { Category, BookSummary } from 'src/types/book-api';
 import { getCategories, listBooksInCategory } from 'src/services/bookApi';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { useReadingHistory } from 'src/composables/useReadingHistory';
 
 const { convertIfNeeded } = useTextConversion();
+const { history: readingHistory, clearHistory: clearReadingHistoryFn, removeEntry: removeHistoryEntry } = useReadingHistory();
+
+function clearReadingHistory() {
+  clearReadingHistoryFn();
+}
 
 const categories = ref<Category[]>([]);
 const topBooks = ref<Record<string, BookSummary[]>>({});

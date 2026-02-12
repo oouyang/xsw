@@ -121,6 +121,7 @@ def create_jwt_token(email: str, auth_method: str) -> tuple[str, datetime]:
     payload = {
         'sub': email,
         'auth_method': auth_method,
+        'role': 'admin',
         'iat': now,
         'exp': expiration
     }

@@ -12,6 +12,8 @@ export default {
     loading: '加载中...',
     error: '错误',
     success: '成功',
+    remove: '移除',
+    clear: '清除',
   },
 
   // 导航
@@ -107,6 +109,28 @@ export default {
     scrollBottom: '到达底部',
     goBack: '返回',
     showHeader: '显示标题栏',
+    share: '分享',
+    copyLink: '复制链接',
+    continueReading: '继续阅读',
+  },
+
+  // 首页
+  dashboard: {
+    continueReading: '继续阅读',
+  },
+
+  // 用户认证
+  userAuth: {
+    login: '登录',
+    logout: '退出',
+    loginTitle: '登录以保存进度',
+    loginSubtitle: '阅读进度将在所有设备间同步。',
+    signInGoogle: '使用 Google 登录',
+    signInFacebook: '使用 Facebook 登录',
+    signInApple: '使用 Apple 登录',
+    signInWeChat: '使用微信登录',
+    syncMessage: '阅读进度将在所有设备间同步。',
+    loggingIn: '登录中...',
   },
 
   // 搜索
