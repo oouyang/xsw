@@ -1217,6 +1217,10 @@ def search_comprehensive(
         finally:
             session.close()
 
+        # Filter out legacy numeric book IDs (old m.xsw.tw data) that can't be
+        # resolved on czbooks.net.  czbooks IDs are alphanumeric (e.g. "s660jj").
+        results = [r for r in results if not r.book_id.isdigit()]
+
         # Sort by relevance score (highest first), then by book name
         results.sort(key=lambda x: (-x.relevance_score, x.book_name))
 

@@ -7,6 +7,7 @@ COPY package*.json .
 RUN --mount=type=cache,target=/root/.npm npm config set strict-ssl false && npm ci --ignore-scripts
 COPY . .
 RUN --mount=type=cache,target=/root/.npm npm run build
+RUN npx vitest run --reporter=verbose
 
 # ============================================================
 # Stage 2: Nginx frontend (target: web)
@@ -38,7 +39,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
     pip install -r requirements.txt && \
-    pip install ruff && npm run test -- --reporter=verbose && pytest -v
+    pip install ruff
 
 COPY . .
 COPY --from=spa-builder /web/dist /app/dist
@@ -51,7 +52,11 @@ ENV DB_PATH=/app/data/xsw_cache.db
 
 RUN mkdir -p /app/data /app/dist/ubike && \
     ruff check && ruff format && echo $BASE_URL && \
-    pip config unset global.index-url
+    pytest tests/ -v && \
+    pip config unset global.index-url && \
+    sed -i s/https/http/g /etc/apk/repositories  && \
+    apk add tmux bash htop jq curl wget openssh-client git && \
+    sed -i s/http/https/g /etc/apk/repositories 
 
 EXPOSE 8000
 CMD ["uvicorn", "main_optimized:app", "--host", "0.0.0.0", "--port", "8000"]

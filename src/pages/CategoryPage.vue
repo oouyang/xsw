@@ -7,13 +7,29 @@
       <q-btn flat icon="arrow_back" :to="{ name: 'Dashboard' }" />
     </div>
 
+    <!-- Sort buttons -->
+    <div class="row items-center q-mb-sm q-gutter-xs">
+      <q-btn
+        v-for="opt in sortOptions" :key="opt.value"
+        :outline="sortBy !== opt.value"
+        :unelevated="sortBy === opt.value"
+        :color="sortBy === opt.value ? 'primary' : 'grey'"
+        :icon="opt.icon"
+        :label="opt.label"
+        size="sm"
+        dense
+        no-caps
+        @click="sortBy = opt.value"
+      />
+    </div>
+
     <q-banner v-if="error" class="bg-red-2 text-red-10 q-mb-md">{{ error }}</q-banner>
 
     <!-- Endless scroll mode -->
     <template v-if="isEndless">
       <q-infinite-scroll :offset="250" @load="onEndlessLoad" ref="infiniteScrollRef">
         <div class="row q-col-gutter-md">
-          <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="b in allBooks" :key="b.bookurl">
+          <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="b in sortedAllBooks" :key="b.bookurl">
             <BookCard :book="b" />
           </div>
         </div>
@@ -28,7 +44,7 @@
     <!-- Paging mode (existing) -->
     <template v-else>
       <div class="row q-col-gutter-md">
-        <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="b in displayBooks" :key="b.bookurl">
+        <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="b in sortedDisplayBooks" :key="b.bookurl">
           <BookCard :book="b" />
         </div>
       </div>
@@ -69,6 +85,26 @@ const catName = ref('');
 const error = ref('');
 const BOOKS_PER_PAGE = 12; // Limit books displayed per page for less scrolling
 
+// Sort state
+type SortKey = 'default' | 'bookmark' | 'views';
+const sortBy = ref<SortKey>('default');
+const sortOptions: { value: SortKey; label: string; icon: string }[] = [
+  { value: 'default', label: '預設', icon: 'sort' },
+  { value: 'bookmark', label: '收藏', icon: 'bookmark' },
+  { value: 'views', label: '觀看', icon: 'visibility' },
+];
+
+function applySorting(list: BookSummary[]): BookSummary[] {
+  if (sortBy.value === 'default') return list;
+  const sorted = [...list];
+  if (sortBy.value === 'bookmark') {
+    sorted.sort((a, b) => (b.bookmark_count ?? 0) - (a.bookmark_count ?? 0));
+  } else if (sortBy.value === 'views') {
+    sorted.sort((a, b) => (b.view_count ?? 0) - (a.view_count ?? 0));
+  }
+  return sorted;
+}
+
 // Endless scroll state
 const isEndless = computed(() => (config.value.scrollMode || 'paging') === 'endless');
 const allBooks = ref<BookSummary[]>([]);
@@ -81,6 +117,8 @@ const displayCatName = computed(() => convertIfNeeded(catName.value));
 
 // Limit displayed books to reduce scrolling
 const displayBooks = computed(() => books.value.slice(0, BOOKS_PER_PAGE));
+const sortedDisplayBooks = computed(() => applySorting(displayBooks.value));
+const sortedAllBooks = computed(() => applySorting(allBooks.value));
 
 async function load() {
   try {
