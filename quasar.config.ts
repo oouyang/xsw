@@ -107,52 +107,6 @@ export default defineConfig((ctx) => {
           secure: false, // Skip SSL verification if needed
           // No rewrite needed - path /xsw/api will be forwarded as-is
         },
-
-        // '/spa': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/docs': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/openapi.json': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/health': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/categories': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/books': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/search': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/by-url': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
-        // '/admin': {
-        //   target: `${apiBaseUrl}`,
-        //   //   target: 'http://bolpbmadev1.micron.com:8080',
-        //   changeOrigin: true,
-        // },
       },
     },
 

@@ -1,6 +1,7 @@
 # DevContainer Optimization Summary
 
 ## Overview
+
 This document explains all optimizations made to the devcontainer setup for eps_padlog_frontend, including what was changed, why, and the benefits.
 
 ---
@@ -10,6 +11,7 @@ This document explains all optimizations made to the devcontainer setup for eps_
 ### 1. Fixed devcontainer.json Syntax Errors
 
 #### **Before:**
+
 ```json
 {
   "name": "vite-ts-template",
@@ -23,25 +25,34 @@ This document explains all optimizations made to the devcontainer setup for eps_
 ```
 
 #### **After:**
+
 ```json
 {
   "name": "eps_padlog_frontend",
   "build": {
     "dockerfile": "Dockerfile",
-    "args": { /* proxy settings */ }
+    "args": {
+      /* proxy settings */
+    }
   },
   "remoteUser": "node",
-  "containerEnv": { /* environment variables */ },
-  "customizations": { /* VS Code settings */ }
+  "containerEnv": {
+    /* environment variables */
+  },
+  "customizations": {
+    /* VS Code settings */
+  }
 }
 ```
 
 #### **Why:**
+
 - Original file had JSON syntax errors that would prevent container from building
 - Inconsistent structure with duplicate sections
 - Missing proper build configuration
 
 #### **Benefits:**
+
 - ✅ Valid JSON that VS Code can parse
 - ✅ Clear separation of build-time vs runtime configuration
 - ✅ Proper Dockerfile-based build instead of pre-built image
@@ -51,6 +62,7 @@ This document explains all optimizations made to the devcontainer setup for eps_
 ### 2. Created Proper CA Certificate Bundle
 
 #### **Before (Dockerfile):**
+
 ```dockerfile
 RUN curl -fsSL http://pki.micron.com/pki/Micron%20Root%20CA.crt \
   | openssl x509 -out /usr/local/share/ca-certificates/micron/Micron_Root_CA.crt
@@ -58,6 +70,7 @@ RUN curl -fsSL http://pki.micron.com/pki/Micron%20Root%20CA.crt \
 ```
 
 #### **After (Dockerfile):**
+
 ```dockerfile
 # Install individual certificates
 RUN curl -fsSL http://pki.micron.com/pki/Micron%20Root%20CA.crt \
@@ -73,11 +86,13 @@ RUN cat /usr/local/share/ca-certificates/micron/Micron_Root_CA.crt \
 ```
 
 #### **Why:**
+
 - `NODE_EXTRA_CA_CERTS` requires a single bundle file, not a directory
 - Node.js needs the complete certificate chain in one file
 - Previous setup would cause SSL verification failures
 
 #### **Benefits:**
+
 - ✅ Node.js can properly validate SSL certificates
 - ✅ npm/yarn work without disabling SSL verification
 - ✅ API calls to internal Micron services succeed
@@ -88,6 +103,7 @@ RUN cat /usr/local/share/ca-certificates/micron/Micron_Root_CA.crt \
 ### 3. Removed Insecure SSL Verification Disabling
 
 #### **Before (install.sh):**
+
 ```bash
 REQUESTS_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt",  # ❌ Syntax error
 NODE_EXTRA_CA_CERTS="/etc/ssl/certs/ca-certificates.crt"  # ❌ Wrong path
@@ -96,6 +112,7 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ```
 
 #### **After (install.sh):**
+
 ```bash
 # Removed all SSL-disabling commands
 # Certificate handling is done properly in Dockerfile
@@ -103,12 +120,14 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ```
 
 #### **Why:**
+
 - Disabling SSL verification is a **major security vulnerability**
 - Opens attack vectors for man-in-the-middle attacks
 - Defeats the purpose of having corporate CA certificates
 - `strict-ssl=false` is a code smell indicating improper CA setup
 
 #### **Benefits:**
+
 - ✅ Maintains security best practices
 - ✅ Proper SSL/TLS certificate validation
 - ✅ No vulnerabilities from disabled verification
@@ -119,6 +138,7 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ### 4. Enhanced Environment Variable Configuration
 
 #### **Before:**
+
 ```json
 "containerEnv": {
   "HTTP_PROXY": "http://proxy-web.micron.com:80",
@@ -128,6 +148,7 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ```
 
 #### **After:**
+
 ```json
 "containerEnv": {
   // Proxy settings
@@ -146,12 +167,14 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ```
 
 #### **Why:**
+
 - Need complete environment variable configuration for SSL/TLS
 - `NODE_OPTIONS` tells Node.js to use system CA store
 - `NODE_EXTRA_CA_CERTS` adds corporate certificates to Node.js
 - `REQUESTS_CA_BUNDLE` enables Python tools (if used)
 
 #### **Benefits:**
+
 - ✅ All Node.js tools use proper certificates
 - ✅ Python tools (pip, requests) work correctly
 - ✅ Consistent SSL/TLS handling across tools
@@ -162,6 +185,7 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ### 5. Improved VS Code Extensions and Settings
 
 #### **Before:**
+
 ```json
 "extensions": [
   "Vue.volar",
@@ -172,6 +196,7 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ```
 
 #### **After:**
+
 ```json
 "extensions": [
   // Vue 3 development
@@ -200,12 +225,14 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ```
 
 #### **Why:**
+
 - Missing TypeScript Vue Plugin for better type checking
 - No ESLint extension (even though project might use it)
 - No format-on-save configured
 - Missing helpful productivity extensions
 
 #### **Benefits:**
+
 - ✅ Better Vue 3 TypeScript experience
 - ✅ Automatic code formatting on save
 - ✅ Inline error display (ErrorLens)
@@ -216,6 +243,7 @@ yarn config set strict-ssl false # ❌ SECURITY ISSUE
 ### 6. Optimized Dockerfile Build Process
 
 #### **Before:**
+
 ```dockerfile
 USER root
 RUN wget -qO- http://pki.micron.com/... | openssl x509 -out ...
@@ -225,6 +253,7 @@ RUN bash /tmp/library-scripts/install.sh
 ```
 
 #### **After:**
+
 ```dockerfile
 USER root
 
@@ -256,6 +285,7 @@ RUN set -eux; \
 ```
 
 #### **Why:**
+
 - `set -eux` provides:
   - `-e`: Exit on error
   - `-u`: Fail on undefined variables
@@ -265,6 +295,7 @@ RUN set -eux; \
 - Separate RUN commands for better layer caching
 
 #### **Benefits:**
+
 - ✅ Faster builds with better layer caching
 - ✅ Smaller image size (~200MB saved)
 - ✅ Fails fast on errors
@@ -275,6 +306,7 @@ RUN set -eux; \
 ### 7. Enhanced postCreate.sh Script
 
 #### **Before:**
+
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -285,6 +317,7 @@ npx playwright install --with-deps || true
 ```
 
 #### **After:**
+
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -330,6 +363,7 @@ echo "  npm run dev    - Start development server"
 ```
 
 #### **Why:**
+
 - Better user feedback with emoji indicators
 - Proper lock file detection (yarn.lock in this project)
 - Graceful error handling (doesn't fail entire setup)
@@ -337,6 +371,7 @@ echo "  npm run dev    - Start development server"
 - Helpful command reminders
 
 #### **Benefits:**
+
 - ✅ Clear visibility into setup progress
 - ✅ Faster setup (skips Playwright if not needed)
 - ✅ Doesn't fail on non-critical errors
@@ -347,6 +382,7 @@ echo "  npm run dev    - Start development server"
 ### 8. Added Persistent Volume Optimizations
 
 #### **Before:**
+
 ```json
 "mounts": [
   "source=vscode-node-cache,target=/home/node/.cache,type=volume",
@@ -355,6 +391,7 @@ echo "  npm run dev    - Start development server"
 ```
 
 #### **After:**
+
 ```json
 "mounts": [
   "source=eps-padlog-node-cache,target=/home/node/.cache,type=volume",
@@ -365,11 +402,13 @@ echo "  npm run dev    - Start development server"
 ```
 
 #### **Why:**
+
 - Project-specific volume names prevent conflicts
 - Separate caches for npm and yarn
 - Playwright browsers are ~400MB and expensive to re-download
 
 #### **Benefits:**
+
 - ✅ 10x faster container rebuilds (cached dependencies)
 - ✅ Reduced network traffic (no re-downloading)
 - ✅ No conflicts with other projects
@@ -380,6 +419,7 @@ echo "  npm run dev    - Start development server"
 ### 9. Increased Shared Memory for Chromium
 
 #### **Before:**
+
 ```json
 "runArgs": [
   "--cap-add=SYS_ADMIN",
@@ -388,6 +428,7 @@ echo "  npm run dev    - Start development server"
 ```
 
 #### **After:**
+
 ```json
 "runArgs": [
   "--cap-add=SYS_ADMIN",
@@ -396,12 +437,14 @@ echo "  npm run dev    - Start development server"
 ```
 
 #### **Why:**
+
 - Chromium uses `/dev/shm` for shared memory
 - Default 64MB is too small, causing crashes
 - Playwright tests can use multiple browser instances
 - Vue DevTools can increase memory usage
 
 #### **Benefits:**
+
 - ✅ Prevents Chromium "aw, snap" crashes
 - ✅ Supports parallel Playwright tests
 - ✅ Stable browser-based development
@@ -411,16 +454,19 @@ echo "  npm run dev    - Start development server"
 ### 10. Added Comprehensive Documentation
 
 #### **New Files:**
+
 - `.devcontainer/README.md` - Complete setup guide
 - `.devcontainer/OPTIMIZATION_SUMMARY.md` - This file
 
 #### **Why:**
+
 - Complex corporate environment setup needs documentation
 - Troubleshooting common issues saves time
 - Knowledge transfer for team members
 - Security best practices documented
 
 #### **Benefits:**
+
 - ✅ Faster onboarding for new developers
 - ✅ Self-service troubleshooting
 - ✅ Clear security guidelines
@@ -431,18 +477,21 @@ echo "  npm run dev    - Start development server"
 ## 📊 Summary of Benefits
 
 ### Security Improvements
+
 - ✅ Removed all `strict-ssl=false` configurations
 - ✅ Proper CA certificate chain validation
 - ✅ Environment variables set correctly
 - ✅ No SSL/TLS verification bypassed
 
 ### Performance Improvements
+
 - ✅ 10x faster rebuilds with volume caching
 - ✅ ~200MB smaller image size
 - ✅ Better Docker layer caching
 - ✅ Parallel dependency installation
 
 ### Developer Experience
+
 - ✅ Auto-format on save
 - ✅ Better error visibility (ErrorLens)
 - ✅ Enhanced Git integration (GitLens)
@@ -450,6 +499,7 @@ echo "  npm run dev    - Start development server"
 - ✅ Comprehensive documentation
 
 ### Stability Improvements
+
 - ✅ Fixed JSON syntax errors
 - ✅ Proper error handling in scripts
 - ✅ Increased shared memory (2GB)
@@ -462,16 +512,19 @@ echo "  npm run dev    - Start development server"
 ### For Existing Users
 
 1. **Pull Latest Changes**
+
    ```bash
    git pull origin GEISOFT-2502
    ```
 
 2. **Rebuild Container**
+
    ```
    VS Code Command Palette → "Dev Containers: Rebuild Container"
    ```
 
 3. **Verify Setup**
+
    ```bash
    # Check CA certificates
    ls -la /usr/local/share/ca-certificates/micron/
@@ -488,17 +541,20 @@ echo "  npm run dev    - Start development server"
 ### For New Users
 
 1. **Clone Repository**
+
    ```bash
    git clone <repo-url>
    cd eps_padlog_frontend
    ```
 
 2. **Open in VS Code**
+
    ```bash
    code .
    ```
 
 3. **Reopen in Container**
+
    ```
    VS Code will prompt: "Reopen in Container" → Click it
    ```
@@ -512,6 +568,7 @@ echo "  npm run dev    - Start development server"
 ## 🎯 Future Improvements
 
 ### Potential Optimizations
+
 1. **Multi-stage Build**: Separate build and runtime images
 2. **Baked Certificates**: Copy certs from build context instead of fetching
 3. **Pre-built Base Image**: Push custom base image to registry
@@ -519,6 +576,7 @@ echo "  npm run dev    - Start development server"
 5. **Resource Limits**: Add CPU/memory limits for stability
 
 ### Nice-to-Have Features
+
 1. **Hot Module Replacement**: Optimize Vite HMR for Docker
 2. **Test Watching**: Background test runner
 3. **Lint on Save**: Auto-lint before commit

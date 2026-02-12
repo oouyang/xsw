@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "description": "看小說",
   "productName": "看小說",
-  "author": "OWEN OUYANG <oouyang@micron.com>",
+  "author": "OWEN OUYANG",
   "type": "module",
   "private": true,
   "scripts": {

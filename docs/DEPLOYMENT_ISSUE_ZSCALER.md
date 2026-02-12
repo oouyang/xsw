@@ -17,6 +17,7 @@ The deployed backend at `http://bolezk03:8000/xsw/api/categories` returns empty 
    - Parser finds 0 categories
 
 3. **Zscaler Authentication Page:**
+
 ```html
 <!DOCTYPE html><html><head>
 <title>Welcome To Zscaler Directory Authentication</title>
@@ -66,6 +67,7 @@ Deploy the container on a network that has direct internet access without going 
 ### Option 4: Use a Proxy Service
 
 Set up an intermediate proxy service that:
+
 1. Runs outside Zscaler (on a network with direct access)
 2. Fetches content from `m.xsw.tw`
 3. Provides it to your container
@@ -81,7 +83,7 @@ services:
     container_name: nginx-xsw-1
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - '8000:8000'
     volumes:
       - ./data:/app/data
     environment:

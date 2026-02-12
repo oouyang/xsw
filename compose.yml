@@ -11,11 +11,11 @@ services:
     env_file: .env
     restart: always
     #ports:
-     # - 8000:8000
+    # - 8000:8000
     volumes:
       - xsw_data:/app/data
     environment:
-      - no_proxy=.micron.com,127.0.0.0/8,localhost,10.38.138.123
+      - no_proxy=127.0.0.0/8,localhost
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
     # build:
     #   context: .

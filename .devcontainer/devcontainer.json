@@ -127,8 +127,8 @@
 
   // Performance and stability features
   "runArgs": [
-    "--cap-add=SYS_ADMIN",  // Required for Chromium/Playwright if needed
-    "--shm-size=2g"          // Prevent Chrome crashes
+    "--cap-add=SYS_ADMIN", // Required for Chromium/Playwright if needed
+    "--shm-size=2g" // Prevent Chrome crashes
   ],
 
   // Persistent volumes for caching (improves rebuild speed)

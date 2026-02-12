@@ -31,6 +31,8 @@ echo '✅ Frontend deployment successful!' && \
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 "
 
+alias xtest="npm run test -- --reporter=verbose && pytest -v"
+alias xlint="npm run lint && ruff check --fix"
 # Backend build
 alias xbuild="docker compose -f compose.yml -f docker/build.yml build xsw"
 
