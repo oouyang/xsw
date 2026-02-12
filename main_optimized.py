@@ -183,6 +183,9 @@ def resolve_book_id(input_id: str) -> str:
             return book.id  # return czbooks ID
         # Fall back to czbooks ID directly
         return input_id
+    except Exception:
+        # SQLite concurrent access may corrupt session — fall back gracefully
+        return input_id
     finally:
         session.close()
 
@@ -216,6 +219,10 @@ def resolve_chapter(book_czid: str, chapter_input: str) -> tuple:
         session.close()
 
 
+# Lock for serializing public_id creation to prevent SQLite concurrent write issues
+_public_id_lock = threading.Lock()
+
+
 def get_book_public_id(
     book_czid: str,
     book_name: str = "",
@@ -226,6 +233,9 @@ def get_book_public_id(
 
     If the book exists in DB, returns its public_id (and updates stats if provided).
     If the book doesn't exist, creates a minimal record with a public_id.
+
+    Serialized with a lock to prevent SQLite concurrent write corruption when
+    many category listing requests hit simultaneously.
     """
     import db_models as _db
     from db_models import Book
@@ -234,45 +244,46 @@ def get_book_public_id(
     if not _db.db_manager:
         return None
 
-    session = _db.db_manager.get_session()
-    try:
-        book = session.query(Book).filter(Book.id == book_czid).first()
-        if book:
-            changed = False
-            if not book.public_id:
-                book.public_id = generate_public_id()
-                changed = True
-            if bookmark_count is not None:
-                book.bookmark_count = bookmark_count
-                changed = True
-            if view_count is not None:
-                book.view_count = view_count
-                changed = True
-            if changed:
-                session.commit()
-            return book.public_id
-
-        # Book not in DB yet — create a minimal record so it gets a public_id
-        pub_id = generate_public_id()
-        book = Book(
-            id=book_czid,
-            public_id=pub_id,
-            name=book_name or book_czid,
-            bookmark_count=bookmark_count,
-            view_count=view_count,
-        )
-        session.add(book)
-        session.commit()
-        return pub_id
-    except Exception as e:
+    with _public_id_lock:
+        session = _db.db_manager.get_session()
         try:
-            session.rollback()
-        except Exception:
-            pass
-        print(f"[API] Error getting/creating public_id for {book_czid}: {e}")
-        return None
-    finally:
-        session.close()
+            book = session.query(Book).filter(Book.id == book_czid).first()
+            if book:
+                changed = False
+                if not book.public_id:
+                    book.public_id = generate_public_id()
+                    changed = True
+                if bookmark_count is not None:
+                    book.bookmark_count = bookmark_count
+                    changed = True
+                if view_count is not None:
+                    book.view_count = view_count
+                    changed = True
+                if changed:
+                    session.commit()
+                return book.public_id
+
+            # Book not in DB yet — create a minimal record so it gets a public_id
+            pub_id = generate_public_id()
+            book = Book(
+                id=book_czid,
+                public_id=pub_id,
+                name=book_name or book_czid,
+                bookmark_count=bookmark_count,
+                view_count=view_count,
+            )
+            session.add(book)
+            session.commit()
+            return pub_id
+        except Exception as e:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            print(f"[API] Error getting/creating public_id for {book_czid}: {e}")
+            return None
+        finally:
+            session.close()
 
 
 # -----------------------
