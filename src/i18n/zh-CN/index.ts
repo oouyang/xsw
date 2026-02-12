@@ -36,6 +36,9 @@ export default {
     fontSize: '字体大小',
     preview: '预览',
     previewText: '这是阅读界面的预览文字，您可以调整字体大小和深色模式来获得最佳的阅读体验。',
+    scrollMode: '浏览模式',
+    paging: '分页',
+    endless: '无尽',
   },
 
   // 字体大小

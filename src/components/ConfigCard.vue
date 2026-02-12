@@ -75,6 +75,25 @@
           />
         </div>
 
+        <!-- Scroll Mode Toggle -->
+        <div class="setting-group q-mb-lg">
+          <div class="setting-label row items-center q-mb-sm">
+            <q-icon name="swap_vert" size="20px" class="q-mr-xs" />
+            <span class="text-subtitle2">{{ $t('settings.scrollMode') }}</span>
+          </div>
+          <q-btn-toggle
+            :model-value="scrollMode"
+            @update:model-value="updateScrollMode"
+            toggle-color="primary"
+            unelevated
+            spread
+            :options="[
+              { label: $t('settings.paging'), value: 'paging', icon: 'view_list' },
+              { label: $t('settings.endless'), value: 'endless', icon: 'all_inclusive' }
+            ]"
+          />
+        </div>
+
         <!-- Font Size Slider -->
         <div class="setting-group q-mb-md">
           <div class="setting-label row items-center q-mb-sm">
@@ -183,6 +202,11 @@ const { locale, t } = useI18n();
 const { storeLocale } = useLocale();
 
 const fontsize = computed(() => Number(config.value.fontsize || 7));
+const scrollMode = computed(() => config.value.scrollMode || 'paging');
+
+function updateScrollMode(v: 'paging' | 'endless') {
+  update({ scrollMode: v });
+}
 
 const fontSizeLabel = computed(() => {
   const labels: Record<number, string> = {

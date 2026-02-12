@@ -226,12 +226,18 @@ _public_id_lock = threading.Lock()
 def get_book_public_id(
     book_czid: str,
     book_name: str = "",
+    author: str = "",
+    book_type: str = "",
+    last_chapter_title: str = "",
+    last_chapter_url: str = "",
     bookmark_count: Optional[int] = None,
     view_count: Optional[int] = None,
 ) -> Optional[str]:
     """Get or create a public_id for a book given its czbooks ID.
 
     If the book exists in DB, returns its public_id (and updates stats if provided).
+    Fields like author/type/last_chapter are only filled in when the DB value is
+    currently NULL/empty, so richer data from the book detail page is never overwritten.
     If the book doesn't exist, creates a minimal record with a public_id.
 
     Serialized with a lock to prevent SQLite concurrent write corruption when
@@ -259,6 +265,19 @@ def get_book_public_id(
                 if view_count is not None:
                     book.view_count = view_count
                     changed = True
+                # Back-fill fields only when DB value is empty
+                if author and not book.author:
+                    book.author = author
+                    changed = True
+                if book_type and not book.type:
+                    book.type = book_type
+                    changed = True
+                if last_chapter_title and not book.last_chapter_title:
+                    book.last_chapter_title = last_chapter_title
+                    changed = True
+                if last_chapter_url and not book.last_chapter_url:
+                    book.last_chapter_url = last_chapter_url
+                    changed = True
                 if changed:
                     session.commit()
                 return book.public_id
@@ -269,6 +288,10 @@ def get_book_public_id(
                 id=book_czid,
                 public_id=pub_id,
                 name=book_name or book_czid,
+                author=author or None,
+                type=book_type or None,
+                last_chapter_title=last_chapter_title or None,
+                last_chapter_url=last_chapter_url or None,
                 bookmark_count=bookmark_count,
                 view_count=view_count,
             )
@@ -635,7 +658,16 @@ def list_books_in_category(
             czid = extract_book_id_from_url(b["bookurl"])
             bm = b.get("bookmark_count")
             vc = b.get("view_count")
-            pub_id = get_book_public_id(czid, b.get("bookname", ""), bookmark_count=bm, view_count=vc)
+            pub_id = get_book_public_id(
+                czid,
+                b.get("bookname", ""),
+                author=b.get("author", ""),
+                book_type=cat_id,
+                last_chapter_title=b.get("lastchapter", ""),
+                last_chapter_url=b.get("lasturl", ""),
+                bookmark_count=bm,
+                view_count=vc,
+            )
             book_summaries.append(
                 BookSummary(**b, book_id=czid, public_id=pub_id)
             )
@@ -653,19 +685,28 @@ def get_book_info(book_id: str):
     Get book metadata.
     Strategy: Check DB → Fetch from web → Store to DB
     Accepts both public_id and czbooks ID (transparent resolution).
+
+    For unfinished books whose info is older than 12 hours,
+    bypass cache and re-fetch from the web.
     """
     try:
         # Resolve public_id to czbooks ID
         czbooks_id = resolve_book_id(book_id)
 
-        # Check cache first
-        cached_info = cache_mgr.cache_manager.get_book_info(czbooks_id)
-        if cached_info:
-            print(f"[API] Book {czbooks_id} - cache hit")
-            return cached_info
+        # If the book is unfinished and stale (>12h), bypass cache
+        stale = cache_mgr.cache_manager.is_book_stale(czbooks_id)
+        if stale:
+            print(f"[API] Book {czbooks_id} - stale (unfinished, >12h), refreshing")
+            cache_mgr.cache_manager.invalidate_book_info(czbooks_id)
+        else:
+            # Check cache first
+            cached_info = cache_mgr.cache_manager.get_book_info(czbooks_id)
+            if cached_info:
+                print(f"[API] Book {czbooks_id} - cache hit")
+                return cached_info
 
-        # Cache miss - fetch from web
-        print(f"[API] Book {czbooks_id} - cache miss, fetching from web")
+        # Cache miss or stale - fetch from web
+        print(f"[API] Book {czbooks_id} - fetching from web")
         url = resolve_book_home(czbooks_id)
         html_content = fetch_html(url)
         info = parse_book_info(html_content, BASE_URL)

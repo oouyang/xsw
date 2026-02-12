@@ -188,6 +188,31 @@ export function normalizeNum(x: string | number) {
   return String(x);
 }
 
+// ===== Display Helpers =====
+
+/**
+ * Fuzz a count by adding a small random offset in [-5, +5].
+ * Result is clamped to a minimum of 0 so negatives never appear.
+ * The offset is seeded by the count itself so the same input always
+ * produces the same display value within a session (avoids flicker on re-render).
+ */
+export function fuzzCount(n: number | null | undefined): number {
+  if (n == null) return 0;
+  // Simple deterministic hash from the count value
+  const seed = ((n * 2654435761) >>> 0) % 11; // 0..10
+  const offset = seed - 5; // -5..+5
+  return Math.max(0, n + offset);
+}
+
+/**
+ * Format a possibly-large number for compact display: 1234 → "1.2k", 12345 → "12.3k"
+ */
+export function formatCount(n: number): string {
+  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + 'w';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+
 // ===== Chinese Character Conversion =====
 
 /**

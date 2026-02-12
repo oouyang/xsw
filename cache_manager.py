@@ -118,6 +118,42 @@ class CacheManager:
 
     # ===== Book Info Methods =====
 
+    # Statuses that indicate a book is finished and won't receive new chapters
+    FINISHED_STATUSES = {"已完成", "完結", "完结"}
+
+    # How long before an unfinished book's cached info is considered stale
+    STALE_HOURS = 12
+
+    def is_book_stale(self, book_id: str) -> bool:
+        """Check if a book's cached info is stale and should be re-fetched.
+
+        A book is stale when:
+        1. Its status is NOT finished (已完成/完結/完结), AND
+        2. last_scraped_at is older than STALE_HOURS
+        """
+        session = self._get_session()
+        try:
+            book = session.query(Book).filter(Book.id == book_id).first()
+            if not book or not book.last_scraped_at:
+                return False  # No record or no timestamp — let normal flow handle it
+            if book.status in self.FINISHED_STATUSES:
+                return False  # Finished books don't need refresh
+            age = datetime.utcnow() - book.last_scraped_at
+            if age.total_seconds() > self.STALE_HOURS * 3600:
+                print(f"[Cache] Book {book_id} is stale (status={book.status!r}, age={age})")
+                return True
+            return False
+        except SQLAlchemyError as e:
+            print(f"[Cache] DB error checking staleness for {book_id}: {e}")
+            return False
+        finally:
+            session.close()
+
+    def invalidate_book_info(self, book_id: str) -> None:
+        """Remove book info from memory cache so next get_book_info hits DB or web."""
+        cache_key = f"book:{book_id}"
+        self.memory_cache.invalidate(cache_key)
+
     def get_book_info(self, book_id: str) -> Optional[BookInfo]:
         """Get book info from cache hierarchy: memory → DB → None."""
         # Check memory cache

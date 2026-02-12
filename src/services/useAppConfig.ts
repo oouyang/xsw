@@ -22,6 +22,7 @@ export interface AppConfig {
   locale?: SupportedLocale;
   fontsize?: string;
   dark?: string;
+  scrollMode?: 'paging' | 'endless';
 
   // Optional: Navigation state (runtime)
   page?: string;

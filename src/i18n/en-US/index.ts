@@ -36,6 +36,9 @@ export default {
     fontSize: 'Font Size',
     preview: 'Preview',
     previewText: 'This is a preview of the reading interface. You can adjust the font size and dark mode to get the best reading experience.',
+    scrollMode: 'Scroll Mode',
+    paging: 'Paging',
+    endless: 'Endless',
   },
 
   // Font sizes

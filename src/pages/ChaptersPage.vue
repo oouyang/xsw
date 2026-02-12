@@ -3,11 +3,23 @@
   <q-page class="q-pa-md">
     <!-- Compact header -->
     <div class="row items-center q-mb-md">
-      <q-btn flat dense round icon="arrow_back" :to="{ name: 'Dashboard' }" />
+      <q-btn flat dense round icon="arrow_back" @click="router.back()" />
       <div class="q-ml-sm">
         <div class="text-h6 text-weight-medium">{{ displayBookName }}</div>
         <div class="text-caption text-grey-7">
           {{ displayAuthor }} • {{ displayType }} • {{ displayStatus }}
+          <span v-if="book.info?.update"> • {{ book.info.update }}</span>
+        </div>
+        <div class="row items-center q-gutter-sm text-caption text-grey-6 q-mt-xs">
+          <span v-if="book.info?.bookmark_count" class="row items-center no-wrap">
+            <q-icon name="bookmark_border" size="14px" class="q-mr-xs" />{{ displayBookmarkCount }}
+          </span>
+          <span v-if="book.info?.view_count" class="row items-center no-wrap">
+            <q-icon name="visibility" size="14px" class="q-mr-xs" />{{ displayViewCount }}
+          </span>
+        </div>
+        <div v-if="displayDescription" class="text-caption text-grey-7 q-mt-xs ellipsis-3-lines">
+          {{ displayDescription }}
         </div>
       </div>
       <q-space />
@@ -53,19 +65,26 @@
         <q-tooltip>{{ $t('chapter.reloadChapters') }}</q-tooltip>
       </q-btn>
       <q-space />
-      <div class="text-caption text-grey-7">
-        第 {{ book.page }} / {{ book.maxPages }} 頁
-      </div>
-      <q-pagination
-        v-model="book.page"
-        :max="book.maxPages"
-        @update:model-value="p => switchPage(p)"
-        color="primary"
-        max-pages="7"
-        size="sm"
-        :disable="loading || book.maxPages <= 1"
-        boundary-numbers
-      />
+      <template v-if="isEndless">
+        <div class="text-caption text-grey-7">
+          {{ endlessChapters.length }} / {{ book.allChapters.length }}
+        </div>
+      </template>
+      <template v-else>
+        <div class="text-caption text-grey-7">
+          第 {{ book.page }} / {{ book.maxPages }} 頁
+        </div>
+        <q-pagination
+          v-model="book.page"
+          :max="book.maxPages"
+          @update:model-value="p => switchPage(p)"
+          color="primary"
+          max-pages="7"
+          size="sm"
+          :disable="loading || book.maxPages <= 1"
+          boundary-numbers
+        />
+      </template>
     </div>
 
     <!-- Context-aware error banner -->
@@ -153,41 +172,75 @@
       </div>
     </div>
 
-    <!-- Chapters with transition -->
-    <transition name="fade" mode="out-in">
-      <q-list
-        v-if="displayChapters.length > 0"
-        :key="`page-${book.page}`"
-        bordered
-        separator
-        dense
+    <!-- Endless scroll mode -->
+    <template v-if="isEndless">
+      <q-infinite-scroll
+        v-if="endlessChapters.length > 0 || book.allChapters.length > 0"
+        :offset="250"
+        @load="onEndlessLoad"
+        ref="infiniteScrollRef"
       >
-        <q-item
-          v-for="c in displayChapters"
-          :key="c.id || c.number"
-          clickable
-          :to="chapterLink(c.id ?? String(c.number), c.title)"
-          class="chapter-item"
-        >
-          <q-item-section>
-            <q-item-label class="text-body2">{{ c.title }}</q-item-label>
-          </q-item-section>
-          <q-item-section side>
-            <q-icon name="chevron_right" color="grey-5" size="xs" />
-          </q-item-section>
-        </q-item>
-      </q-list>
-    </transition>
+        <q-list bordered separator dense>
+          <q-item
+            v-for="c in endlessChapters"
+            :key="c.id || c.number"
+            clickable
+            :to="chapterLink(c.id ?? String(c.number), c.title)"
+            class="chapter-item"
+          >
+            <q-item-section>
+              <q-item-label class="text-body2">{{ c.title }}</q-item-label>
+            </q-item-section>
+            <q-item-section side>
+              <q-icon name="chevron_right" color="grey-5" size="xs" />
+            </q-item-section>
+          </q-item>
+        </q-list>
+        <template v-slot:loading>
+          <div class="row justify-center q-my-md">
+            <q-spinner-dots color="primary" size="40px" />
+          </div>
+        </template>
+      </q-infinite-scroll>
+    </template>
 
-    <q-banner v-if="!loading && displayChapters.length === 0" class="bg-grey-2 q-my-md">
+    <!-- Paging mode (existing) -->
+    <template v-else>
+      <transition name="fade" mode="out-in">
+        <q-list
+          v-if="displayChapters.length > 0"
+          :key="`page-${book.page}`"
+          bordered
+          separator
+          dense
+        >
+          <q-item
+            v-for="c in displayChapters"
+            :key="c.id || c.number"
+            clickable
+            :to="chapterLink(c.id ?? String(c.number), c.title)"
+            class="chapter-item"
+          >
+            <q-item-section>
+              <q-item-label class="text-body2">{{ c.title }}</q-item-label>
+            </q-item-section>
+            <q-item-section side>
+              <q-icon name="chevron_right" color="grey-5" size="xs" />
+            </q-item-section>
+          </q-item>
+        </q-list>
+      </transition>
+    </template>
+
+    <q-banner v-if="!loading && !isEndless && displayChapters.length === 0" class="bg-grey-2 q-my-md">
       <div class="text-center text-grey-7">
         <q-icon name="info" size="md" class="q-mb-sm" />
         <div>{{ $t('chapter.noChaptersOnPage') }}</div>
       </div>
     </q-banner>
 
-    <!-- Bottom pagination (only shown if there are chapters) -->
-    <div v-if="displayChapters.length > 0" class="row justify-center q-mt-md">
+    <!-- Bottom pagination (paging mode only) -->
+    <div v-if="!isEndless && displayChapters.length > 0" class="row justify-center q-mt-md">
       <q-pagination
         v-model="book.page"
         :max="book.maxPages"
@@ -203,14 +256,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type { QInfiniteScroll } from 'quasar';
 import type { ChapterRef, Chapters } from 'src/types/book-api';
 import { getBookChapters } from 'src/services/bookApi';
 import { useMeta } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppConfig } from 'src/services/useAppConfig';
-import { chapterLink, dedupeBy, normalizeNum, toArr } from 'src/services/utils';
+import { chapterLink, dedupeBy, normalizeNum, toArr, fuzzCount, formatCount } from 'src/services/utils';
 import ShareMenu from 'src/components/ShareMenu.vue';
 import { useTextConversion } from 'src/composables/useTextConversion';
 import { useBookStore } from 'src/stores/books';
@@ -255,11 +309,42 @@ interface LoadError {
 
 const loadError = ref<LoadError | null>(null);
 
+// Endless scroll state
+const isEndless = computed(() => (config.value.scrollMode || 'paging') === 'endless');
+const endlessPage = ref(1);
+const infiniteScrollRef = ref<QInfiniteScroll | null>(null);
+
+// Endless chapters: number-based filtering from page 1 up to endlessPage
+const endlessChapters = computed(() => {
+  if (!isEndless.value) return [];
+  const maxNum = endlessPage.value * book.pageSize;
+  return book.allChapters.filter(ch => ch.number >= 1 && ch.number <= maxNum);
+});
+
+function onEndlessLoad(_index: number, done: (stop?: boolean) => void) {
+  if (endlessPage.value >= book.maxPages) {
+    done(true);
+    return;
+  }
+  endlessPage.value++;
+  done(endlessPage.value >= book.maxPages);
+}
+
+// Reset endless page when switching modes or books
+watch(isEndless, (val) => {
+  if (val) {
+    endlessPage.value = 1;
+  }
+});
+
 // Computed properties for CN to TW conversion
 const displayBookName = computed(() => convertIfNeeded(book.info?.name));
 const displayAuthor = computed(() => convertIfNeeded(book.info?.author));
 const displayType = computed(() => convertIfNeeded(book.info?.type));
 const displayStatus = computed(() => convertIfNeeded(book.info?.status));
+const displayDescription = computed(() => convertIfNeeded(book.info?.description));
+const displayBookmarkCount = computed(() => formatCount(fuzzCount(book.info?.bookmark_count)));
+const displayViewCount = computed(() => formatCount(fuzzCount(book.info?.view_count)));
 const displayChapters = computed(() => {
   const chapters = book.pageChapters;
   console.log('[displayChapters] page:', book.page, 'pageChapters:', chapters.length, 'allChapters:', book.allChapters.length);
@@ -838,6 +923,13 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.ellipsis-3-lines {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .chapter-item {
   transition: all 0.2s ease;
   padding-top: 8px;

@@ -33,20 +33,12 @@
         </span>
         <span class="text-caption text-grey"> 👤 {{ displayAuthor }}</span>
       </div>
-      <div v-if="false">
-        <span
-          ><q-btn
-            flat
-            style="width: 250px"
-            @click="goToLastChapter"
-            size="sm"
-            :disable="!bookId"
-            class="text-wrap"
-          >
-            <div class="ellipsis">
-              {{ lastLabel }}
-            </div>
-          </q-btn>
+      <div class="row items-center q-gutter-sm q-mt-xs text-caption text-grey-7">
+        <span v-if="book.bookmark_count" class="row items-center no-wrap">
+          <q-icon name="bookmark_border" size="14px" class="q-mr-xs" />{{ displayBookmarkCount }}
+        </span>
+        <span v-if="book.view_count" class="row items-center no-wrap">
+          <q-icon name="visibility" size="14px" class="q-mr-xs" />{{ displayViewCount }}
         </span>
       </div>
     </q-card-section>
@@ -66,6 +58,7 @@ import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import type { BookSummary } from 'src/types/book-api';
 import { useTextConversion } from 'src/composables/useTextConversion';
+import { fuzzCount, formatCount } from 'src/services/utils';
 
 const { convertIfNeeded } = useTextConversion();
 const router = useRouter();
@@ -79,6 +72,10 @@ const useItem = true;
 const displayBookName = computed(() => convertIfNeeded(props.book.bookname));
 const displayAuthor = computed(() => convertIfNeeded(props.book.author));
 const displayIntro = computed(() => convertIfNeeded(props.book.intro));
+
+// Fuzzed counts for display
+const displayBookmarkCount = computed(() => formatCount(fuzzCount(props.book.bookmark_count)));
+const displayViewCount = computed(() => formatCount(fuzzCount(props.book.view_count)));
 
 // Navigate to chapters page at last page so user sees newest chapters
 function goToLastChapter() {
