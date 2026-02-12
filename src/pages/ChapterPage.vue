@@ -292,6 +292,9 @@ const estimatedReadingTimeText = computed(() => {
 
 async function loadMeta() {
   try {
+    // Ensure bookId is set — this clears stale allChapters if the book changed
+    book.setBookId(props.bookId);
+
     const infoMatches = book.info && (book.info.public_id === props.bookId || book.info.book_id === props.bookId);
     if (!infoMatches) {
       await book.loadInfo(props.bookId);
@@ -469,7 +472,20 @@ async function load() {
 
     // Set the current chapter in the store for prev/next navigation
     // Try to find the chapter in allChapters by public_id or number
-    const matchedChapter = book.findChapterById(props.chapterId);
+    let matchedChapter = book.findChapterById(props.chapterId);
+
+    // If chapter not found (e.g. only Phase 1 partial data loaded), wait for all chapters
+    if (!matchedChapter && book.allChapters.length < (book.info?.last_chapter_number ?? 0)) {
+      console.log(`[load] Chapter ${props.chapterId} not in partial cache (${book.allChapters.length} chapters), loading all...`);
+      await book.loadAllChapters({
+        force: true,
+        onProgress: (msg: string) => {
+          console.log('[ChapterPage] Loading all chapters:', msg);
+        }
+      });
+      matchedChapter = book.findChapterById(props.chapterId);
+    }
+
     if (matchedChapter) {
       book.setChapter(matchedChapter);
 

@@ -2,11 +2,13 @@ services:
   web:
     build:
       context: .
-      dockerfile: docker/Dockerfile.web
+      dockerfile: docker/Dockerfile
+      target: web
   xsw:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      target: xsw
       args:
         BASE_URL: $BASE_URL
         INDEX_URL: $INDEX_URL

@@ -54,16 +54,16 @@ export const useBookStore = defineStore('book', {
     },
 
     nextChapter(state): ChapterRef | null {
-      const index = (state.currentChapterIndex ?? 0) + 1;
-
-      if (index < 0 || index >= state.allChapters.length) return null;
-
+      if (state.currentChapterIndex == null || state.currentChapterIndex < 0) return null;
+      const index = state.currentChapterIndex + 1;
+      if (index >= state.allChapters.length) return null;
       return state.allChapters.at(index) ?? null;
     },
 
     prevChapter(state): ChapterRef | null {
-      const index = (state.currentChapterIndex ?? 1) - 1;
-      if (index < 0 || index >= state.allChapters.length) return null;
+      if (state.currentChapterIndex == null || state.currentChapterIndex < 0) return null;
+      const index = state.currentChapterIndex - 1;
+      if (index < 0) return null;
       return state.allChapters.at(index) ?? null;
     },
 

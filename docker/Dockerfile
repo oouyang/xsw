@@ -1,25 +1,33 @@
-FROM node:22-alpine AS builder
-
+# ============================================================
+# Stage 1: Build the Vue/Quasar SPA (shared by both services)
+# ============================================================
+FROM node:22-alpine AS spa-builder
 WORKDIR /web
 COPY package*.json .
 RUN --mount=type=cache,target=/root/.npm npm config set strict-ssl false && npm ci --ignore-scripts
 COPY . .
-# Run quasar prepare only if project config exists
-RUN --mount=type=cache,target=/root/.npm npm run build && cd dist/spa && tar cvfz ../spa.tgz .
+RUN --mount=type=cache,target=/root/.npm npm run build
 
-FROM python:3-alpine AS app
+# ============================================================
+# Stage 2: Nginx frontend (target: web)
+# ============================================================
+FROM nginx:1.16-alpine AS web
+COPY --from=spa-builder /web/dist/spa /usr/share/nginx/html
+COPY docker/default.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
 
-# 1) Declare build-time args (can have optional defaults)
+# ============================================================
+# Stage 3: Python backend (target: xsw)
+# ============================================================
+FROM python:3-alpine AS xsw
+
 ARG INDEX_URL
 ARG TRUSTED_HOST
-
-# 2) Promote them to runtime env vars (no further expansion)
 ENV INDEX_URL=$INDEX_URL
 ENV TRUSTED_HOST=$TRUSTED_HOST
 
 WORKDIR /app
 
-# Copy requirements first for better caching
 COPY requirements.txt .
 
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -30,18 +38,18 @@ RUN --mount=type=cache,target=/root/.cache/pip \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
     pip install -r requirements.txt && \
-    pip install ruff
+    pip install ruff && npm run test -- --reporter=verbose && pytest -v
 
 COPY . .
-COPY --from=builder /web/dist /app/dist
+COPY --from=spa-builder /web/dist /app/dist
+
 ARG BASE_URL
 ARG AUTH_ENABLED
 ENV BASE_URL=$BASE_URL
 ENV AUTH_ENABLED=$AUTH_ENABLED
 ENV DB_PATH=/app/data/xsw_cache.db
 
-# Create data directory for database persistence
-RUN mkdir -p /app/data  /app/dist/ubike && \
+RUN mkdir -p /app/data /app/dist/ubike && \
     ruff check && ruff format && echo $BASE_URL && \
     pip config unset global.index-url
 

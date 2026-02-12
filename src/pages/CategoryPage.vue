@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import type { QInfiniteScroll } from 'quasar';
 import BookCard from 'components/BookCard.vue';
 import type { BookSummary, Category } from 'src/types/book-api';
@@ -110,6 +110,7 @@ async function onEndlessLoad(_index: number, done: (stop?: boolean) => void) {
       return;
     }
     allBooks.value = [...allBooks.value, ...newBooks];
+    await nextTick();
     done(false);
   } catch (e) {
     console.log('endless load error', e);

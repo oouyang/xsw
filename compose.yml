@@ -5,7 +5,8 @@ services:
       - 2345:80
     # build:
     #   context: .
-    #   dockerfile: docker/Dockerfile.web
+    #   dockerfile: docker/Dockerfile
+    #   target: web
   xsw:
     image: ${img}:${tag}
     env_file: .env
@@ -20,6 +21,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile
+    #   target: xsw
     #   args:
     #     BASE_URL: $BASE_URL
     #     INDEX_URL: $INDEX_URL

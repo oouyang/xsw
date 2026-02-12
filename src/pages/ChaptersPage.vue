@@ -256,7 +256,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { QInfiniteScroll } from 'quasar';
 import type { ChapterRef, Chapters } from 'src/types/book-api';
@@ -327,7 +327,11 @@ function onEndlessLoad(_index: number, done: (stop?: boolean) => void) {
     return;
   }
   endlessPage.value++;
-  done(endlessPage.value >= book.maxPages);
+  // Defer done() until after Vue renders the new items,
+  // so QInfiniteScroll can measure the new scroll height correctly
+  void nextTick(() => {
+    done(endlessPage.value >= book.maxPages);
+  });
 }
 
 // Reset endless page when switching modes or books
