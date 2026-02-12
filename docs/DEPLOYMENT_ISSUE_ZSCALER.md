@@ -29,7 +29,7 @@ Please wait a moment while we launch our security service.
 
 ## Root Cause
 
-The deployed container's network traffic goes through a corporate proxy (`proxy-web.micron.com:80`) which then routes through Zscaler. Zscaler requires authentication for external websites like `m.xsw.tw`.
+The deployed container's network traffic goes through a corporate proxy (`proxy-web.example.com:80`) which then routes through Zscaler. Zscaler requires authentication for external websites like `m.xsw.tw`.
 
 ## Solutions
 
@@ -42,7 +42,7 @@ Add `m.xsw.tw` to the `NO_PROXY` environment variable:
 services:
   xsw:
     environment:
-      - NO_PROXY=.micron.com,localhost,micron.com,.micron.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,xsw.tw
+      - NO_PROXY=.example.com,localhost,example.com,.example.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,xsw.tw
 ```
 
 ### Option 2: Configure Zscaler Authentication
@@ -79,7 +79,7 @@ Set up an intermediate proxy service that:
 ```yaml
 services:
   xsw:
-    image: hpctw-docker-dev-local.boartifactory.micron.com/xsw:latest
+    image: hpctw-docker-dev-local.boartifactory.example.com/xsw:latest
     container_name: nginx-xsw-1
     restart: unless-stopped
     ports:
@@ -90,8 +90,8 @@ services:
       - BASE_URL=https://m.xsw.tw
       - DB_PATH=/app/data/xsw_cache.db
       # Add these lines:
-      - NO_PROXY=.micron.com,localhost,micron.com,.micron.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
-      - no_proxy=.micron.com,localhost,micron.com,.micron.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
+      - NO_PROXY=.example.com,localhost,example.com,.example.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
+      - no_proxy=.example.com,localhost,example.com,.example.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
 ```
 
 ## Testing the Fix
@@ -147,8 +147,8 @@ If the host already has proxy environment variables, you can also create/update 
 ```bash
 # On bolezk03 in /opt/nginx/
 cat > .env << 'EOF'
-NO_PROXY=.micron.com,localhost,micron.com,.micron.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
-no_proxy=.micron.com,localhost,micron.com,.micron.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
+NO_PROXY=.example.com,localhost,example.com,.example.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
+no_proxy=.example.com,localhost,example.com,.example.com,vpce.amazonaws.com,.vpce.amazonaws.com,m.xsw.tw,*.xsw.tw
 EOF
 
 docker compose down xsw

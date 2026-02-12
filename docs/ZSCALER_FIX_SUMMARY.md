@@ -123,7 +123,7 @@ Then use `verify=True` in requests.
 Add to NO_PROXY:
 ```yaml
 environment:
-  - NO_PROXY=.micron.com,localhost,m.xsw.tw,*.xsw.tw
+  - NO_PROXY=.example.com,localhost,m.xsw.tw,*.xsw.tw
 ```
 
 **Why not used:** Caused "Connection reset by peer" errors. The proxy configuration didn't support direct bypass for this domain.
@@ -140,12 +140,12 @@ Created [relay_proxy.py](relay_proxy.py) to run on a machine without Zscaler and
 docker compose -f compose.yml -f docker/build.yml build xsw
 
 # Tag and push
-docker tag oouyang/xsw:latest hpctw-docker-dev-local.boartifactory.micron.com/xsw:latest
-docker push hpctw-docker-dev-local.boartifactory.micron.com/xsw:latest
+docker tag oouyang/xsw:latest hpctw-docker-dev-local.boartifactory.example.com/xsw:latest
+docker push hpctw-docker-dev-local.boartifactory.example.com/xsw:latest
 
 # Transfer to production
-ssh boleai02 "docker pull hpctw-docker-dev-local.boartifactory.micron.com/xsw && \
-              docker save hpctw-docker-dev-local.boartifactory.micron.com/xsw -o /etl/python_env/ximg.tgz"
+ssh boleai02 "docker pull hpctw-docker-dev-local.boartifactory.example.com/xsw && \
+              docker save hpctw-docker-dev-local.boartifactory.example.com/xsw -o /etl/python_env/ximg.tgz"
 
 # Deploy on production
 ssh bolezk03 "docker load -i /etl/python_env/ximg.tgz && \

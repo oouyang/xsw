@@ -118,12 +118,12 @@ docker compose logs -f xsw | grep -i "sqlite\|InterfaceError"
 ```bash
 # Build and push
 docker compose -f compose.yml -f docker/build.yml build xsw
-docker tag oouyang/xsw:latest hpctw-docker-dev-local.boartifactory.micron.com/xsw:latest
-docker push hpctw-docker-dev-local.boartifactory.micron.com/xsw:latest
+docker tag oouyang/xsw:latest hpctw-docker-dev-local.boartifactory.example.com/xsw:latest
+docker push hpctw-docker-dev-local.boartifactory.example.com/xsw:latest
 
 # Deploy to bolezk03
-ssh boleai02 "docker pull hpctw-docker-dev-local.boartifactory.micron.com/xsw && \
-              docker save hpctw-docker-dev-local.boartifactory.micron.com/xsw -o /etl/python_env/ximg.tgz"
+ssh boleai02 "docker pull hpctw-docker-dev-local.boartifactory.example.com/xsw && \
+              docker save hpctw-docker-dev-local.boartifactory.example.com/xsw -o /etl/python_env/ximg.tgz"
 ssh bolezk03 "docker load -i /etl/python_env/ximg.tgz && \
               docker compose -f /opt/nginx/docker-compose.yml up -d xsw"
 ```

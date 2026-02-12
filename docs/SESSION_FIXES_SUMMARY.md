@@ -83,12 +83,12 @@
 docker compose -f compose.yml -f docker/build.yml build xsw
 
 # Tag and push to registry
-docker tag oouyang/xsw:latest hpctw-docker-dev-local.boartifactory.micron.com/xsw:latest
-docker push hpctw-docker-dev-local.boartifactory.micron.com/xsw:latest
+docker tag oouyang/xsw:latest hpctw-docker-dev-local.boartifactory.example.com/xsw:latest
+docker push hpctw-docker-dev-local.boartifactory.example.com/xsw:latest
 
 # Transfer to production (via boleai02)
-ssh boleai02 "docker pull hpctw-docker-dev-local.boartifactory.micron.com/xsw && \
-             docker save hpctw-docker-dev-local.boartifactory.micron.com/xsw -o /etl/python_env/ximg.tgz"
+ssh boleai02 "docker pull hpctw-docker-dev-local.boartifactory.example.com/xsw && \
+             docker save hpctw-docker-dev-local.boartifactory.example.com/xsw -o /etl/python_env/ximg.tgz"
 
 # Deploy on production (bolezk03)
 ssh bolezk03 "docker load -i /etl/python_env/ximg.tgz && \
