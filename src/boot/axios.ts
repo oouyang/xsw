@@ -4,6 +4,15 @@ import { useAppConfig } from 'src/services/useAppConfig';
 import { authService } from 'src/services/authService';
 import { userAuthService } from 'src/services/userAuthService';
 
+// Suppress harmless ResizeObserver loop warnings from Quasar components
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e) => {
+    if (e.message?.includes('ResizeObserver loop')) {
+      e.stopImmediatePropagation();
+    }
+  });
+}
+
 declare module 'vue' {
   interface ComponentCustomProperties {
     $axios: AxiosInstance;

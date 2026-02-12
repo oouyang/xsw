@@ -786,9 +786,10 @@ onMounted(async () => {
       }
     });
 
-    // After loading all chapters, ensure pageChapters is set for current page
-    if (book.allChapters.length > 0 && book.pageChapters.length === 0) {
-      console.log('[onMounted] pageChapters is empty after loading, re-slicing...');
+    // After loading all chapters, always re-derive pageChapters for current page
+    // This handles stale cache, Phase 2 overwrites, and timing edge cases
+    if (book.allChapters.length > 0) {
+      console.log('[onMounted] Re-slicing pageChapters after loadAllChapters...');
       book.setPage(book.page); // Force re-slice
     }
 

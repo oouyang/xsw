@@ -287,14 +287,23 @@ export const useBookStore = defineStore('book', {
             }, 0)
           : 0;
 
+      // Check if first chapter starts at 1 (sequential indexing invariant)
+      const firstChapterNum = this.allChapters.length > 0 ? this.allChapters[0]?.number ?? 0 : 0;
+      const badFirstChapter = this.allChapters.length > 0 && firstChapterNum !== 1;
+
       const isCacheOutdated =
         opts?.force === true ||
         this.allChapters.length === 0 ||
+        badFirstChapter || // Stale cache with non-sequential numbering
         (expectedLast > 0 && cachedLast < expectedLast) ||
         (expectedLast > 0 && this.allChapters.length < expectedLast); // Check total count, not just highest chapter
 
       if (isCacheOutdated) {
-        if (expectedLast > 0 && cachedLast < expectedLast) {
+        if (badFirstChapter) {
+          console.log(
+            `[loadAllChapters] Stale cache (first chapter is ${firstChapterNum}, expected 1), re-fetching all chapters`,
+          );
+        } else if (expectedLast > 0 && cachedLast < expectedLast) {
           console.log(
             `[loadAllChapters] Cache outdated (has ${cachedLast}, expected ${expectedLast}), re-fetching all chapters`,
           );
