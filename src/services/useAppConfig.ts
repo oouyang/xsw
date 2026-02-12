@@ -37,6 +37,12 @@ export interface AppConfig {
   hash?: string;
   env?: string;
 
+  // Optional: Social login provider client IDs (config.json)
+  googleClientId?: string;
+  facebookAppId?: string;
+  appleClientId?: string;
+  wechatAppId?: string;
+
   // Optional: Legacy/internal
   me?: string;
   origin?: string;

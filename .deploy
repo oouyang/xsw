@@ -2,7 +2,7 @@ dhost=boleai02
 dpath=/ci/apps/xeus/ws
 dname=web
 xhost=bolezk03
-ximg=hpctw-docker-dev-local.boartifactory.micron.com/xsw
+ximg=hpctw-docker-dev-local.boartifactory.example.com/xsw
 xpath=/etl/python_env
 
 # Frontend build
