@@ -26,17 +26,6 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
 ]
 
-[[tool.uv.index]]
-name = "Micron-index"
-url = "https://boartifactory.micron.com/artifactory/api/pypi/micron-pypi-rel-virtual/simple"
-default = true
-
-[tool.uv.pip]
-index-url = "https://boartifactory.micron.com/artifactory/api/pypi/micron-pypi-rel-virtual/simple"
-
-[tool.uv]
-allow-insecure-host = ["boartifactory.micron.com", "files.pythonhosted.com", "files.pythonhosted.org", "pypi.org", "pypi.python.org", "github.com"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "tests"]
