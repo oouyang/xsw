@@ -120,7 +120,9 @@ class TestChapters:
         )
         resp = client.get(f"{BASE}/books/testbook/chapters?all=true")
         assert resp.status_code == 200
-        chapters = resp.json()
+        data = resp.json()
+        # Response may be a dict with volumes or a flat list
+        chapters = data["chapters"] if isinstance(data, dict) else data
         assert len(chapters) == 3
         numbers = [ch["number"] for ch in chapters]
         assert numbers == [1, 2, 3]
@@ -189,6 +191,122 @@ class TestChapterFetchStoresBookInfo:
         data = resp.json()
         assert data["last_chapter_number"] == 3
         assert data["last_chapter_title"] == "第3章 結局"
+
+
+class TestAuthorBooks:
+    def test_author_with_books(self, client, mock_fetch):
+        """Author endpoint returns books by the given author."""
+        import db_models
+        from cache_manager import generate_public_id
+
+        session = db_models.db_manager.get_session()
+        try:
+            b1 = db_models.Book(
+                id="auth1_book1", public_id=generate_public_id(),
+                name="Book A", author="TestAuthor", type="玄幻",
+                view_count=100,
+            )
+            b2 = db_models.Book(
+                id="auth1_book2", public_id=generate_public_id(),
+                name="Book B", author="TestAuthor", type="言情",
+                view_count=200,
+            )
+            session.add_all([b1, b2])
+            session.commit()
+        finally:
+            session.close()
+
+        resp = client.get(f"{BASE}/authors/TestAuthor/books")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        # Should be ordered by view_count desc
+        assert data[0]["bookname"] == "Book B"
+        assert data[1]["bookname"] == "Book A"
+
+    def test_author_no_books(self, client, mock_fetch):
+        resp = client.get(f"{BASE}/authors/NonExistent/books")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestSimilarBooks:
+    def test_similar_by_author_and_type(self, client, mock_fetch):
+        """Similar books returns books by same author or type, excluding self."""
+        import db_models
+        from cache_manager import generate_public_id
+
+        session = db_models.db_manager.get_session()
+        try:
+            current = db_models.Book(
+                id="sim_current", public_id=generate_public_id(),
+                name="Current Book", author="SimAuthor", type="玄幻",
+                view_count=50,
+            )
+            same_author = db_models.Book(
+                id="sim_author", public_id=generate_public_id(),
+                name="Same Author Book", author="SimAuthor", type="言情",
+                view_count=300,
+            )
+            same_type = db_models.Book(
+                id="sim_type", public_id=generate_public_id(),
+                name="Same Type Book", author="OtherAuthor", type="玄幻",
+                view_count=200,
+            )
+            unrelated = db_models.Book(
+                id="sim_unrelated", public_id=generate_public_id(),
+                name="Unrelated", author="Someone", type="歷史",
+                view_count=500,
+            )
+            session.add_all([current, same_author, same_type, unrelated])
+            session.commit()
+        finally:
+            session.close()
+
+        resp = client.get(f"{BASE}/books/sim_current/similar")
+        assert resp.status_code == 200
+        data = resp.json()
+        ids = [b["book_id"] for b in data]
+        assert "sim_author" in ids
+        assert "sim_type" in ids
+        assert "sim_current" not in ids
+        assert "sim_unrelated" not in ids
+        # Ordered by view_count desc
+        assert data[0]["bookname"] == "Same Author Book"
+
+    def test_similar_book_not_found(self, client, mock_fetch):
+        resp = client.get(f"{BASE}/books/nonexistent999/similar")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestChaptersWithVolumes:
+    def test_chapters_all_returns_volumes(self, client, mock_fetch):
+        """When fetching all chapters, volumes should be included."""
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        resp = client.get(f"{BASE}/books/testbook/chapters?all=true")
+        assert resp.status_code == 200
+        data = resp.json()
+        # Response should be a dict with chapters and volumes
+        assert isinstance(data, dict)
+        assert "chapters" in data
+        assert "volumes" in data
+        assert len(data["chapters"]) == 3
+        assert len(data["volumes"]) == 1
+        assert data["volumes"][0]["name"] == "第一卷 起始"
+        assert data["volumes"][0]["start_chapter"] == 1
+
+    def test_chapters_paginated_returns_list(self, client, mock_fetch):
+        """Paginated mode still returns a flat list for backward compat."""
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        resp = client.get(f"{BASE}/books/testbook/chapters?page=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
 
 
 class TestSearch:

@@ -398,6 +398,23 @@ class TestFetchChaptersFromLiebiao:
         )
         assert chapters == []
 
+    def test_volumes_out_captures_markers(self):
+        volumes = []
+        chapters = fetch_chapters_from_liebiao(
+            CZBOOKS_BOOK_DETAIL_HTML, self.PAGE_URL, self.BASE, volumes_out=volumes
+        )
+        assert len(chapters) == 3
+        assert len(volumes) == 1
+        assert volumes[0]["name"] == "第一卷 起始"
+        assert volumes[0]["start_chapter"] == 1
+
+    def test_volumes_out_none_still_works(self):
+        """When volumes_out is None (default), no crash and chapters returned normally."""
+        chapters = fetch_chapters_from_liebiao(
+            CZBOOKS_BOOK_DETAIL_HTML, self.PAGE_URL, self.BASE, volumes_out=None
+        )
+        assert len(chapters) == 3
+
 
 # ===== _normalize_czbooks_url =====
 

@@ -1,6 +1,6 @@
 // src/services/bookApi.ts
 import { api } from 'boot/axios';
-import type { Category, BookSummary, BookInfo, Chapters, ChapterContent } from 'src/types/book-api';
+import type { Category, BookSummary, BookInfo, Chapters, ChapterContent, CommentEntry } from 'src/types/book-api';
 
 export async function getHealth() {
   const { data } = await api.get('/health');
@@ -58,5 +58,17 @@ export async function getChapterContent(
 }
 export async function searchBooks(q: string, page = 1): Promise<BookSummary[]> {
   const { data } = await api.get('/search', { params: { q, page } });
+  return data;
+}
+export async function listBooksByAuthor(authorName: string): Promise<BookSummary[]> {
+  const { data } = await api.get(`/authors/${encodeURIComponent(authorName)}/books`);
+  return data;
+}
+export async function getSimilarBooks(bookId: string): Promise<BookSummary[]> {
+  const { data } = await api.get(`/books/${bookId}/similar`);
+  return data;
+}
+export async function getBookComments(bookId: string, page = 1): Promise<CommentEntry[]> {
+  const { data } = await api.get(`/books/${bookId}/comments`, { params: { page } });
   return data;
 }

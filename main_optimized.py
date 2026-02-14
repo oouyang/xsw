@@ -74,7 +74,7 @@ from user_auth import (
     UserProfile,
     UserTokenPayload,
 )
-from db_models import User, ReadingProgress
+from db_models import User, ReadingProgress, Comment
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -731,7 +731,7 @@ def get_book_info(book_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api_router.get("/books/{book_id}/chapters", response_model=List[ChapterRef])
+@api_router.get("/books/{book_id}/chapters")
 def get_book_chapters(
     book_id: str,
     page: int = Query(1, ge=1),
@@ -755,6 +755,7 @@ def get_book_chapters(
         book_id = resolve_book_id(book_id)
         # First, try to get all chapters from DB or web
         all_chapters = None
+        volumes = []  # Volume markers from parser
 
         if not nocache:
             # Check if we have chapters in DB
@@ -795,7 +796,8 @@ def get_book_chapters(
                         items = fetch_chapters_from_liebiao(html_content, home_url, canonical_base(), start_index=1)
                     else:
                         # Fetch from pagination pages (all chapters)
-                        items = fetch_all_chapters_from_pagination(book_id)
+                        volumes = []
+                        items = fetch_all_chapters_from_pagination(book_id, volumes_out=volumes)
 
                     if not items:
                         raise HTTPException(status_code=404, detail="No chapters found")
@@ -822,7 +824,9 @@ def get_book_chapters(
 
         # Return based on 'all' parameter
         if all_chapters_flag:
-            # Return all chapters
+            # Return chapters with volumes when available
+            if volumes:
+                return {"chapters": all_chapters, "volumes": volumes}
             return all_chapters
 
         # Server-side pagination: slice the results
@@ -844,18 +848,19 @@ def get_book_chapters(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def fetch_all_chapters_from_pagination(book_id: str) -> list:
+def fetch_all_chapters_from_pagination(book_id: str, volumes_out: list = None) -> list:
     """
     Fetch all chapters for a book.
     czbooks.net lists all chapters on the book detail page (no pagination).
     Also parses and stores book info (description, stats) from the same page.
+    If volumes_out is provided, volume markers are captured into it.
     """
     base = canonical_base()
     book_url = f"{base}/n/{book_id}"
     html_content = fetch_html(book_url)
 
     # czbooks.net has all chapters on a single page in ul.chapter-list
-    items = fetch_chapters_from_liebiao(html_content, book_url, base, start_index=1)
+    items = fetch_chapters_from_liebiao(html_content, book_url, base, start_index=1, volumes_out=volumes_out)
     print(f"[API] Fetched {len(items)} chapters for book {book_id} from {book_url}")
 
     # Parse and store book info from the same HTML (description, bookmark/view counts)
@@ -2319,6 +2324,232 @@ def user_delete_progress(
         return {"deleted": True}
     finally:
         db.close()
+
+
+# -----------------------
+# Author Pages
+# -----------------------
+@api_router.get("/authors/{author_name}/books", response_model=List[BookSummary])
+def list_books_by_author(author_name: str):
+    """List all books by a given author from the database."""
+    import db_models as _db
+    from db_models import Book
+
+    if not _db.db_manager:
+        return []
+
+    session = _db.db_manager.get_session()
+    try:
+        books = (
+            session.query(Book)
+            .filter(Book.author == author_name)
+            .order_by(Book.view_count.desc().nullslast())
+            .all()
+        )
+        result = []
+        for b in books:
+            result.append(BookSummary(
+                bookname=b.name or "",
+                author=b.author or "",
+                lastchapter=b.last_chapter_title or "",
+                lasturl=b.last_chapter_url or "",
+                intro=b.description or "",
+                bookurl=b.source_url or "",
+                book_id=b.id,
+                public_id=b.public_id,
+                bookmark_count=b.bookmark_count,
+                view_count=b.view_count,
+            ))
+        return result
+    finally:
+        session.close()
+
+
+# -----------------------
+# Recommended / Similar Books
+# -----------------------
+@api_router.get("/books/{book_id}/similar", response_model=List[BookSummary])
+def get_similar_books(book_id: str):
+    """Get books by the same author or in the same category."""
+    import db_models as _db
+    from db_models import Book
+    from sqlalchemy import or_
+
+    if not _db.db_manager:
+        return []
+
+    czbooks_id = resolve_book_id(book_id)
+    session = _db.db_manager.get_session()
+    try:
+        current = session.query(Book).filter(Book.id == czbooks_id).first()
+        if not current:
+            return []
+
+        conditions = []
+        if current.author:
+            conditions.append(Book.author == current.author)
+        if current.type:
+            conditions.append(Book.type == current.type)
+
+        if not conditions:
+            return []
+
+        books = (
+            session.query(Book)
+            .filter(Book.id != czbooks_id, or_(*conditions))
+            .order_by(Book.view_count.desc().nullslast())
+            .limit(10)
+            .all()
+        )
+        result = []
+        for b in books:
+            result.append(BookSummary(
+                bookname=b.name or "",
+                author=b.author or "",
+                lastchapter=b.last_chapter_title or "",
+                lasturl=b.last_chapter_url or "",
+                intro=b.description or "",
+                bookurl=b.source_url or "",
+                book_id=b.id,
+                public_id=b.public_id,
+                bookmark_count=b.bookmark_count,
+                view_count=b.view_count,
+            ))
+        return result
+    finally:
+        session.close()
+
+
+# -----------------------
+# Comments
+# -----------------------
+class CommentCreateRequest(BaseModel):
+    text: str
+
+
+class CommentResponse(BaseModel):
+    id: int
+    user_id: int
+    display_name: str
+    avatar_url: Optional[str] = None
+    book_id: str
+    text: str
+    created_at: str
+    updated_at: str
+
+
+@api_router.get("/books/{book_id}/comments")
+def list_book_comments(
+    book_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """List comments for a book (public, paginated)."""
+    import db_models as _db
+
+    if not _db.db_manager:
+        return []
+
+    session = _db.db_manager.get_session()
+    try:
+        offset = (page - 1) * page_size
+        rows = (
+            session.query(Comment, User)
+            .join(User, Comment.user_id == User.id)
+            .filter(Comment.book_id == book_id)
+            .order_by(Comment.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
+        return [
+            CommentResponse(
+                id=c.id,
+                user_id=c.user_id,
+                display_name=u.display_name,
+                avatar_url=u.avatar_url,
+                book_id=c.book_id,
+                text=c.text,
+                created_at=c.created_at.isoformat() if c.created_at else "",
+                updated_at=c.updated_at.isoformat() if c.updated_at else "",
+            )
+            for c, u in rows
+        ]
+    finally:
+        session.close()
+
+
+@api_router.post("/books/{book_id}/comments", status_code=201)
+def create_comment(
+    book_id: str,
+    body: CommentCreateRequest,
+    auth: UserTokenPayload = Depends(require_user_auth),
+):
+    """Create a comment on a book (requires user auth)."""
+    import db_models as _db
+
+    text = body.text.strip()
+    if not text or len(text) > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Comment text must be 1-1000 characters",
+        )
+
+    if not _db.db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    session = _db.db_manager.get_session()
+    try:
+        user = session.query(User).filter(User.id == auth.sub).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        comment = Comment(
+            user_id=auth.sub,
+            book_id=book_id,
+            text=text,
+        )
+        session.add(comment)
+        session.commit()
+        session.refresh(comment)
+
+        return CommentResponse(
+            id=comment.id,
+            user_id=comment.user_id,
+            display_name=user.display_name,
+            avatar_url=user.avatar_url,
+            book_id=comment.book_id,
+            text=comment.text,
+            created_at=comment.created_at.isoformat() if comment.created_at else "",
+            updated_at=comment.updated_at.isoformat() if comment.updated_at else "",
+        )
+    finally:
+        session.close()
+
+
+@api_router.delete("/user/comments/{comment_id}")
+def delete_comment(
+    comment_id: int,
+    auth: UserTokenPayload = Depends(require_user_auth),
+):
+    """Delete own comment (requires user auth)."""
+    import db_models as _db
+
+    if not _db.db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    session = _db.db_manager.get_session()
+    try:
+        comment = session.query(Comment).filter(Comment.id == comment_id).first()
+        if not comment:
+            raise HTTPException(status_code=404, detail="Comment not found")
+        if comment.user_id != auth.sub:
+            raise HTTPException(status_code=403, detail="Cannot delete another user's comment")
+        session.delete(comment)
+        session.commit()
+        return {"deleted": True}
+    finally:
+        session.close()
 
 
 # -----------------------

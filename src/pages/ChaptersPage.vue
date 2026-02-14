@@ -7,7 +7,12 @@
       <div class="q-ml-sm">
         <div class="text-h6 text-weight-medium">{{ displayBookName }}</div>
         <div class="text-caption text-grey-7">
-          {{ displayAuthor }} • {{ displayType }} • {{ displayStatus }}
+          <router-link
+            :to="{ name: 'Author', params: { authorName: book.info?.author } }"
+            class="text-grey-7"
+            style="text-decoration: none"
+          >{{ displayAuthor }}</router-link>
+          • {{ displayType }} • {{ displayStatus }}
           <span v-if="book.info?.update"> • {{ book.info.update }}</span>
         </div>
         <div class="row items-center q-gutter-sm text-caption text-grey-6 q-mt-xs">
@@ -31,6 +36,27 @@
       <q-chip outline color="primary" size="sm">
         {{ book.info?.last_chapter_number || 0 }} 章
       </q-chip>
+    </div>
+
+    <!-- Recommended books -->
+    <div v-if="similarBooks.length > 0" class="q-mb-md">
+      <div class="text-caption text-grey-7 q-mb-xs">{{ $t('book.recommended') }}</div>
+      <div class="row q-gutter-sm" style="overflow-x: auto; flex-wrap: nowrap">
+        <q-card
+          v-for="sb in similarBooks"
+          :key="sb.book_id || sb.bookurl"
+          flat
+          bordered
+          class="cursor-pointer"
+          style="min-width: 140px; max-width: 160px"
+          @click="router.push({ name: 'Chapters', params: { bookId: sb.public_id || sb.book_id || '' } })"
+        >
+          <q-card-section class="q-pa-sm">
+            <div class="text-caption text-weight-medium ellipsis">{{ convertIfNeeded(sb.bookname) }}</div>
+            <div class="text-caption text-grey-6 ellipsis">{{ convertIfNeeded(sb.author) }}</div>
+          </q-card-section>
+        </q-card>
+      </div>
     </div>
 
     <!-- Compact toolbar -->
@@ -214,20 +240,24 @@
           separator
           dense
         >
-          <q-item
-            v-for="c in displayChapters"
-            :key="c.id || c.number"
-            clickable
-            :to="chapterLink(c.id ?? String(c.number), c.title)"
-            class="chapter-item"
-          >
-            <q-item-section>
-              <q-item-label class="text-body2">{{ c.title }}</q-item-label>
-            </q-item-section>
-            <q-item-section side>
-              <q-icon name="chevron_right" color="grey-5" size="xs" />
-            </q-item-section>
-          </q-item>
+          <template v-for="c in displayChaptersWithVolumes" :key="c.type === 'volume' ? `vol-${c.name}` : (c.id || c.number)">
+            <q-item-label v-if="c.type === 'volume'" header class="text-weight-bold text-grey-8 bg-grey-2">
+              {{ convertIfNeeded(c.name) }}
+            </q-item-label>
+            <q-item
+              v-else
+              clickable
+              :to="chapterLink(c.id ?? String(c.number), c.title)"
+              class="chapter-item"
+            >
+              <q-item-section>
+                <q-item-label class="text-body2">{{ c.title }}</q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <q-icon name="chevron_right" color="grey-5" size="xs" />
+              </q-item-section>
+            </q-item>
+          </template>
         </q-list>
       </transition>
     </template>
@@ -252,6 +282,9 @@
         boundary-numbers
       />
     </div>
+
+    <!-- Comments section -->
+    <BookComments v-if="props.bookId" :book-id="props.bookId" />
   </q-page>
 </template>
 
@@ -259,13 +292,14 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { QInfiniteScroll } from 'quasar';
-import type { ChapterRef, Chapters } from 'src/types/book-api';
-import { getBookChapters } from 'src/services/bookApi';
+import type { ChapterRef, Chapters, BookSummary } from 'src/types/book-api';
+import { getBookChapters, getSimilarBooks } from 'src/services/bookApi';
 import { useMeta } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppConfig } from 'src/services/useAppConfig';
 import { chapterLink, dedupeBy, normalizeNum, toArr, fuzzCount, formatCount } from 'src/services/utils';
 import ShareMenu from 'src/components/ShareMenu.vue';
+import BookComments from 'src/components/BookComments.vue';
 import { useTextConversion } from 'src/composables/useTextConversion';
 import { useBookStore } from 'src/stores/books';
 
@@ -298,6 +332,9 @@ const phase2Message = ref('');
 
 // Quick chapter navigation
 const jumpToChapterNum = ref<number | null>(null);
+
+// Recommended books
+const similarBooks = ref<BookSummary[]>([]);
 
 // Smart error tracking with context
 interface LoadError {
@@ -353,6 +390,30 @@ const displayChapters = computed(() => {
   const chapters = book.pageChapters;
   console.log('[displayChapters] page:', book.page, 'pageChapters:', chapters.length, 'allChapters:', book.allChapters.length);
   return chapters;
+});
+
+// Interleave volume headers into the chapter list for the current page
+const displayChaptersWithVolumes = computed(() => {
+  const chapters = displayChapters.value;
+  if (!chapters.length) return [];
+  const volumes = book.volumes;
+  if (!volumes.length) {
+    // No volumes: return chapters as-is with a type marker
+    return chapters.map(c => ({ ...c, type: 'chapter' as const }));
+  }
+
+  // Build a mixed list: volume headers + chapters
+  const result: Array<{ type: 'volume'; name: string } | (ChapterRef & { type: 'chapter' })> = [];
+  let volIdx = 0;
+  for (const c of chapters) {
+    // Insert any volume headers that start at or before this chapter
+    while (volIdx < volumes.length && (volumes[volIdx]?.start_chapter ?? Infinity) <= c.number) {
+      result.push({ type: 'volume', name: volumes[volIdx]?.name ?? '' });
+      volIdx++;
+    }
+    result.push({ ...c, type: 'chapter' });
+  }
+  return result;
 });
 
 useMeta({ title: `${config.value.name} ${book.info?.name ? ' >> '+ book.info?.name : ''}` });
@@ -845,6 +906,9 @@ onMounted(async () => {
 
   // Load book info first
   await loadInfo();
+
+  // Fire-and-forget: load recommended books
+  void getSimilarBooks(props.bookId).then(data => { similarBooks.value = data; }).catch(() => {});
 
   // Then load all chapters in the background with progress tracking
   loading.value = true;

@@ -37,9 +37,24 @@ export interface ChapterRef {
   url: string;
   id?: string | null;
 }
+export interface VolumeInfo {
+  name: string;
+  start_chapter: number;
+}
 export interface Chapters {
   chapters: ChapterRef[];
   totalPages?: number;
+  volumes?: VolumeInfo[];
+}
+export interface CommentEntry {
+  id: number;
+  user_id: number;
+  display_name: string;
+  avatar_url?: string | null;
+  book_id: string;
+  text: string;
+  created_at: string;
+  updated_at: string;
 }
 export interface ChapterContent {
   book_id?: string | null;

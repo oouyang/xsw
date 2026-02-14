@@ -13,6 +13,12 @@ const routes: RouteRecordRaw[] = [
         props: true,
       },
       {
+        path: 'author/:authorName',
+        name: 'Author',
+        component: () => import('pages/AuthorPage.vue'),
+        props: true,
+      },
+      {
         path: 'book/:bookId/chapters',
         name: 'Chapters',
         component: () => import('pages/ChaptersPage.vue'),

@@ -251,6 +251,32 @@ class ReadingProgress(Base):
         return f"<ReadingProgress(user_id={self.user_id}, book_id='{self.book_id}', chapter={self.chapter_number})>"
 
 
+class Comment(Base):
+    """User comments on books."""
+
+    __tablename__ = "comments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    book_id = Column(String, nullable=False)  # public_id
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User")
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_comment_book", "book_id"),
+        Index("idx_comment_user", "user_id"),
+        Index("idx_comment_created", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<Comment(id={self.id}, user_id={self.user_id}, book_id='{self.book_id}')>"
+
+
 class AdminUser(Base):
     """Admin user authentication records for Google OAuth and password authentication."""
 

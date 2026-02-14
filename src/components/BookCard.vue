@@ -10,7 +10,9 @@
         </q-item-section>
 
         <q-item-section side top>
-          <q-item-label caption lines="2">👤 {{ displayAuthor }}</q-item-label>
+          <q-item-label caption lines="2">
+            <router-link :to="authorLink" class="text-grey-7" style="text-decoration: none">👤 {{ displayAuthor }}</router-link>
+          </q-item-label>
           <q-btn
             flat
             style="width: 230px"
@@ -31,7 +33,7 @@
         <span class="text-subtitle1">
           <q-btn flat :to="bookLink">{{ displayBookName }}</q-btn>
         </span>
-        <span class="text-caption text-grey"> 👤 {{ displayAuthor }}</span>
+        <router-link :to="authorLink" class="text-caption text-grey" style="text-decoration: none"> 👤 {{ displayAuthor }}</router-link>
       </div>
       <div class="row items-center q-gutter-sm q-mt-xs text-caption text-grey-7">
         <span v-if="book.bookmark_count" class="row items-center no-wrap">
@@ -66,6 +68,7 @@ const router = useRouter();
 const props = defineProps<{ book: BookSummary }>();
 const bookId = computed(() => props.book.public_id || props.book.book_id || extractBookIdFromUrl(props.book.bookurl));
 const bookLink = computed(() => ({ name: 'Chapters', params: { bookId: bookId.value } }));
+const authorLink = computed(() => ({ name: 'Author', params: { authorName: props.book.author } }));
 const useItem = true;
 
 // Computed properties for text conversion

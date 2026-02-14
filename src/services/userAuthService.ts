@@ -4,6 +4,7 @@ import type {
   UserAuthResponse,
   UserProfile,
   ReadingProgressEntry,
+  CommentEntry,
 } from 'src/types/book-api';
 
 const TOKEN_KEY = 'xsw_user_token';
@@ -131,6 +132,23 @@ class UserAuthService {
 
   async deleteProgress(bookId: string): Promise<void> {
     await api.delete(`/user/progress/${bookId}`, {
+      headers: this.getAuthHeaders(),
+    });
+  }
+
+  // --- Comment endpoints ---
+
+  async createComment(bookId: string, text: string): Promise<CommentEntry> {
+    const { data } = await api.post<CommentEntry>(
+      `/books/${bookId}/comments`,
+      { text },
+      { headers: this.getAuthHeaders() },
+    );
+    return data;
+  }
+
+  async deleteComment(commentId: number): Promise<void> {
+    await api.delete(`/user/comments/${commentId}`, {
       headers: this.getAuthHeaders(),
     });
   }

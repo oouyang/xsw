@@ -62,6 +62,26 @@ export default {
     latestPrefix: '⚡ 最新',
     intro: '简介',
     loadInfoFailed: '加载书籍信息失败',
+    recommended: '推荐书籍',
+  },
+
+  // 作者
+  author: {
+    booksBy: '{author} 的作品',
+    noBooksFound: '找不到该作者的书籍',
+  },
+
+  // 评论
+  comment: {
+    comments: '评论',
+    noComments: '暂无评论',
+    addComment: '发表',
+    placeholder: '写下你的评论...',
+    loginToComment: '登录后即可评论',
+    deleteConfirm: '确定删除此评论？',
+    deleted: '评论已删除',
+    tooLong: '评论内容过长',
+    posted: '评论成功',
   },
 
   // 章节

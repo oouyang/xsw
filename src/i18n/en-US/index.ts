@@ -62,6 +62,26 @@ export default {
     latestPrefix: '⚡ Latest',
     intro: 'Introduction',
     loadInfoFailed: 'Failed to load book info',
+    recommended: 'Recommended',
+  },
+
+  // Author
+  author: {
+    booksBy: 'Books by {author}',
+    noBooksFound: 'No books found for this author',
+  },
+
+  // Comments
+  comment: {
+    comments: 'Comments',
+    noComments: 'No comments yet',
+    addComment: 'Post',
+    placeholder: 'Write a comment...',
+    loginToComment: 'Login to leave a comment',
+    deleteConfirm: 'Delete this comment?',
+    deleted: 'Comment deleted',
+    tooLong: 'Comment is too long',
+    posted: 'Comment posted',
   },
 
   // Chapter

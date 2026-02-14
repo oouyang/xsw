@@ -384,7 +384,8 @@ def chapter_title_to_number(title: str) -> Optional[int]:
 
 
 def fetch_chapters_from_liebiao(
-    html_content: str, page_url: str, canonical_base: str, start_index: int = 1
+    html_content: str, page_url: str, canonical_base: str, start_index: int = 1,
+    volumes_out: Optional[list] = None,
 ) -> List[Dict[str, Any]]:
     """
     Parse chapter list from czbooks.net book page.
@@ -394,7 +395,7 @@ def fetch_chapters_from_liebiao(
     - `page_url` should be the book page URL (so relative hrefs join correctly)
     - Rewrites final URLs to the canonical site host
     - Uses sequential indices starting from `start_index`
-    - Skips volume markers (li.volume)
+    - Skips volume markers (li.volume) for numbering but captures them when `volumes_out` is provided
 
     Returns: [{ 'url': absolute_url, 'title': str, 'number': int }, ...]
     """
@@ -408,8 +409,12 @@ def fetch_chapters_from_liebiao(
         out: List[Dict[str, Any]] = []
         chapter_index = start_index
         for li in container.find_all("li", recursive=False):
-            # Skip volume markers (li.volume)
+            # Capture volume markers (li.volume) when volumes_out is provided
             if "volume" in li.get("class", []):
+                if volumes_out is not None:
+                    vol_name = li.get_text(strip=True)
+                    if vol_name:
+                        volumes_out.append({"name": vol_name, "start_chapter": chapter_index})
                 continue
             a_tag = li.find("a", href=True)
             if not a_tag:

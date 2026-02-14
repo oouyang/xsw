@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { LocalStorage } from 'quasar';
-import type { BookInfo, ChapterRef } from 'src/types/book-api';
+import type { BookInfo, ChapterRef, VolumeInfo } from 'src/types/book-api';
 import { dedupeBy, normalizeNum } from 'src/services/utils';
 import { getBookChapters, getBookInfo } from 'src/services/bookApi';
 
@@ -12,6 +12,9 @@ export interface BookState {
 
   // GLOBAL cache: all chapters across all pages
   allChapters: ChapterRef[];
+
+  // Volume grouping info
+  volumes: VolumeInfo[];
 
   // global chapter cache merged from multiple pages
   pageChapters: ChapterRef[];
@@ -37,6 +40,7 @@ export const useBookStore = defineStore('book', {
     info: null,
 
     allChapters: [],
+    volumes: [],
 
     pageChapters: [],
     page: 1,
@@ -173,6 +177,7 @@ export const useBookStore = defineStore('book', {
         this.$patch({
           ...saved,
           allChapters: saved.allChapters ?? [],
+          volumes: saved.volumes ?? [],
           pageChapters: saved.pageChapters ?? [],
           resyncRetries: saved.resyncRetries ?? 0,
           lastValidationError: saved.lastValidationError ?? null,
@@ -187,6 +192,7 @@ export const useBookStore = defineStore('book', {
         info: this.info,
 
         allChapters: this.allChapters,
+        volumes: this.volumes,
         pageChapters: this.pageChapters,
 
         page: this.page,
@@ -208,6 +214,7 @@ export const useBookStore = defineStore('book', {
         this.info = null;
 
         this.allChapters = [];
+        this.volumes = [];
         this.pageChapters = [];
 
         this.currentChapterIndex = null;
@@ -475,6 +482,11 @@ export const useBookStore = defineStore('book', {
         const chaptersArray = Array.isArray(allChaptersResponse)
           ? allChaptersResponse
           : allChaptersResponse.chapters;
+
+        // Extract volumes if present
+        if (!Array.isArray(allChaptersResponse) && allChaptersResponse.volumes) {
+          this.volumes = allChaptersResponse.volumes;
+        }
 
         console.log(`[loadRemainingChapters] Received ${chaptersArray.length} chapters from backend`);
 

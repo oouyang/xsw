@@ -62,6 +62,26 @@ export default {
     latestPrefix: '⚡ 最新',
     intro: '簡介',
     loadInfoFailed: '載入書籍資訊失敗',
+    recommended: '推薦書籍',
+  },
+
+  // 作者
+  author: {
+    booksBy: '{author} 的作品',
+    noBooksFound: '找不到該作者的書籍',
+  },
+
+  // 留言
+  comment: {
+    comments: '留言',
+    noComments: '暫無留言',
+    addComment: '發表',
+    placeholder: '寫下你的留言...',
+    loginToComment: '登入後即可留言',
+    deleteConfirm: '確定刪除此留言？',
+    deleted: '留言已刪除',
+    tooLong: '留言內容過長',
+    posted: '留言成功',
   },
 
   // 章節
