@@ -4,9 +4,12 @@ Optimized FastAPI backend with SQLite database-first caching.
 Strategy: Check DB → Fetch from web → Store to DB
 """
 import asyncio
-from typing import List, Optional
+import time
+from typing import Any, List, Optional
 from contextlib import asynccontextmanager
 from datetime import datetime
+
+import httpx
 from db_models import init_database
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Depends, status, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
@@ -479,6 +482,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+TPEX_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+
+# Simple in-memory cache
+_cache: dict[str, Any] = {"data": None, "ts": 0}
+CACHE_TTL = 3600  # 1 hour
+
+
+async def fetch_tpex() -> list[dict]:
+    now = time.time()
+    if _cache["data"] and now - _cache["ts"] < CACHE_TTL:
+        return _cache["data"]
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        res = await client.get(TPEX_URL)
+        res.raise_for_status()
+        data = res.json()
+
+    _cache["data"] = data
+    _cache["ts"] = now
+    return data
+
+
 # Add simple health check at root level (for monitoring)
 @app.get("/healthz", include_in_schema=False)
 def healthz():
@@ -614,7 +640,36 @@ def health():
         "status": "ok",
         "base_url": BASE_URL,
         "db_path": DB_PATH,
-        "cache_stats": cache_stats,
+        "cache_stats": cache_stats, "service": "TPEX Proxy"
+    }
+
+
+@app.get("/tpex/etf-list")
+async def tpex_etf_list():
+    data = await fetch_tpex()
+
+    etfs = [
+        {
+            "code": d["SecuritiesCompanyCode"],
+            "name": d.get("CompanyName", ""),
+            "price": d.get("Close", ""),
+            "open": d.get("Open", ""),
+            "high": d.get("High", ""),
+            "low": d.get("Low", ""),
+            "volume": d.get("TradingShares", ""),
+            "change": d.get("Change", ""),
+            "transactions": d.get("TransactionNumber", ""),
+            "date": d.get("Date", ""),
+            "source": "tpex",
+        }
+        for d in data
+        if d.get("SecuritiesCompanyCode", "").startswith("00")
+    ]
+
+    return {
+        "count": len(etfs),
+        "date": etfs[0]["date"] if etfs else "",
+        "etfs": etfs,
     }
 
 
