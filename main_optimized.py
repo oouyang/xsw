@@ -14,7 +14,7 @@ from db_models import init_database
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Depends, status, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import requests
@@ -24,6 +24,8 @@ import uuid
 import threading
 from pathlib import Path
 import urllib3
+import logging
+
 
 # Import OpenCC for Chinese conversion
 try:
@@ -73,13 +75,17 @@ from user_auth import (
     find_or_create_user,
     build_auth_response,
     require_user_auth,
+    optional_user_auth,
     UserAuthResponse,
     UserProfile,
     UserTokenPayload,
 )
+import analytics
 from db_models import User, ReadingProgress, Comment
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+logger = logging.getLogger(__name__)
 
 # -----------------------
 # Configuration
@@ -414,12 +420,16 @@ async def lifespan(app: FastAPI):
     if db_models.db_manager:
         init_admin_users(db_models.db_manager)
 
-    print("[App] Database, cache, and auth initialized")
+    # Start analytics background writer
+    analytics.start_writer(db_models.db_manager.get_session)
+
+    print("[App] Database, cache, auth, and analytics initialized")
 
     yield  # Application runs here
 
     # Shutdown: Cleanup
     print("[App] Shutting down...")
+    analytics.stop_writer()
     print("[App] Shutdown complete")
 
 app = FastAPI(
@@ -483,26 +493,74 @@ app.add_middleware(
 )
 
 
-TPEX_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+# Traditional web API — more reliable than openapi endpoint
+TPEX_URL = (
+    "https://www.tpex.org.tw/web/stock/aftertrading/"
+    "daily_close_quotes/stk_quote_result.php?l=zh-tw&o=json"
+)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
 
 # Simple in-memory cache
 _cache: dict[str, Any] = {"data": None, "ts": 0}
 CACHE_TTL = 3600  # 1 hour
 
 
-async def fetch_tpex() -> list[dict]:
+async def fetch_tpex() -> dict:
     now = time.time()
     if _cache["data"] and now - _cache["ts"] < CACHE_TTL:
         return _cache["data"]
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=15, headers=HEADERS) as client:
         res = await client.get(TPEX_URL)
         res.raise_for_status()
         data = res.json()
 
+    if data.get("stat") != "ok":
+        raise ValueError(f"TPEX returned stat={data.get('stat')}")
+
     _cache["data"] = data
     _cache["ts"] = now
     return data
+
+
+def parse_etfs(data: dict) -> list[dict]:
+    """Parse ETF rows from TPEX tables response.
+
+    Row format: [code, name, close, change, open, high, low, avg,
+                 volume, amount, transactions, lastBid, lastAsk,
+                 issuedShares, nextUp, nextDown]
+    """
+    date = data.get("date", "")
+    etfs = []
+
+    for table in data.get("tables", []):
+        for row in table.get("data", []):
+            if not isinstance(row, list) or len(row) < 11:
+                continue
+            code = row[0].strip() if row[0] else ""
+            if not code.startswith("00"):
+                continue
+
+            etfs.append({
+                "code": code,
+                "name": (row[1] or "").strip(),
+                "price": (row[2] or "").strip().replace(",", ""),
+                "change": (row[3] or "").strip().replace(",", ""),
+                "open": (row[4] or "").strip().replace(",", ""),
+                "high": (row[5] or "").strip().replace(",", ""),
+                "low": (row[6] or "").strip().replace(",", ""),
+                "volume": (row[8] or "").strip().replace(",", ""),
+                "transactions": (row[10] or "").strip().replace(",", ""),
+                "date": date,
+                "source": "tpex",
+            })
+
+    return etfs
 
 
 # Add simple health check at root level (for monitoring)
@@ -643,35 +701,24 @@ def health():
         "cache_stats": cache_stats, "service": "TPEX Proxy"
     }
 
-
 @app.get("/tpex/etf-list")
 async def tpex_etf_list():
-    data = await fetch_tpex()
+    try:
+        data = await fetch_tpex()
+    except Exception as e:
+        logger.error("TPEX fetch failed: %s", e)
+        return JSONResponse(
+            status_code=502,
+            content={"error": "TPEX fetch failed", "message": str(e)},
+        )
 
-    etfs = [
-        {
-            "code": d["SecuritiesCompanyCode"],
-            "name": d.get("CompanyName", ""),
-            "price": d.get("Close", ""),
-            "open": d.get("Open", ""),
-            "high": d.get("High", ""),
-            "low": d.get("Low", ""),
-            "volume": d.get("TradingShares", ""),
-            "change": d.get("Change", ""),
-            "transactions": d.get("TransactionNumber", ""),
-            "date": d.get("Date", ""),
-            "source": "tpex",
-        }
-        for d in data
-        if d.get("SecuritiesCompanyCode", "").startswith("00")
-    ]
+    etfs = parse_etfs(data)
 
     return {
         "count": len(etfs),
         "date": etfs[0]["date"] if etfs else "",
         "etfs": etfs,
     }
-
 
 @api_router.get("/categories", response_model=List[Category])
 def get_categories():
@@ -938,7 +985,9 @@ def fetch_all_chapters_from_pagination(book_id: str, volumes_out: list = None) -
 def get_chapter_content(
     book_id: str,
     chapter_id: str,
+    request: Request,
     nocache: bool = Query(False),
+    current_user: Optional[UserTokenPayload] = Depends(optional_user_auth),
 ):
     """
     Get chapter content.
@@ -954,6 +1003,17 @@ def get_chapter_content(
         _, chapter_num = resolve_chapter(czbooks_book_id, chapter_id)
         if chapter_num < 0:
             raise HTTPException(status_code=404, detail=f"Chapter '{chapter_id}' not found")
+
+        # Track page view (non-blocking)
+        client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.client.host if request.client else None
+        analytics.log_page_view(
+            book_id=czbooks_book_id,
+            chapter_num=chapter_num,
+            user_id=current_user.sub if current_user else None,
+            ip=client_ip,
+            user_agent=request.headers.get("User-Agent"),
+            referer=request.headers.get("Referer"),
+        )
 
         if not nocache:
             # Check cache first
@@ -2603,6 +2663,80 @@ def delete_comment(
         session.delete(comment)
         session.commit()
         return {"deleted": True}
+    finally:
+        session.close()
+
+
+# -----------------------
+# Admin Analytics Endpoints
+# -----------------------
+
+@api_router.get("/admin/analytics/summary")
+def analytics_summary(auth: TokenPayload = Depends(require_admin_auth)):
+    """Total views, unique visitors, today/week/month counts, top 5 books."""
+    import db_models as _db
+    session = _db.db_manager.get_session()
+    try:
+        return analytics.get_summary(session)
+    finally:
+        session.close()
+
+
+@api_router.get("/admin/analytics/books/{book_id}")
+def analytics_book(
+    book_id: str,
+    days: int = Query(30, ge=1, le=365),
+    auth: TokenPayload = Depends(require_admin_auth),
+):
+    """Per-book analytics: daily views (N days), top chapters."""
+    import db_models as _db
+    session = _db.db_manager.get_session()
+    try:
+        return analytics.get_book_analytics(session, book_id, days)
+    finally:
+        session.close()
+
+
+@api_router.get("/admin/analytics/top")
+def analytics_top_books(
+    period: str = Query("week"),
+    limit: int = Query(20, ge=1, le=100),
+    auth: TokenPayload = Depends(require_admin_auth),
+):
+    """Top books by views within a time period (day/week/month/all)."""
+    import db_models as _db
+    session = _db.db_manager.get_session()
+    try:
+        return analytics.get_top_books(session, period, limit)
+    finally:
+        session.close()
+
+
+@api_router.get("/admin/analytics/traffic")
+def analytics_traffic(
+    days: int = Query(30, ge=1, le=365),
+    auth: TokenPayload = Depends(require_admin_auth),
+):
+    """Daily views + unique visitors chart data."""
+    import db_models as _db
+    session = _db.db_manager.get_session()
+    try:
+        return analytics.get_traffic(session, days)
+    finally:
+        session.close()
+
+
+@api_router.post("/admin/analytics/cleanup")
+def analytics_cleanup(
+    days: int = Query(90, ge=1),
+    auth: TokenPayload = Depends(require_admin_auth),
+):
+    """Delete page views older than N days."""
+    import db_models as _db
+    session = _db.db_manager.get_session()
+    try:
+        deleted = analytics.cleanup_old_views(session, days)
+        return {"deleted": deleted, "older_than_days": days}
     finally:
         session.close()
 

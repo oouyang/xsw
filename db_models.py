@@ -277,6 +277,28 @@ class Comment(Base):
         return f"<Comment(id={self.id}, user_id={self.user_id}, book_id='{self.book_id}')>"
 
 
+class PageView(Base):
+    """Analytics: page view events for chapter reads."""
+
+    __tablename__ = "page_views"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    book_id = Column(String, nullable=False, index=True)
+    chapter_num = Column(Integer, nullable=True)
+    user_id = Column(Integer, nullable=True)  # No FK — analytics persists independently
+    ip_hash = Column(String(16), nullable=True)
+    user_agent_hash = Column(String(16), nullable=True)
+    referer = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_pv_book_created", "book_id", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<PageView(book_id='{self.book_id}', chapter_num={self.chapter_num})>"
+
+
 class AdminUser(Base):
     """Admin user authentication records for Google OAuth and password authentication."""
 
