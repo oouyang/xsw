@@ -1,0 +1,51 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual trigger
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx quasar build
+        env:
+          # Set your backend API URL here (GitHub Pages can't proxy)
+          VITE_API_BASE: ${{ vars.API_BASE_URL }}
+
+      # GitHub Pages + history mode: copy index.html → 404.html
+      # so all SPA routes resolve instead of returning GitHub's 404 page
+      - run: cp dist/spa/index.html dist/spa/404.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/spa
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

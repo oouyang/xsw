@@ -2,21 +2,106 @@
 """
 Lightweight analytics for tracking chapter reads.
 
+Uses a **separate SQLite database** to isolate analytics writes from the
+main cache DB, avoiding write contention.
+
 - Background writer thread batches inserts to reduce SQLite write contention.
 - log_page_view() is non-blocking; silently drops if queue is full.
 - Query helpers power the admin analytics endpoints.
 """
 import hashlib
+import os
 import queue
 import threading
 import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Index,
+    func,
+)
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.sql import text as sql_text
 
-from db_models import PageView
+# ---------------------------------------------------------------------------
+# Separate declarative base — analytics tables live in their own DB
+# ---------------------------------------------------------------------------
+AnalyticsBase = declarative_base()
+
+
+class PageView(AnalyticsBase):
+    """Analytics: page view events for chapter reads."""
+
+    __tablename__ = "page_views"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    book_id = Column(String, nullable=False, index=True)
+    chapter_num = Column(Integer, nullable=True)
+    user_id = Column(Integer, nullable=True)
+    ip_hash = Column(String(16), nullable=True)
+    user_agent_hash = Column(String(16), nullable=True)
+    referer = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_pv_book_created", "book_id", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<PageView(book_id='{self.book_id}', chapter_num={self.chapter_num})>"
+
+
+# ---------------------------------------------------------------------------
+# Database management (separate from main db_models.DatabaseManager)
+# ---------------------------------------------------------------------------
+_engine = None
+_SessionLocal = None
+
+
+def init_db(db_url: str = None):
+    """Initialize the analytics database (separate SQLite file)."""
+    global _engine, _SessionLocal
+
+    if db_url is None:
+        db_path = os.getenv("ANALYTICS_DB_PATH", "xsw_analytics.db")
+        db_url = f"sqlite:///{db_path}"
+
+    _engine = create_engine(
+        db_url,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        echo=os.getenv("DB_ECHO", "false").lower() == "true",
+    )
+
+    _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+
+    # Create tables
+    AnalyticsBase.metadata.create_all(bind=_engine)
+
+    # Enable WAL mode for better concurrency
+    if db_url.startswith("sqlite") and ":memory:" not in db_url:
+        with _engine.connect() as conn:
+            conn.execute(sql_text("PRAGMA journal_mode=WAL"))
+            conn.execute(sql_text("PRAGMA synchronous=NORMAL"))
+            conn.commit()
+
+    print(f"[Analytics] Database initialized: {db_url}")
+
+
+def get_session() -> Session:
+    """Get a new analytics database session."""
+    if _SessionLocal is None:
+        raise RuntimeError("Analytics DB not initialized. Call analytics.init_db() first.")
+    return _SessionLocal()
+
 
 # ---------------------------------------------------------------------------
 # Hashing helpers (privacy: truncated SHA-256)
@@ -47,7 +132,7 @@ BATCH_SIZE = 50
 FLUSH_INTERVAL = 5.0  # seconds
 
 
-def _writer_loop(get_session):
+def _writer_loop():
     """Drain the queue in batches and write to the database."""
     buf = []
     last_flush = time.monotonic()
@@ -63,7 +148,7 @@ def _writer_loop(get_session):
         # Flush when batch is full or interval elapsed
         now = time.monotonic()
         if buf and (len(buf) >= BATCH_SIZE or now - last_flush >= FLUSH_INTERVAL):
-            _flush(buf, get_session)
+            _flush(buf)
             buf = []
             last_flush = now
 
@@ -74,12 +159,12 @@ def _writer_loop(get_session):
         except queue.Empty:
             break
     if buf:
-        _flush(buf, get_session)
+        _flush(buf)
 
 
-def _flush(buf: list[dict], get_session):
+def _flush(buf: list[dict]):
     """Insert a batch of page view records."""
-    session: Session = get_session()
+    session = get_session()
     try:
         session.bulk_insert_mappings(PageView, buf)
         session.commit()
@@ -90,12 +175,12 @@ def _flush(buf: list[dict], get_session):
         session.close()
 
 
-def start_writer(get_session):
+def start_writer():
     """Start the background writer daemon thread."""
     global _writer_thread
     _stop_event.clear()
     _writer_thread = threading.Thread(
-        target=_writer_loop, args=(get_session,), daemon=True, name="analytics-writer"
+        target=_writer_loop, daemon=True, name="analytics-writer"
     )
     _writer_thread.start()
     print("[Analytics] Background writer started")

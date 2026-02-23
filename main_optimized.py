@@ -420,8 +420,9 @@ async def lifespan(app: FastAPI):
     if db_models.db_manager:
         init_admin_users(db_models.db_manager)
 
-    # Start analytics background writer
-    analytics.start_writer(db_models.db_manager.get_session)
+    # Initialize analytics (separate SQLite DB) and start background writer
+    analytics.init_db()
+    analytics.start_writer()
 
     print("[App] Database, cache, auth, and analytics initialized")
 
@@ -491,6 +492,63 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -----------------------
+# HTTP Cache-Control Middleware
+# -----------------------
+import re
+
+# Route patterns → max-age in seconds (only for GET, only for 2xx responses)
+_CACHE_RULES: list[tuple[re.Pattern, int]] = [
+    # Chapter content — immutable once fetched, cache aggressively
+    (re.compile(r"^/xsw/api/books/[^/]+/chapters/[^/]+$"), 86400),   # 1 day
+    # Book info — changes when new chapters appear
+    (re.compile(r"^/xsw/api/books/[^/]+$"), 300),                    # 5 min
+    # Chapter list
+    (re.compile(r"^/xsw/api/books/[^/]+/chapters$"), 300),           # 5 min
+    # Similar books / author books
+    (re.compile(r"^/xsw/api/books/[^/]+/similar$"), 3600),           # 1 hour
+    (re.compile(r"^/xsw/api/authors/[^/]+/books$"), 3600),           # 1 hour
+    # Comments list (not mutations)
+    (re.compile(r"^/xsw/api/books/[^/]+/comments$"), 60),            # 1 min
+    # Categories — very stable
+    (re.compile(r"^/xsw/api/categories$"), 3600),                    # 1 hour
+    (re.compile(r"^/xsw/api/categories/[^/]+/books$"), 300),         # 5 min
+    # Search results
+    (re.compile(r"^/xsw/api/search$"), 60),                          # 1 min
+    # by-url helpers
+    (re.compile(r"^/xsw/api/by-url/"), 300),                         # 5 min
+]
+
+
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    """Set Cache-Control headers on cacheable GET responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Only cache successful GET responses that don't already have Cache-Control
+        if (
+            request.method != "GET"
+            or response.status_code < 200
+            or response.status_code >= 300
+            or "cache-control" in response.headers
+        ):
+            return response
+
+        path = request.url.path
+        for pattern, max_age in _CACHE_RULES:
+            if pattern.match(path):
+                response.headers["Cache-Control"] = f"public, max-age={max_age}"
+                break
+        else:
+            # Admin, auth, user endpoints and everything else: don't cache
+            if "/admin/" in path or "/user/" in path or "/auth/" in path:
+                response.headers["Cache-Control"] = "private, no-store"
+
+        return response
+
+app.add_middleware(CacheControlMiddleware)
 
 
 # Traditional web API — more reliable than openapi endpoint
@@ -2674,8 +2732,7 @@ def delete_comment(
 @api_router.get("/admin/analytics/summary")
 def analytics_summary(auth: TokenPayload = Depends(require_admin_auth)):
     """Total views, unique visitors, today/week/month counts, top 5 books."""
-    import db_models as _db
-    session = _db.db_manager.get_session()
+    session = analytics.get_session()
     try:
         return analytics.get_summary(session)
     finally:
@@ -2689,8 +2746,7 @@ def analytics_book(
     auth: TokenPayload = Depends(require_admin_auth),
 ):
     """Per-book analytics: daily views (N days), top chapters."""
-    import db_models as _db
-    session = _db.db_manager.get_session()
+    session = analytics.get_session()
     try:
         return analytics.get_book_analytics(session, book_id, days)
     finally:
@@ -2704,8 +2760,7 @@ def analytics_top_books(
     auth: TokenPayload = Depends(require_admin_auth),
 ):
     """Top books by views within a time period (day/week/month/all)."""
-    import db_models as _db
-    session = _db.db_manager.get_session()
+    session = analytics.get_session()
     try:
         return analytics.get_top_books(session, period, limit)
     finally:
@@ -2718,8 +2773,7 @@ def analytics_traffic(
     auth: TokenPayload = Depends(require_admin_auth),
 ):
     """Daily views + unique visitors chart data."""
-    import db_models as _db
-    session = _db.db_manager.get_session()
+    session = analytics.get_session()
     try:
         return analytics.get_traffic(session, days)
     finally:
@@ -2732,8 +2786,7 @@ def analytics_cleanup(
     auth: TokenPayload = Depends(require_admin_auth),
 ):
     """Delete page views older than N days."""
-    import db_models as _db
-    session = _db.db_manager.get_session()
+    session = analytics.get_session()
     try:
         deleted = analytics.cleanup_old_views(session, days)
         return {"deleted": deleted, "older_than_days": days}

@@ -3,6 +3,7 @@ import os
 
 os.environ.setdefault("AUTH_ENABLED", "false")
 os.environ.setdefault("DB_PATH", ":memory:")
+os.environ.setdefault("ANALYTICS_DB_PATH", ":memory:")
 os.environ.setdefault("BASE_URL", "https://czbooks.net")
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 os.environ.setdefault("CACHE_TTL_SECONDS", "900")
@@ -16,8 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import analytics
-from analytics import hash_ip, hash_user_agent, log_page_view, _hash16
-from db_models import PageView, init_database
+from analytics import PageView, hash_ip, hash_user_agent, log_page_view, _hash16
 from main_optimized import app
 
 
@@ -26,21 +26,21 @@ from main_optimized import app
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def _fresh_db():
-    """Give every test a fresh in-memory DB and drain the analytics queue."""
-    db_mgr = init_database("sqlite:///:memory:")
+def _fresh_analytics_db():
+    """Give every test a fresh in-memory analytics DB and drain the queue."""
+    analytics.init_db("sqlite:///:memory:")
     # Drain any leftover items from previous tests
     while not analytics._queue.empty():
         try:
             analytics._queue.get_nowait()
         except queue.Empty:
             break
-    yield db_mgr
+    yield
 
 
 @pytest.fixture
-def session(_fresh_db):
-    s = _fresh_db.get_session()
+def session(_fresh_analytics_db):
+    s = analytics.get_session()
     yield s
     s.close()
 
@@ -105,7 +105,7 @@ def test_log_page_view_drops_when_full():
 # Unit tests: flush / batch insert
 # ---------------------------------------------------------------------------
 
-def test_flush_inserts_records(session, _fresh_db):
+def test_flush_inserts_records(session):
     records = [
         {
             "book_id": f"book{i}",
@@ -118,7 +118,7 @@ def test_flush_inserts_records(session, _fresh_db):
         }
         for i in range(5)
     ]
-    analytics._flush(records, _fresh_db.get_session)
+    analytics._flush(records)
     count = session.query(PageView).count()
     assert count == 5
 

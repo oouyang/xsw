@@ -352,3 +352,51 @@ class TestByUrl:
         data = resp.json()
         assert data["title"] == "第1章 開始"
         assert "故事從這裡開始" in data["text"]
+
+
+class TestCacheControlHeaders:
+    """Verify Cache-Control headers are set on cacheable endpoints."""
+
+    def test_categories_has_cache_header(self, client, mock_fetch):
+        mock_fetch.register("https://czbooks.net/", CZBOOKS_HOMEPAGE_HTML)
+        resp = client.get(f"{BASE}/categories")
+        assert resp.status_code == 200
+        assert resp.headers.get("cache-control") == "public, max-age=3600"
+
+    def test_book_info_has_cache_header(self, client, mock_fetch):
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        resp = client.get(f"{BASE}/books/testbook")
+        assert resp.status_code == 200
+        assert resp.headers.get("cache-control") == "public, max-age=300"
+
+    def test_chapter_content_has_long_cache(self, client, mock_fetch):
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
+        )
+        mock_fetch.register(
+            "https://czbooks.net/n/testbook/ch1", CZBOOKS_CHAPTER_DETAIL_HTML
+        )
+        resp = client.get(f"{BASE}/books/testbook/chapters/1")
+        assert resp.status_code == 200
+        assert resp.headers.get("cache-control") == "public, max-age=86400"
+
+    def test_search_has_short_cache(self, client, mock_fetch):
+        mock_fetch.register(
+            "https://czbooks.net/s?q=test", CZBOOKS_CATEGORY_PAGE_HTML
+        )
+        resp = client.get(f"{BASE}/search", params={"q": "test"})
+        assert resp.status_code == 200
+        assert resp.headers.get("cache-control") == "public, max-age=60"
+
+    def test_health_no_public_cache(self, client):
+        resp = client.get(f"{BASE}/health")
+        assert resp.status_code == 200
+        cc = resp.headers.get("cache-control", "")
+        assert "public" not in cc
+
+    def test_admin_endpoint_no_store(self, client):
+        resp = client.get(f"{BASE}/admin/stats")
+        assert resp.status_code == 200
+        assert resp.headers.get("cache-control") == "private, no-store"
