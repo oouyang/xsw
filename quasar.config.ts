@@ -52,7 +52,7 @@ export default defineConfig((ctx) => {
 
       // rebuildCache: true, // rebuilds Vite/linter/etc cache on startup
 
-      // publicPath: '/xsw',
+      publicPath: process.env.PUBLIC_PATH || '/',
       // analyze: true,
       // env: {},
       // rawDefine: {}

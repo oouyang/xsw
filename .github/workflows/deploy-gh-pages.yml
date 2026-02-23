@@ -31,6 +31,8 @@ jobs:
         env:
           # Set your backend API URL here (GitHub Pages can't proxy)
           VITE_API_BASE: ${{ vars.API_BASE_URL }}
+          # Asset prefix for GitHub Pages subpath (e.g. /xsw/)
+          PUBLIC_PATH: /${{ github.event.repository.name }}/
 
       # GitHub Pages + history mode: copy index.html → 404.html
       # so all SPA routes resolve instead of returning GitHub's 404 page
