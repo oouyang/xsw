@@ -8,10 +8,8 @@ os.environ.setdefault("BASE_URL", "https://czbooks.net")
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 os.environ.setdefault("CACHE_TTL_SECONDS", "900")
 
-import time
 import queue
 from datetime import datetime, timedelta
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient

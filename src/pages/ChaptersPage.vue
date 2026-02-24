@@ -42,20 +42,19 @@
     <div v-if="similarBooks.length > 0" class="q-mb-md">
       <div class="text-caption text-grey-7 q-mb-xs">{{ $t('book.recommended') }}</div>
       <div class="row q-gutter-sm" style="overflow-x: auto; flex-wrap: nowrap">
-        <q-card
+        <router-link
           v-for="sb in similarBooks"
           :key="sb.book_id || sb.bookurl"
-          flat
-          bordered
-          class="cursor-pointer"
-          style="min-width: 140px; max-width: 160px"
-          @click="router.push({ name: 'Chapters', params: { bookId: sb.public_id || sb.book_id || '' } })"
+          :to="{ name: 'Chapters', params: { bookId: sb.public_id || sb.book_id } }"
+          style="text-decoration: none; color: inherit; min-width: 140px; max-width: 160px"
         >
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-weight-medium ellipsis">{{ convertIfNeeded(sb.bookname) }}</div>
-            <div class="text-caption text-grey-6 ellipsis">{{ convertIfNeeded(sb.author) }}</div>
-          </q-card-section>
-        </q-card>
+          <q-card flat bordered class="full-height">
+            <q-card-section class="q-pa-sm">
+              <div class="text-caption text-weight-medium ellipsis">{{ convertIfNeeded(sb.bookname) }}</div>
+              <div class="text-caption text-grey-6 ellipsis">{{ convertIfNeeded(sb.author) }}</div>
+            </q-card-section>
+          </q-card>
+        </router-link>
       </div>
     </div>
 

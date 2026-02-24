@@ -15,6 +15,7 @@
 #   ./sync_unfinished.sh --chapters-only    # Only fetch missing chapter lists
 #   ./sync_unfinished.sh --content-only     # Only fetch missing chapter content
 #   ./sync_unfinished.sh --book cr382b      # Sync a specific book only
+#   ./sync_unfinished.sh --nocache           # Bypass API cache (re-fetch from web)
 #   ./sync_unfinished.sh --dry-run          # Show what would be synced
 #   ./sync_unfinished.sh --limit 10         # Process at most 10 books
 #
@@ -38,6 +39,7 @@ MAX_CONSECUTIVE_FAILS="${MAX_CONSECUTIVE_FAILS:-10}"
 # Options
 MODE="all"          # all | chapters | content
 DRY_RUN=false
+NOCACHE=false
 SINGLE_BOOK=""
 BOOK_LIMIT=0        # 0 = no limit
 
@@ -46,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --chapters-only)  MODE="chapters"; shift ;;
         --content-only)   MODE="content"; shift ;;
+        --nocache)        NOCACHE=true; shift ;;
         --dry-run)        DRY_RUN=true; shift ;;
         --book)           SINGLE_BOOK="$2"; shift 2 ;;
         --limit)          BOOK_LIMIT="$2"; shift 2 ;;
@@ -196,6 +199,9 @@ sync_chapter_list() {
     local retry=0
     local max_retries=3
     local url="${API_BASE}/books/${book_id}/chapters?all=true"
+    if [[ "$NOCACHE" == true ]]; then
+        url="${url}&nocache=true"
+    fi
 
     while [[ $retry -lt $max_retries ]]; do
         local http_code
@@ -226,6 +232,9 @@ sync_chapter_content() {
     local retry=0
     local max_retries=3
     local url="${API_BASE}/books/${book_id}/chapters/${chapter_num}"
+    if [[ "$NOCACHE" == true ]]; then
+        url="${url}?nocache=true"
+    fi
 
     while [[ $retry -lt $max_retries ]]; do
         local http_code
@@ -453,6 +462,9 @@ main() {
     log_info "Database:     $DB_PATH"
     log_info "API:          $API_BASE"
     log_info "Mode:         $MODE"
+    if [[ "$NOCACHE" == true ]]; then
+        log_warning "Cache:        DISABLED (nocache=true)"
+    fi
     if [[ -n "$SINGLE_BOOK" ]]; then
         log_info "Book filter:  $SINGLE_BOOK"
     fi

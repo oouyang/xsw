@@ -254,8 +254,9 @@ export function useAppConfig() {
 
     try {
       // Fetch remote configuration
-      const res = await fetch('/config.json', { cache: 'no-store', signal });
-      if (!res.ok) throw new Error(`Failed to fetch /config.json: ${res.status}`);
+      const configUrl = `${import.meta.env.BASE_URL}config.json`;
+      const res = await fetch(configUrl, { cache: 'no-store', signal });
+      if (!res.ok) throw new Error(`Failed to fetch ${configUrl}: ${res.status}`);
       const raw = await res.json();
 
       // Parse and validate config.json fields

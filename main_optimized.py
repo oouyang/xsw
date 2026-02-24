@@ -4,6 +4,7 @@ Optimized FastAPI backend with SQLite database-first caching.
 Strategy: Check DB → Fetch from web → Store to DB
 """
 import asyncio
+import re
 import time
 from typing import Any, List, Optional
 from contextlib import asynccontextmanager
@@ -496,7 +497,6 @@ app.add_middleware(
 # -----------------------
 # HTTP Cache-Control Middleware
 # -----------------------
-import re
 
 # Route patterns → max-age in seconds (only for GET, only for 2xx responses)
 _CACHE_RULES: list[tuple[re.Pattern, int]] = [

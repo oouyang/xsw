@@ -27,9 +27,20 @@ jobs:
 
       - run: npm ci
 
+      # Overwrite config.json with gh-pages API URL before build
+      # (config.json has higher priority than VITE_API_BASE env var)
+      - run: |
+          node -e "
+            const fs = require('fs');
+            const cfg = JSON.parse(fs.readFileSync('public/config.json'));
+            cfg.apiBaseUrl = '${{ vars.API_BASE_URL }}';
+            fs.writeFileSync('public/config.json', JSON.stringify(cfg, null, 2));
+          "
+        if: ${{ vars.API_BASE_URL != '' }}
+
       - run: npx quasar build
         env:
-          # Set your backend API URL here (GitHub Pages can't proxy)
+          # Fallback if config.json override above is skipped
           VITE_API_BASE: ${{ vars.API_BASE_URL }}
           # Asset prefix for GitHub Pages subpath (e.g. /xsw/)
           PUBLIC_PATH: /${{ github.event.repository.name }}/
