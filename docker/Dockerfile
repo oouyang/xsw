@@ -55,7 +55,7 @@ RUN mkdir -p /app/data /app/dist/ubike && \
     pytest tests/ -v && \
     pip config unset global.index-url && \
     sed -i s/https/http/g /etc/apk/repositories  && \
-    apk add tmux bash htop jq curl wget openssh-client git && \
+    apk add tmux bash htop jq curl wget openssh-client git sqlite && \
     sed -i s/http/https/g /etc/apk/repositories 
 
 EXPOSE 8000
