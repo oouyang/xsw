@@ -2,7 +2,7 @@ dhost=boleai02
 dpath=/ci/apps/xeus/ws
 dname=web
 xhost=bolezk03
-ximg=hpctw-docker-dev-local.boartifactory.example.com/xsw
+ximg=hpctw-docker-dev-local.boartifactory.micron.com/xsw
 xpath=/etl/python_env
 
 # Frontend build
@@ -80,3 +80,56 @@ echo '━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # Quick deploy (no rebuild)
 # alias deploy-fast="tar czf dist/spa.tgz -C dist/spa . && scp -C dist/spa.tgz ${dhost}:${dpath} && ssh ${dhost} 'docker exec kind docker cp ${dpath}/spa.tgz ${dname}:/tmp && docker exec kind docker exec ${dname} sh -c \"rm -rf /usr/share/nginx/html/* && tar xzf /tmp/spa.tgz -C /usr/share/nginx/html && rm /tmp/spa.tgz\"'"
+
+# pgit: export a repo as bare tarball, copy to remote, extract into container, clone, set remote, push branch
+pgit() {
+  set -euo pipefail
+
+  # --- Tunables via env vars ---
+  local PRJ="${PRJ:-simbridge}"                 # project/repo name
+  local BRANCH="${BRANCH:-master}"              # branch to push
+  local SRC_REPO="${SRC_REPO:-/opt/ws/${PRJ}}"  # local source repo path
+  local DST_HOST="${DST_HOST:-boleai02}"        # ssh host
+  local DST_DIR="${DST_DIR:-/ci/tmp/aaaa}"      # directory on remote host (and visible in container)
+  local CTR="${CTR:-kind}"                      # docker container name on remote host
+  local GIT_URL="${GIT_URL:-https://github.com/alaska-icy-giant/${PRJ}.git}"  # remote git url to push to
+
+  # --- Derived names (avoid collisions) ---
+  local ts
+  ts="$(date +%Y%m%d-%H%M%S)"
+  local workdir
+  workdir="$(mktemp -d "/tmp/${PRJ}.pgit.${ts}.XXXX")"
+  local bare_dir="${workdir}/${PRJ}.git"
+  local tarball="${workdir}/${PRJ}-git.${ts}.txz"
+
+  # --- Cleanup on exit ---
+  cleanup() { rm -rf "${workdir}"; }
+  trap cleanup EXIT
+
+  echo "[pgit] PRJ=${PRJ} BRANCH=${BRANCH}"
+  echo "[pgit] SRC_REPO=${SRC_REPO}"
+  echo "[pgit] DST_HOST=${DST_HOST} CTR=${CTR} DST_DIR=${DST_DIR}"
+  echo "[pgit] GIT_URL=${GIT_URL}"
+
+  # 1) Create bare clone tarball locally
+  git clone --bare "${SRC_REPO}" "${bare_dir}"
+  tar -C "${workdir}" -cvJf "${tarball}" "${PRJ}.git"
+
+  # 2) Copy tarball to remote host
+  ssh "${DST_HOST}" "mkdir -p '${DST_DIR}'"
+  scp "${tarball}" "${DST_HOST}":"${DST_DIR}/"
+
+  # 3) Extract tarball inside container into /tmp
+  ssh "${DST_HOST}" "docker exec '${CTR}' mkdir -p /tmp"
+  ssh "${DST_HOST}" "docker exec '${CTR}' tar -xvJf '${DST_DIR}/$(basename "${tarball}")' -C /tmp"
+
+  # 4) Refresh destination workspace inside container and clone from bare repo
+  ssh "${DST_HOST}" "docker exec -w '${DST_DIR}' '${CTR}' rm -rf '${DST_DIR:?}/${PRJ}'"
+  ssh "${DST_HOST}" "docker exec -w '${DST_DIR}' '${CTR}' git clone '/tmp/${PRJ}.git' '${PRJ}'"
+
+  # 5) Set remote & push branch
+  ssh "${DST_HOST}" "docker exec -w '${DST_DIR}/${PRJ}' '${CTR}' git remote set-url origin '${GIT_URL}'"
+  ssh "${DST_HOST}" "docker exec -w '${DST_DIR}/${PRJ}' '${CTR}' git push origin '${BRANCH}'"
+
+  echo "[pgit] done ✅"
+}
