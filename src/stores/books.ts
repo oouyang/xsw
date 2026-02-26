@@ -348,11 +348,23 @@ export const useBookStore = defineStore('book', {
 
         console.log(`[loadAllChapters] Phase 1: Loading pages ${pagesToFetch.join(', ')} around current page ${currentPage}`);
 
+        // Check if we're loading the last page - if so, bypass cache to get latest chapters
+        const maxPages = this.maxPages;
+        const isLoadingLastPage = pagesToFetch.some(p => p >= maxPages);
+        const useNocache = opts?.nocache !== undefined ? opts.nocache : isLoadingLastPage;
+
+        if (isLoadingLastPage) {
+          console.log(`[loadAllChapters] Loading last page (${maxPages}), using nocache=true to ensure latest content`);
+        }
+
         // Fetch the selected pages in parallel with extended timeout
         // Use allSettled so if one page fails, others can still succeed
         const firstPhasePromises = pagesToFetch.map((page) => {
           const reqOpts: Parameters<typeof getBookChapters>[1] = { page, all: false, timeout: 60000 };
-          if (opts?.nocache !== undefined) reqOpts.nocache = opts.nocache;
+          // Use nocache for last page to ensure we get the latest chapters
+          if (page >= maxPages || useNocache) {
+            reqOpts.nocache = true;
+          }
           return getBookChapters(bookId, reqOpts);
         });
 
@@ -473,7 +485,8 @@ export const useBookStore = defineStore('book', {
       try {
         // Fetch all chapters using the all=true endpoint
         // The backend is optimized to handle this efficiently
-        const allOpts: Parameters<typeof getBookChapters>[1] = { all: true };
+        // Always use nocache=true to ensure we get the latest chapters
+        const allOpts: Parameters<typeof getBookChapters>[1] = { all: true, nocache: true };
         if (nocache !== undefined) allOpts.nocache = nocache;
 
         console.log(`[loadRemainingChapters] Fetching all chapters (nocache=${allOpts.nocache ?? false})...`);

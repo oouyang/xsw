@@ -311,7 +311,12 @@ async function loadMeta() {
     // This will be checked again in load() if needed
     nextTick(() => {
       if (book.allChapters.length === 0) {
+        // Check if we're viewing one of the last pages
+        const expectedLastChapter = book.info?.last_chapter_number ?? 0;
+        const isNearEnd = expectedLastChapter > 0 && book.page >= book.maxPages;
+
         void book.loadAllChapters({
+          nocache: isNearEnd, // Use nocache if viewing last page
           onProgress: (msg: string) => {
             console.log('[ChapterPage] Background loading progress:', msg);
           }
@@ -458,8 +463,19 @@ async function load() {
       // await loadAllChapters();
     }
 
+    // Detect if we're viewing one of the last few chapters
+    // If so, use nocache to ensure we get the latest content
+    const expectedLastChapter = book.info?.last_chapter_number ?? book.allChapters.length;
+    const currentChapterNumber = currentChapterNum.value;
+    const isNearEnd = expectedLastChapter > 0 && currentChapterNumber > 0 &&
+                      currentChapterNumber >= (expectedLastChapter - 2); // Last 3 chapters
+
+    if (isNearEnd) {
+      console.log(`[ChapterPage] Viewing chapter ${currentChapterNumber}/${expectedLastChapter}, using nocache=true to ensure latest content`);
+    }
+
     console.log(`Loading chapter ${props.chapterId}: ${props.chapterTitle}`);
-    const data = await getChapterContent(props.bookId, props.chapterId);
+    const data = await getChapterContent(props.bookId, props.chapterId, isNearEnd);
 
     if (!data || !data.text) {
       throw new Error('No content returned from API');
@@ -479,6 +495,7 @@ async function load() {
       console.log(`[load] Chapter ${props.chapterId} not in partial cache (${book.allChapters.length} chapters), loading all...`);
       await book.loadAllChapters({
         force: true,
+        nocache: isNearEnd, // Use nocache if viewing last chapters
         onProgress: (msg: string) => {
           console.log('[ChapterPage] Loading all chapters:', msg);
         }
