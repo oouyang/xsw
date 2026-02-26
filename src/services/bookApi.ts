@@ -26,8 +26,10 @@ function normalizeBookInfo(b: BookInfo): BookInfo & { last_chapter_number: numbe
   };
 }
 
-export async function getBookInfo(bookId: string): Promise<BookInfo> {
-  const { data } = await api.get(`/books/${bookId}`);
+export async function getBookInfo(bookId: string, opts?: { nocache?: boolean }): Promise<BookInfo> {
+  const { data } = await api.get(`/books/${bookId}`, {
+    params: opts ? { nocache: opts.nocache } : undefined,
+  });
   return normalizeBookInfo(data);
 }
 export async function getBookChapters(

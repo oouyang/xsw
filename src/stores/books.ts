@@ -574,8 +574,8 @@ export const useBookStore = defineStore('book', {
       }
     },
 
-    async loadInfo(bookId: string): Promise<BookInfo> {
-      this.info = await getBookInfo(bookId);
+    async loadInfo(bookId: string, opts?: { nocache?: boolean }): Promise<BookInfo> {
+      this.info = await getBookInfo(bookId, opts);
       // Switch bookId to public_id once the API returns it,
       // so all future navigation uses our random ID instead of czbooks ID
       if (this.info.public_id && this.bookId !== this.info.public_id) {

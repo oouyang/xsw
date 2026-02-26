@@ -840,7 +840,7 @@ def list_books_in_category(
 
 
 @api_router.get("/books/{book_id}", response_model=BookInfo)
-def get_book_info(book_id: str):
+def get_book_info(book_id: str, nocache: bool = Query(False)):
     """
     Get book metadata.
     Strategy: Check DB → Fetch from web → Store to DB
@@ -848,22 +848,29 @@ def get_book_info(book_id: str):
 
     For unfinished books whose info is older than 12 hours,
     bypass cache and re-fetch from the web.
+
+    - nocache=true: Force refresh from web (useful for last page to get latest chapter count)
     """
     try:
         # Resolve public_id to czbooks ID
         czbooks_id = resolve_book_id(book_id)
 
-        # If the book is unfinished and stale (>12h), bypass cache
-        stale = cache_mgr.cache_manager.is_book_stale(czbooks_id)
-        if stale:
-            print(f"[API] Book {czbooks_id} - stale (unfinished, >12h), refreshing")
+        # If nocache requested, invalidate and skip cache check
+        if nocache:
+            print(f"[API] Book {czbooks_id} - nocache requested, forcing refresh")
             cache_mgr.cache_manager.invalidate_book_info(czbooks_id)
         else:
-            # Check cache first
-            cached_info = cache_mgr.cache_manager.get_book_info(czbooks_id)
-            if cached_info:
-                print(f"[API] Book {czbooks_id} - cache hit")
-                return cached_info
+            # If the book is unfinished and stale (>12h), bypass cache
+            stale = cache_mgr.cache_manager.is_book_stale(czbooks_id)
+            if stale:
+                print(f"[API] Book {czbooks_id} - stale (unfinished, >12h), refreshing")
+                cache_mgr.cache_manager.invalidate_book_info(czbooks_id)
+            else:
+                # Check cache first
+                cached_info = cache_mgr.cache_manager.get_book_info(czbooks_id)
+                if cached_info:
+                    print(f"[API] Book {czbooks_id} - cache hit")
+                    return cached_info
 
         # Cache miss or stale - fetch from web
         print(f"[API] Book {czbooks_id} - fetching from web")

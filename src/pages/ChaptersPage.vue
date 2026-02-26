@@ -421,6 +421,12 @@ async function switchPage(page: number) {
   book.setPage(page);
   console.log(`page changed to ${page} -`, book.page);
 
+  // If switching to last page or near it, refresh book info to get latest chapter count
+  if (book.info && page >= book.maxPages - 1) {
+    console.log(`[switchPage] Switching to page ${page}/${book.maxPages}, refreshing book info with nocache`);
+    await loadInfo({ nocache: true });
+  }
+
   // If allChapters is empty, we need to load them first
   if (book.allChapters.length === 0) {
     console.log('[switchPage] allChapters is empty, loading...');
@@ -566,12 +572,12 @@ function jumpToChapter() {
 // );
 
 
-async function loadInfo() {
+async function loadInfo(opts?: { nocache?: boolean }) {
   try {
     loading.value = true;
     error.value = '';
     loadError.value = null;
-    await book.loadInfo(props.bookId);
+    await book.loadInfo(props.bookId, opts);
 
     // Sync config store bookId with pinia store (may have switched to public_id)
     if (book.bookId && book.bookId !== config.value.bookId) {
@@ -612,13 +618,15 @@ async function reload() {
   loading.value = true;
   loadingMessage.value = t('common.loading');
   try {
+    // Always use nocache when reloading to get the latest data
+    await loadInfo({ nocache: true });
     await book.loadAllChapters({
       force: true,
+      nocache: true,
       onProgress: (msg: string) => {
         loadingMessage.value = msg;
       }
     });
-    await loadInfo();
     await loadChapters();
   } catch (e) {
     error.value = 'Reload failed';
@@ -904,7 +912,19 @@ onMounted(async () => {
   }
 
   // Load book info first
-  await loadInfo();
+  // Use nocache if explicitly requesting last page or if viewing high page numbers
+  const queryPage = Number(route.query.page);
+  const isHighPageNumber = Number.isFinite(queryPage) && queryPage >= 10;
+  const shouldRefreshInfo = wantsLastPage || isHighPageNumber;
+
+  await loadInfo({ nocache: shouldRefreshInfo });
+
+  // After loading book info, check if we're on/near the last page
+  // If so, reload book info with nocache to ensure we have the latest chapter count
+  if (!shouldRefreshInfo && book.info && book.page >= book.maxPages - 1) {
+    console.log(`[onMounted] Near last page (${book.page}/${book.maxPages}), refreshing book info with nocache`);
+    await loadInfo({ nocache: true });
+  }
 
   // Fire-and-forget: load recommended books
   void getSimilarBooks(props.bookId).then(data => { similarBooks.value = data; }).catch(() => {});
