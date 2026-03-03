@@ -7,7 +7,7 @@ import os
 import jwt
 import requests
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -71,7 +71,7 @@ class UserAuthResponse(BaseModel):
 # -----------------------
 def create_user_jwt(user_id: int, display_name: str) -> tuple[str, datetime]:
     """Create a JWT token for a regular user (30-day expiration)."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expiration = now + timedelta(days=USER_JWT_EXPIRATION_DAYS)
 
     payload = {
@@ -156,7 +156,7 @@ def find_or_create_user(
     2. If not found and email non-null, find UserOAuth with matching email -> link
     3. If no match, create new User + UserOAuth
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Step 1: Check for existing OAuth link
     oauth = (
@@ -294,7 +294,7 @@ def verify_facebook_user(access_token: str) -> dict:
 def _fetch_apple_public_keys() -> list:
     """Fetch and cache Apple's public keys for JWT verification."""
     with _apple_keys_lock:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if (
             _apple_keys_cache["keys"]
             and _apple_keys_cache["fetched_at"]
@@ -431,7 +431,7 @@ def verify_wechat_user(code: str) -> dict:
 def build_auth_response(user: User) -> UserAuthResponse:
     """Build a UserAuthResponse from a User model."""
     token, expiration = create_user_jwt(user.id, user.display_name)
-    expires_in = int((expiration - datetime.utcnow()).total_seconds())
+    expires_in = int((expiration - datetime.now(timezone.utc)).total_seconds())
 
     return UserAuthResponse(
         access_token=token,
