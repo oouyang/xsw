@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any, List, Optional
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 from db_models import init_database
@@ -1504,12 +1504,12 @@ async def authenticate_with_google(request: GoogleAuthRequest):
                     google_id=user_info['google_id'],
                     picture_url=user_info['picture'],
                     is_active=True,
-                    last_login_at=datetime.utcnow()
+                    last_login_at=datetime.now(timezone.utc)
                 )
                 session.add(admin_user)
             else:
                 # Update existing user
-                admin_user.last_login_at = datetime.utcnow()
+                admin_user.last_login_at = datetime.now(timezone.utc)
                 admin_user.google_id = user_info['google_id']
                 admin_user.picture_url = user_info['picture']
 
@@ -1591,7 +1591,7 @@ async def authenticate_with_password(request: PasswordAuthRequest):
             )
 
         # Update last login
-        admin_user.last_login_at = datetime.utcnow()
+        admin_user.last_login_at = datetime.now(timezone.utc)
         session.commit()
 
         # Generate JWT token
@@ -1793,7 +1793,7 @@ def save_smtp_settings(
         settings.use_ssl = use_ssl
         settings.from_email = from_email or smtp_user
         settings.from_name = from_name
-        settings.updated_at = datetime.utcnow()
+        settings.updated_at = datetime.now(timezone.utc)
 
         session.commit()
 
@@ -1853,7 +1853,7 @@ def test_smtp_connection(auth: TokenPayload = Depends(require_admin_auth)):
         result = sender.test_connection()
 
         # Update last test time and status
-        settings.last_test_at = datetime.utcnow()
+        settings.last_test_at = datetime.now(timezone.utc)
         settings.last_test_status = result['status']
         session.commit()
 
@@ -2092,7 +2092,7 @@ def send_chapter_validation_alert(
 
             <div class="footer">
                 <p>This is an automated alert from 看小說 monitoring system.</p>
-                <p>Timestamp: {__import__('datetime').datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+                <p>Timestamp: {__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
             </div>
         </div>
     </body>
@@ -2445,7 +2445,7 @@ def user_upsert_progress(
             )
             .first()
         )
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         if progress:
             progress.chapter_number = req.chapter_number

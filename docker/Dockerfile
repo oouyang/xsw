@@ -53,8 +53,8 @@ ENV DB_PATH=/app/data/xsw_cache.db
 RUN mkdir -p /app/data /app/dist/ubike && \
     ruff check && ruff format && echo $BASE_URL && \
     pytest tests/ -v && \
-    (pip config unset global.index-url || true) && \
-    (pip config unset global.trusted-host || true) && \
+    (pip config unset global.index-url 2>/dev/null || true) && \
+    (pip config unset global.trusted-host 2>/dev/null || true) && \
     sed -i s/https/http/g /etc/apk/repositories  && \
     apk add tmux bash htop jq curl wget openssh-client git sqlite && \
     sed -i s/http/https/g /etc/apk/repositories 
