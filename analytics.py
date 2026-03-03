@@ -14,7 +14,7 @@ import os
 import queue
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import (
@@ -217,7 +217,7 @@ def log_page_view(
         "ip_hash": hash_ip(ip) if ip else None,
         "user_agent_hash": hash_user_agent(user_agent) if user_agent else None,
         "referer": referer,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
     }
     try:
         _queue.put_nowait(record)
@@ -231,7 +231,7 @@ def log_page_view(
 
 def get_summary(session: Session) -> dict:
     """Total views, unique visitors, today/week/month counts, top 5 books."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
     month_start = today_start.replace(day=1)
@@ -275,7 +275,7 @@ def get_summary(session: Session) -> dict:
 
 def get_book_analytics(session: Session, book_id: str, days: int = 30) -> dict:
     """Per-book analytics: daily views and top chapters."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     daily = (
         session.query(
@@ -325,7 +325,7 @@ def get_top_books(session: Session, period: str = "week", limit: int = 20) -> li
         "all": timedelta(days=36500),
     }
     delta = cutoffs.get(period, timedelta(days=7))
-    since = datetime.utcnow() - delta
+    since = datetime.now(timezone.utc) - delta
 
     rows = (
         session.query(PageView.book_id, func.count(PageView.id).label("views"))
@@ -341,7 +341,7 @@ def get_top_books(session: Session, period: str = "week", limit: int = 20) -> li
 
 def get_traffic(session: Session, days: int = 30) -> list[dict]:
     """Daily views + unique visitors for chart data."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
     rows = (
         session.query(
@@ -360,7 +360,7 @@ def get_traffic(session: Session, days: int = 30) -> list[dict]:
 
 def cleanup_old_views(session: Session, days: int = 90) -> int:
     """Delete page views older than N days. Returns count deleted."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     count = session.query(PageView).filter(PageView.created_at < cutoff).delete()
     session.commit()
     return count

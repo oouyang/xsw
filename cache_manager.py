@@ -4,7 +4,7 @@ Hybrid cache manager: Database-first with in-memory TTL cache.
 Strategy: Check memory → Check DB → Fetch from web → Store to DB → Cache in memory
 """
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import threading
 from sqlalchemy.orm import Session
@@ -138,7 +138,7 @@ class CacheManager:
                 return False  # No record or no timestamp — let normal flow handle it
             if book.status in self.FINISHED_STATUSES:
                 return False  # Finished books don't need refresh
-            age = datetime.utcnow() - book.last_scraped_at
+            age = datetime.now(timezone.utc) - book.last_scraped_at
             if age.total_seconds() > self.STALE_HOURS * 3600:
                 print(f"[Cache] Book {book_id} is stale (status={book.status!r}, age={age})")
                 return True
@@ -214,7 +214,7 @@ class CacheManager:
                 book.last_chapter_title = info.get("last_chapter_title", book.last_chapter_title)
                 book.last_chapter_url = info.get("last_chapter_url", book.last_chapter_url)
                 book.last_chapter_num = info.get("last_chapter_number", book.last_chapter_num)
-                book.last_scraped_at = datetime.utcnow()
+                book.last_scraped_at = datetime.now(timezone.utc)
                 # Assign public_id if not set
                 if not book.public_id:
                     book.public_id = generate_public_id()
@@ -330,7 +330,7 @@ class CacheManager:
                 chapter.url = content_data.get("url", chapter.url)
                 chapter.text = text
                 chapter.word_count = word_count
-                chapter.updated_at = datetime.utcnow()
+                chapter.updated_at = datetime.now(timezone.utc)
                 # Assign public_id if not set
                 if not chapter.public_id:
                     chapter.public_id = generate_public_id()

@@ -4,7 +4,7 @@ Supports Google OAuth2 and password-based authentication with JWT tokens.
 """
 import os
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from passlib.context import CryptContext
 from google.oauth2 import id_token
@@ -115,7 +115,7 @@ def create_jwt_token(email: str, auth_method: str) -> tuple[str, datetime]:
     Returns:
         tuple of (token_string, expiration_datetime)
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expiration = now + timedelta(hours=JWT_EXPIRATION_HOURS)
 
     payload = {
@@ -172,8 +172,8 @@ async def require_admin_auth(
         return TokenPayload(
             sub="admin@examp.com",
             auth_method="disabled",
-            exp=datetime.utcnow() + timedelta(hours=24),
-            iat=datetime.utcnow()
+            exp=datetime.now(timezone.utc) + timedelta(hours=24),
+            iat=datetime.now(timezone.utc)
         )
 
     if not credentials:

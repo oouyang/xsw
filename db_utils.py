@@ -3,7 +3,7 @@
 Database utilities for migration, warmup, and maintenance.
 """
 from typing import Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import db_models
 from db_models import Book, Chapter, Category
@@ -81,7 +81,7 @@ def cleanup_stale_data(days: int = 30) -> Dict[str, int]:
 
     session = db_models.db_manager.get_session()
     try:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         # Find stale chapters
         stale_chapters = (
@@ -129,7 +129,7 @@ def get_database_stats() -> Dict[str, Any]:
         }
 
         # Recent activity
-        recent_cutoff = datetime.utcnow() - timedelta(hours=24)
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         stats["books_scraped_24h"] = (
             session.query(Book)
             .filter(Book.last_scraped_at >= recent_cutoff)

@@ -6,7 +6,7 @@ Tracks book accesses and syncs them at midnight with slow rate limiting.
 import threading
 import time
 import logging
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timezone
 from typing import Optional
 
 logger = logging.getLogger("midnight-sync")
@@ -82,7 +82,7 @@ class MidnightSyncScheduler:
 
             if pending:
                 # Update existing entry
-                pending.accessed_at = datetime.utcnow()
+                pending.accessed_at = datetime.now(timezone.utc)
                 pending.access_count += 1
                 # Reset status if it was completed/failed
                 if pending.sync_status in ["completed", "failed"]:
@@ -93,8 +93,8 @@ class MidnightSyncScheduler:
                 # Add new entry
                 pending = PendingSyncQueue(
                     book_id=book_id,
-                    added_at=datetime.utcnow(),
-                    accessed_at=datetime.utcnow(),
+                    added_at=datetime.now(timezone.utc),
+                    accessed_at=datetime.now(timezone.utc),
                     access_count=1,
                     sync_status="pending",
                 )
@@ -173,7 +173,7 @@ class MidnightSyncScheduler:
                     # Update existing entry - reset to pending if was completed/failed
                     if existing.sync_status in ["completed", "failed"]:
                         existing.sync_status = "pending"
-                        existing.accessed_at = datetime.utcnow()
+                        existing.accessed_at = datetime.now(timezone.utc)
                         existing.access_count += 1
                         existing.priority = 1  # Give unfinished books priority 1
                         logger.debug(f"[MidnightSync] Reset status for unfinished book: {book.id}")
@@ -181,8 +181,8 @@ class MidnightSyncScheduler:
                     # Add new entry for unfinished book
                     pending = PendingSyncQueue(
                         book_id=book.id,
-                        added_at=datetime.utcnow(),
-                        accessed_at=datetime.utcnow(),
+                        added_at=datetime.now(timezone.utc),
+                        accessed_at=datetime.now(timezone.utc),
                         access_count=1,
                         sync_status="pending",
                         priority=1  # Unfinished books get priority 1
@@ -224,7 +224,7 @@ class MidnightSyncScheduler:
 
                     # Update status to syncing
                     pending.sync_status = "syncing"
-                    pending.last_sync_attempt = datetime.utcnow()
+                    pending.last_sync_attempt = datetime.now(timezone.utc)
                     session.commit()
 
                     # Enqueue the sync job (this will use the normal background job system)
@@ -315,7 +315,7 @@ class MidnightSyncScheduler:
                     # Update existing entry - reset to pending if was completed/failed
                     if existing.sync_status in ["completed", "failed"]:
                         existing.sync_status = "pending"
-                        existing.accessed_at = datetime.utcnow()
+                        existing.accessed_at = datetime.now(timezone.utc)
                         existing.access_count += 1
                         existing.priority = 1
                         logger.debug(f"[MidnightSync] Reset status for unfinished book: {book.id}")
@@ -323,8 +323,8 @@ class MidnightSyncScheduler:
                     # Add new entry for unfinished book
                     pending = PendingSyncQueue(
                         book_id=book.id,
-                        added_at=datetime.utcnow(),
-                        accessed_at=datetime.utcnow(),
+                        added_at=datetime.now(timezone.utc),
+                        accessed_at=datetime.now(timezone.utc),
                         access_count=1,
                         sync_status="pending",
                         priority=1

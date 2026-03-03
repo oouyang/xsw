@@ -9,7 +9,7 @@ os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 os.environ.setdefault("CACHE_TTL_SECONDS", "900")
 
 import queue
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -112,7 +112,7 @@ def test_flush_inserts_records(session):
             "ip_hash": hash_ip("1.2.3.4"),
             "user_agent_hash": None,
             "referer": None,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
         }
         for i in range(5)
     ]
@@ -134,7 +134,7 @@ def test_get_summary_empty(session):
 
 
 def test_get_summary_with_data(session):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for i in range(3):
         session.add(PageView(
             book_id="book1", chapter_num=i + 1,
@@ -156,7 +156,7 @@ def test_get_summary_with_data(session):
 
 
 def test_get_book_analytics(session):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for i in range(5):
         session.add(PageView(
             book_id="bookA", chapter_num=1,
@@ -177,7 +177,7 @@ def test_get_book_analytics(session):
 
 
 def test_get_top_books_period_filter(session):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     old = now - timedelta(days=10)
 
     session.add(PageView(book_id="recent", chapter_num=1, ip_hash="h1", created_at=now))
@@ -192,7 +192,7 @@ def test_get_top_books_period_filter(session):
 
 
 def test_get_traffic(session):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     session.add(PageView(book_id="b1", chapter_num=1, ip_hash="h1", created_at=now))
     session.add(PageView(book_id="b1", chapter_num=2, ip_hash="h1", created_at=now))
     session.add(PageView(book_id="b1", chapter_num=3, ip_hash="h2", created_at=now))
@@ -205,7 +205,7 @@ def test_get_traffic(session):
 
 
 def test_cleanup_old_views(session):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     old = now - timedelta(days=100)
     session.add(PageView(book_id="b1", chapter_num=1, ip_hash="h1", created_at=now))
     session.add(PageView(book_id="b2", chapter_num=1, ip_hash="h2", created_at=old))
