@@ -1,7 +1,7 @@
 """Tests for user authentication (user_auth.py)."""
 import pytest
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import os
 
@@ -34,7 +34,7 @@ class TestUserJWT:
     def test_create_user_jwt_returns_valid_token(self):
         token, expiration = create_user_jwt(42, "Test User")
         assert isinstance(token, str)
-        assert expiration > datetime.utcnow()
+        assert expiration > datetime.now(timezone.utc)
 
     def test_decode_user_jwt_round_trip(self):
         token, _ = create_user_jwt(42, "Test User")
@@ -50,8 +50,8 @@ class TestUserJWT:
             "role": "admin",
             "auth_method": "password",
             "display_name": "Admin",
-            "iat": datetime.utcnow(),
-            "exp": datetime.utcnow() + timedelta(hours=24),
+            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
         }
         token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
         with pytest.raises(jwt.InvalidTokenError, match="Not a user token"):
@@ -62,8 +62,8 @@ class TestUserJWT:
             "sub": 1,
             "display_name": "Expired User",
             "role": "user",
-            "iat": datetime.utcnow() - timedelta(days=60),
-            "exp": datetime.utcnow() - timedelta(days=1),
+            "iat": datetime.now(timezone.utc) - timedelta(days=60),
+            "exp": datetime.now(timezone.utc) - timedelta(days=1),
         }
         token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
         with pytest.raises(jwt.InvalidTokenError, match="expired"):
