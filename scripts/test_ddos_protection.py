@@ -9,7 +9,6 @@ import sys
 import time
 import requests
 from datetime import datetime
-from typing import List, Tuple
 
 
 BASE_URL = "http://localhost:8000"

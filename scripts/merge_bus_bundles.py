@@ -10,7 +10,6 @@ Usage:
     python3 scripts/merge_bus_bundles.py --input-dir static/bus --output static/bus/bundle.json.gz
 """
 import sys
-import os
 import json
 import gzip
 import logging

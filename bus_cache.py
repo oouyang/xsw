@@ -4,7 +4,7 @@ Uses TTL-based expiration
 """
 import time
 import threading
-from typing import Any, Optional
+from typing import Optional
 
 
 class BusCache:

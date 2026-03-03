@@ -2,7 +2,7 @@
 Transform TDX API responses to yunbus-compatible format
 """
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class BusTransformer:
                     try:
                         dt = datetime.fromisoformat(time_str.replace('+08:00', ''))
                         time_str = dt.strftime('%H:%M')
-                    except:
+                    except (ValueError, AttributeError):
                         time_str = ''
 
             # Build record

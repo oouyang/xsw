@@ -5,9 +5,8 @@ import logging
 import json
 import gzip
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, Response
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import PlainTextResponse, JSONResponse, Response
 import os
 
 from tdx_client import TDXClient

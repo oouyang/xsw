@@ -24,11 +24,11 @@ from dotenv import load_dotenv
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Load environment variables
+# Load environment variables before importing modules that depend on them
 load_dotenv()
 
-from tdx_client import TDXClient
-from bus_transformer import BusTransformer
+from tdx_client import TDXClient  # noqa: E402
+from bus_transformer import BusTransformer  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,7 +118,7 @@ class BundleGenerator:
         # Save bundle
         self._save_bundle(bundle, output_path)
 
-        logger.info(f"Bundle generated successfully!")
+        logger.info("Bundle generated successfully!")
         logger.info(f"  Version: {bundle['version']}")
         logger.info(f"  Cities: {len(self.cities)}")
         logger.info(f"  Routes: {total_routes}")
@@ -161,7 +161,6 @@ class BundleGenerator:
         max_routes = int(os.getenv('BUS_BUNDLE_MAX_ROUTES_PER_CITY', '50'))
         for idx, route in enumerate(routes[:max_routes]):
             route_id = route.get('RouteID', '')
-            route_name = route.get('RouteName', {}).get('Zh_tw', route_id)
 
             if not route_id:
                 continue
@@ -355,7 +354,7 @@ Estimated Time:
 
     # Generate bundle
     generator = BundleGenerator(cities=cities, rate_limit_delay=args.delay)
-    bundle = generator.generate_bundle(output_path=args.output)
+    generator.generate_bundle(output_path=args.output)
 
     logger.info("Done!")
     return 0
