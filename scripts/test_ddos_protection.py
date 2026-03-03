@@ -68,7 +68,7 @@ def test_rate_limiting():
     success_count = sum(1 for s in results if s == 200)
     blocked_count = sum(1 for s in results if s == 429)
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Successful: {success_count}")
     print(f"  Blocked (429): {blocked_count}")
     print(f"  Errors: {len(results) - success_count - blocked_count}")
@@ -182,7 +182,7 @@ def test_progressive_throttling():
         avg_early = sum(times[:10]) / 10
         avg_late = sum(times[-10:]) / 10
 
-        print(f"\nAverage response time:")
+        print("\nAverage response time:")
         print(f"  First 10 requests: {avg_early:.2f}s")
         print(f"  Last 10 requests: {avg_late:.2f}s")
 
@@ -205,7 +205,7 @@ def test_admin_stats():
             return True
         elif r.status_code == 200:
             stats = r.json()
-            print(f"  ✓ Stats endpoint accessible (auth disabled)")
+            print("  ✓ Stats endpoint accessible (auth disabled)")
             print(f"    Total requests: {stats.get('total_requests', 'N/A')}")
             print(f"    Blocked requests: {stats.get('blocked_requests', 'N/A')}")
             return True
