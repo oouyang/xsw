@@ -1,0 +1,3 @@
+# Ignore generated bundle files
+*.json.gz
+*.json

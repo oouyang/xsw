@@ -1,0 +1,266 @@
+================================================================
+DDoS Protection Architecture
+================================================================
+
+REQUEST FLOW:
+=============
+
+┌─────────────────────────────────────────────────────────────┐
+│                         INTERNET                             │
+│                    (Potential Attacker)                      │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         ↓
+      ┌──────────────────────────────────────────┐
+      │       Cloudflare Edge (Optional)         │
+      │  ┌────────────────────────────────────┐  │
+      │  │  • DDoS mitigation (automatic)     │  │
+      │  │  • Bot Fight Mode                  │  │
+      │  │  • Rate limiting rules             │  │
+      │  │  • WAF (Web Application Firewall)  │  │
+      │  │  • CDN caching                     │  │
+      │  └────────────────────────────────────┘  │
+      └───────────────────┬──────────────────────┘
+                          │ cf-connecting-ip: real_ip
+                          ↓
+      ┌──────────────────────────────────────────┐
+      │    Your Server (FastAPI + Middleware)    │
+      │                                          │
+      │  1. RateLimitMiddleware (existing)      │
+      │     ├─ Progressive delays               │
+      │     ├─ IP whitelist                     │
+      │     └─ Sliding window (60s)             │
+      │              ↓                           │
+      │  2. BotProtectionMiddleware (NEW)       │
+      │     ├─ Extract client IP                │
+      │     ├─ Check bot detection              │
+      │     ├─ Verify reputation                │
+      │     ├─ Rate limit check                 │
+      │     ├─ Apply throttling                 │
+      │     └─ Track failures                   │
+      │              ↓                           │
+      │  3. Application Logic                   │
+      │     ├─ Authentication                   │
+      │     ├─ Input validation                 │
+      │     ├─ Business logic                   │
+      │     └─ Response                         │
+      └──────────────────────────────────────────┘
+
+COMPONENT INTERACTION:
+======================
+
+┌─────────────────────────────────────────────────────────────┐
+│                    DDoSProtection                           │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                  BotDetector                          │  │
+│  │  • User-Agent analysis                                │  │
+│  │  • Good bot whitelist (Googlebot, etc)                │  │
+│  │  • Bad bot patterns (scrapy, curl, etc)               │  │
+│  │  • Suspicious path detection                          │  │
+│  └───────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │              ClientReputation                         │  │
+│  │  • IP tracking                                        │  │
+│  │  • Request counting                                   │  │
+│  │  • Failure tracking                                   │  │
+│  │  • Suspicious activity score                          │  │
+│  │  • Reputation score (0-100)                           │  │
+│  └───────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │             Rate Limiting Engine                      │  │
+│  │  • Sliding window (60s)                               │  │
+│  │  • Progressive throttling                             │  │
+│  │  • Auto-blocking                                      │  │
+│  │  • Temporary vs permanent blocks                      │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+
+DECISION TREE:
+==============
+
+Request arrives
+      │
+      ↓
+┌─────────────────┐
+│ Is IP blocked?  │ YES → Return 429 (blocked duration)
+└─────────────────┘
+      │ NO
+      ↓
+┌──────────────────────┐
+│ Is User-Agent bad?   │ YES → Mark suspicious → Check score
+└──────────────────────┘
+      │ NO
+      ↓
+┌──────────────────────┐
+│ Is path suspicious?  │ YES → Return 429 (suspicious path)
+└──────────────────────┘
+      │ NO
+      ↓
+┌──────────────────────┐
+│ Rate limit check     │
+│ Count in window > X? │ YES → Block IP → Return 429
+└──────────────────────┘
+      │ NO
+      ↓
+┌──────────────────────┐
+│ Progressive delay    │
+│ 80-100 req: 5s       │ Apply delay if needed
+│ 50-80 req: 1s        │
+└──────────────────────┘
+      │
+      ↓
+┌──────────────────────┐
+│ Process request      │ → Application logic
+└──────────────────────┘
+      │
+      ↓
+┌──────────────────────┐
+│ Track response       │
+│ If 4xx/5xx: mark     │ Update reputation
+│ failed request       │
+└──────────────────────┘
+
+DATA STRUCTURES:
+================
+
+ClientReputation {
+    ip: "192.168.1.100"
+    first_seen: 1709467200
+    last_seen: 1709470800
+    total_requests: 1523
+    failed_requests: 45
+    suspicious_count: 2
+    blocked_until: null
+    user_agents: ["Mozilla/5.0..."]
+    paths: ["/api/books", ...]
+    reputation_score: 85.5
+}
+
+Statistics {
+    total_requests: 15234
+    blocked_requests: 342
+    suspicious_requests: 89
+    active_clients: 234
+    blocked_clients: 12
+    top_requesters: [...]
+}
+
+REPUTATION SCORING:
+===================
+
+Start with 100 points
+  - Failure rate × 50 → Penalty
+  - Suspicious rate × 30 → Penalty
+  + Age > 24h && failure < 10% → +10 Bonus
+
+Examples:
+  New client: 50 (neutral)
+  Good client: 95 (established, low failures)
+  Bad bot: 15 (high suspicious rate)
+  Scanner: 5 (high failure rate)
+
+AUTO-BLOCKING TRIGGERS:
+=======================
+
+1. Request Rate
+   100+ req/60s → Block 1 hour
+
+2. Suspicious Score
+   10+ suspicious activities → Block 1 hour
+
+3. Failure Rate
+   50%+ failures after 20 requests → Block 1 hour
+
+4. Manual Block
+   Admin command → Block (configurable duration)
+
+MONITORING ENDPOINTS:
+=====================
+
+GET /admin/ddos/stats
+  └─ Overall statistics
+
+GET /admin/ddos/client/{ip}
+  └─ Detailed client info
+
+POST /admin/ddos/block/{ip}?permanent={bool}
+  └─ Block IP
+
+POST /admin/ddos/unblock/{ip}
+  └─ Unblock IP
+
+LOGGING & ALERTS:
+=================
+
+Events Logged:
+  • IP blocked (reason, duration)
+  • Bot detected (user-agent)
+  • Suspicious path accessed
+  • Rate limit exceeded
+  • Admin actions
+
+Alert Thresholds:
+  • Blocked requests > 100/hour
+  • Blocked clients > 10
+  • Suspicious requests > 50/hour
+
+FILE LOCATIONS:
+===============
+
+/opt/ws/xsw/
+├── bot_protection.py           ← Core logic
+├── rate_limiter.py             ← Existing rate limiter
+├── main_optimized.py           ← Integration point
+├── .env                        ← Configuration
+├── docs/
+│   ├── DDOS_PROTECTION.md      ← Complete guide
+│   ├── DDOS_INTEGRATION.md     ← Quick setup
+│   └── DDOS_ARCHITECTURE.txt   ← This file
+└── scripts/
+    └── test_ddos_protection.py ← Test suite
+
+CONFIGURATION:
+==============
+
+.env Variables:
+  DDOS_PROTECTION_ENABLED=true
+  DDOS_MAX_REQUESTS_PER_IP=100
+  DDOS_TIME_WINDOW=60
+  DDOS_BLOCK_DURATION=3600
+  DDOS_MAX_SUSPICIOUS_SCORE=10
+
+Presets:
+  Development:  500 req/min, 5 min block, score 20
+  Production:   100 req/min, 1 hour block, score 10
+  Strict:       50 req/min, 2 hour block, score 5
+
+PERFORMANCE:
+============
+
+Memory Usage per Client:
+  • ClientReputation: ~500 bytes
+  • Request timestamps: ~100 bytes
+  • Total: ~600 bytes/client
+
+For 1000 concurrent clients: ~600KB RAM
+
+Processing Overhead:
+  • Bot detection: 1-2ms
+  • Rate check: 0.5ms
+  • Reputation: 1ms
+  • Total: ~3ms per request
+
+SCALABILITY:
+============
+
+Current Implementation:
+  • Single-server, in-memory
+  • Good for: 10K-100K req/day
+  • Clients: 1K-10K concurrent
+
+Future Enhancements:
+  • Redis backend for distributed
+  • Database for persistent blocks
+  • Kafka for event streaming
+
+================================================================

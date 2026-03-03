@@ -2802,9 +2802,19 @@ def analytics_cleanup(
 
 
 # -----------------------
-# Include API Router
+# Include API Routers
 # -----------------------
 # IMPORTANT: This must be done AFTER all route definitions above
+
+# Include bus API router
+try:
+    from bus_api import bus_router
+    app.include_router(bus_router)
+    print("[INFO] Bus API router included successfully")
+except Exception as e:
+    print(f"[WARNING] Failed to include bus API router: {e}")
+
+# Include main API router
 app.include_router(api_router, prefix="/xsw/api")
 
 
