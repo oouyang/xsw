@@ -3,6 +3,7 @@
 Hybrid cache manager: Database-first with in-memory TTL cache.
 Strategy: Check memory → Check DB → Fetch from web → Store to DB → Cache in memory
 """
+
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import time
@@ -110,7 +111,9 @@ class CacheManager:
     def __init__(self, ttl_seconds: int = 900, max_memory_items: int = 500):
         self.ttl_seconds = ttl_seconds
         self.memory_cache = TTLCache(ttl_seconds, max_memory_items)
-        print(f"[Cache] Initialized with TTL={ttl_seconds}s, max_items={max_memory_items}")
+        print(
+            f"[Cache] Initialized with TTL={ttl_seconds}s, max_items={max_memory_items}"
+        )
 
     def _get_session(self) -> Session:
         """Get database session."""
@@ -138,9 +141,14 @@ class CacheManager:
                 return False  # No record or no timestamp — let normal flow handle it
             if book.status in self.FINISHED_STATUSES:
                 return False  # Finished books don't need refresh
-            age = datetime.now(timezone.utc) - book.last_scraped_at
+            scraped_at = book.last_scraped_at
+            if scraped_at.tzinfo is None:
+                scraped_at = scraped_at.replace(tzinfo=timezone.utc)
+            age = datetime.now(timezone.utc) - scraped_at
             if age.total_seconds() > self.STALE_HOURS * 3600:
-                print(f"[Cache] Book {book_id} is stale (status={book.status!r}, age={age})")
+                print(
+                    f"[Cache] Book {book_id} is stale (status={book.status!r}, age={age})"
+                )
                 return True
             return False
         except SQLAlchemyError as e:
@@ -211,9 +219,15 @@ class CacheManager:
                     book.bookmark_count = info["bookmark_count"]
                 if info.get("view_count") is not None:
                     book.view_count = info["view_count"]
-                book.last_chapter_title = info.get("last_chapter_title", book.last_chapter_title)
-                book.last_chapter_url = info.get("last_chapter_url", book.last_chapter_url)
-                book.last_chapter_num = info.get("last_chapter_number", book.last_chapter_num)
+                book.last_chapter_title = info.get(
+                    "last_chapter_title", book.last_chapter_title
+                )
+                book.last_chapter_url = info.get(
+                    "last_chapter_url", book.last_chapter_url
+                )
+                book.last_chapter_num = info.get(
+                    "last_chapter_number", book.last_chapter_num
+                )
                 book.last_scraped_at = datetime.now(timezone.utc)
                 # Assign public_id if not set
                 if not book.public_id:
@@ -383,7 +397,12 @@ class CacheManager:
             )
             if chapters:
                 return [
-                    ChapterRef(number=c.chapter_num, title=c.title or "", url=c.url, id=c.public_id)
+                    ChapterRef(
+                        number=c.chapter_num,
+                        title=c.title or "",
+                        url=c.url,
+                        id=c.public_id,
+                    )
                     for c in chapters
                 ]
         except SQLAlchemyError as e:
@@ -412,7 +431,10 @@ class CacheManager:
                     # Check if exists
                     chapter = (
                         session.query(Chapter)
-                        .filter(Chapter.book_id == book_id, Chapter.chapter_num == chapter_num)
+                        .filter(
+                            Chapter.book_id == book_id,
+                            Chapter.chapter_num == chapter_num,
+                        )
                         .first()
                     )
 
@@ -440,12 +462,16 @@ class CacheManager:
                         pending_commit = True
 
                 except SQLAlchemyError as e:
-                    print(f"[Cache] Warning: Failed to prepare chapter {book_id}:{chapter_num}: {e}")
+                    print(
+                        f"[Cache] Warning: Failed to prepare chapter {book_id}:{chapter_num}: {e}"
+                    )
                     skipped_count += 1
                     continue
 
                 # Batch commit every N chapters or at the end
-                if pending_commit and ((idx + 1) % batch_size == 0 or (idx + 1) == len(chapters)):
+                if pending_commit and (
+                    (idx + 1) % batch_size == 0 or (idx + 1) == len(chapters)
+                ):
                     try:
                         session.commit()
                         pending_commit = False
@@ -453,15 +479,21 @@ class CacheManager:
                         # Another thread already stored these chapters — not an error
                         session.rollback()
                         pending_commit = False
-                        print(f"[Cache] Batch at chapter {idx + 1} already exists (concurrent write), skipping")
+                        print(
+                            f"[Cache] Batch at chapter {idx + 1} already exists (concurrent write), skipping"
+                        )
                     except SQLAlchemyError as e:
                         try:
                             session.rollback()
                         except Exception:
                             pass
-                        print(f"[Cache] Warning: Failed to commit batch at chapter {idx + 1}: {e}")
+                        print(
+                            f"[Cache] Warning: Failed to commit batch at chapter {idx + 1}: {e}"
+                        )
 
-            print(f"[Cache] Stored {stored_count} new, updated {updated_count}, skipped {skipped_count} chapter refs for book {book_id}")
+            print(
+                f"[Cache] Stored {stored_count} new, updated {updated_count}, skipped {skipped_count} chapter refs for book {book_id}"
+            )
         except Exception as e:
             print(f"[Cache] Error storing chapter refs for book {book_id}: {e}")
             try:
@@ -483,11 +515,15 @@ class CacheManager:
         """Delete all chapter records for a book from database."""
         session = self._get_session()
         try:
-            deleted_count = session.query(Chapter).filter(Chapter.book_id == book_id).delete()
+            deleted_count = (
+                session.query(Chapter).filter(Chapter.book_id == book_id).delete()
+            )
             session.commit()
             # Also clear memory cache
             self.memory_cache.invalidate(f"book:{book_id}")
-            print(f"[Cache] Deleted {deleted_count} chapters from DB for book {book_id}")
+            print(
+                f"[Cache] Deleted {deleted_count} chapters from DB for book {book_id}"
+            )
             return deleted_count
         except SQLAlchemyError as e:
             try:
@@ -510,7 +546,9 @@ class CacheManager:
         try:
             book_count = session.query(Book).count()
             chapter_count = session.query(Chapter).count()
-            chapters_with_content = session.query(Chapter).filter(Chapter.text.isnot(None)).count()
+            chapters_with_content = (
+                session.query(Chapter).filter(Chapter.text.isnot(None)).count()
+            )
 
             return {
                 "books_in_db": book_count,
@@ -527,7 +565,9 @@ class CacheManager:
 cache_manager: Optional[CacheManager] = None
 
 
-def init_cache_manager(ttl_seconds: int = 900, max_memory_items: int = 500) -> CacheManager:
+def init_cache_manager(
+    ttl_seconds: int = 900, max_memory_items: int = 500
+) -> CacheManager:
     """Initialize the cache manager."""
     global cache_manager
     cache_manager = CacheManager(ttl_seconds, max_memory_items)

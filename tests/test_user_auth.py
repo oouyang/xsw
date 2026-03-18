@@ -1,4 +1,5 @@
 """Tests for user authentication (user_auth.py)."""
+
 import pytest
 import jwt
 from datetime import datetime, timedelta, timezone
@@ -103,7 +104,9 @@ class TestFindOrCreateUser:
         )
         assert user1.id == user2.id
         # Name should be updated
-        assert user2.display_name == "User 1"  # display_name not changed (only provider_name)
+        assert (
+            user2.display_name == "User 1"
+        )  # display_name not changed (only provider_name)
 
     def test_merges_by_email(self, db_session):
         """If user signed in with Google, then later with Facebook using same email,
@@ -135,7 +138,11 @@ class TestFindOrCreateUser:
     def test_stores_access_and_refresh_tokens(self, db_session):
         user = find_or_create_user(
             db_session,
-            "wechat", "wx123", None, "WX User", None,
+            "wechat",
+            "wx123",
+            None,
+            "WX User",
+            None,
             access_token="at_123",
             refresh_token="rt_456",
         )
@@ -147,7 +154,12 @@ class TestFindOrCreateUser:
 class TestBuildAuthResponse:
     def test_builds_response(self, db_session):
         user = find_or_create_user(
-            db_session, "google", "g999", "resp@example.com", "Resp User", "https://pic.jpg"
+            db_session,
+            "google",
+            "g999",
+            "resp@example.com",
+            "Resp User",
+            "https://pic.jpg",
         )
         resp = build_auth_response(user)
         assert resp.access_token

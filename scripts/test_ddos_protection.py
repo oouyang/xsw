@@ -17,9 +17,9 @@ API_URL = f"{BASE_URL}/xsw/api/health"
 
 def print_test_header(title: str):
     """Print test section header"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"  {title}")
-    print("="*60)
+    print("=" * 60)
 
 
 def test_normal_traffic():
@@ -32,11 +32,11 @@ def test_normal_traffic():
             r = requests.get(API_URL, timeout=5)
             if r.status_code == 200:
                 success += 1
-                print(f"  Request {i+1}: ✓ {r.status_code}")
+                print(f"  Request {i + 1}: ✓ {r.status_code}")
             else:
-                print(f"  Request {i+1}: ✗ {r.status_code}")
+                print(f"  Request {i + 1}: ✗ {r.status_code}")
         except Exception as e:
-            print(f"  Request {i+1}: ✗ Error: {e}")
+            print(f"  Request {i + 1}: ✗ Error: {e}")
 
         time.sleep(0.5)  # Reasonable delay
 
@@ -57,12 +57,12 @@ def test_rate_limiting():
             results.append(r.status_code)
 
             if i < 5 or i % 20 == 0 or i > 115:
-                print(f"  Request {i+1}: {r.status_code}")
+                print(f"  Request {i + 1}: {r.status_code}")
 
         except Exception as e:
             results.append(0)
             if i < 5 or i > 115:
-                print(f"  Request {i+1}: Error: {e}")
+                print(f"  Request {i + 1}: Error: {e}")
 
     success_count = sum(1 for s in results if s == 200)
     blocked_count = sum(1 for s in results if s == 429)
@@ -81,7 +81,11 @@ def test_bot_detection():
     print_test_header("TEST 3: Bot Detection")
 
     test_cases = [
-        ("Normal Browser", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0", 200),
+        (
+            "Normal Browser",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0",
+            200,
+        ),
         ("Googlebot (Good)", "Mozilla/5.0 (compatible; Googlebot/2.1)", 200),
         ("Scrapy Bot (Bad)", "Scrapy/1.0", 429),
         ("Python Requests (Bad)", "python-requests/2.28.0", 429),
@@ -95,8 +99,9 @@ def test_bot_detection():
             headers = {"User-Agent": user_agent} if user_agent else {}
             r = requests.get(API_URL, headers=headers, timeout=5)
 
-            passed = (r.status_code == expected or
-                     (expected == 429 and r.status_code in [403, 429]))
+            passed = r.status_code == expected or (
+                expected == 429 and r.status_code in [403, 429]
+            )
 
             status = "✓" if passed else "✗"
             print(f"  {name:20s} → {r.status_code} {status}")
@@ -134,8 +139,9 @@ def test_suspicious_paths():
             r = requests.get(url, timeout=5)
 
             # Allow 404 for legitimate "path not found"
-            passed = (r.status_code == expected or
-                     (expected == 429 and r.status_code in [403, 404, 429]))
+            passed = r.status_code == expected or (
+                expected == 429 and r.status_code in [403, 404, 429]
+            )
 
             status = "✓" if passed else "✗"
             print(f"  {description:20s} → {r.status_code} {status}")
@@ -169,10 +175,10 @@ def test_progressive_throttling():
             times.append(elapsed)
 
             if i < 3 or i in [40, 50, 59]:
-                print(f"  Request {i+1}: {r.status_code} ({elapsed:.2f}s)")
+                print(f"  Request {i + 1}: {r.status_code} ({elapsed:.2f}s)")
 
         except Exception as e:
-            print(f"  Request {i+1}: Error: {e}")
+            print(f"  Request {i + 1}: Error: {e}")
             break
 
         time.sleep(0.5)  # Moderate pace
@@ -219,11 +225,11 @@ def test_admin_stats():
 
 def main():
     """Run all tests"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  DDoS Protection Test Suite")
     print("  Target: " + BASE_URL)
     print("  Time: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    print("="*60)
+    print("=" * 60)
 
     # Check if server is running
     try:
@@ -258,9 +264,9 @@ def main():
         time.sleep(2)
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  TEST SUMMARY")
-    print("="*60)
+    print("=" * 60)
 
     passed_count = sum(1 for _, passed in results if passed)
     total_count = len(results)

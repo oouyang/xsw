@@ -2,6 +2,7 @@
 Authentication module for admin panel.
 Supports Google OAuth2 and password-based authentication with JWT tokens.
 """
+
 import os
 import jwt
 from datetime import datetime, timedelta, timezone
@@ -21,7 +22,9 @@ JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 ADMIN_EMAIL_WHITELIST_STR = os.getenv("ADMIN_EMAIL_WHITELIST", "")
-ADMIN_EMAIL_WHITELIST = [e.strip() for e in ADMIN_EMAIL_WHITELIST_STR.split(",") if e.strip()]
+ADMIN_EMAIL_WHITELIST = [
+    e.strip() for e in ADMIN_EMAIL_WHITELIST_STR.split(",") if e.strip()
+]
 
 # Password hashing (using Argon2 for better security and compatibility)
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -33,6 +36,7 @@ security = HTTPBearer(auto_error=False)
 
 class TokenPayload(BaseModel):
     """JWT token payload structure."""
+
     sub: str  # email
     auth_method: str
     exp: datetime
@@ -41,6 +45,7 @@ class TokenPayload(BaseModel):
 
 class AuthResponse(BaseModel):
     """Authentication response."""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int
@@ -76,16 +81,14 @@ def verify_google_token(token: str) -> Dict[str, Any]:
     try:
         # Verify the token
         idinfo = id_token.verify_oauth2_token(
-            token,
-            google_requests.Request(),
-            GOOGLE_CLIENT_ID
+            token, google_requests.Request(), GOOGLE_CLIENT_ID
         )
 
         # Extract user info
-        email = idinfo.get('email')
-        google_id = idinfo.get('sub')
-        name = idinfo.get('name', '')
-        picture = idinfo.get('picture', '')
+        email = idinfo.get("email")
+        google_id = idinfo.get("sub")
+        name = idinfo.get("name", "")
+        picture = idinfo.get("picture", "")
 
         if not email:
             raise ValueError("Email not found in token")
@@ -95,10 +98,10 @@ def verify_google_token(token: str) -> Dict[str, Any]:
             raise ValueError(f"Email {email} not authorized for admin access")
 
         return {
-            'email': email,
-            'google_id': google_id,
-            'name': name,
-            'picture': picture
+            "email": email,
+            "google_id": google_id,
+            "name": name,
+            "picture": picture,
         }
     except Exception as e:
         raise ValueError(f"Invalid Google token: {str(e)}")
@@ -119,11 +122,11 @@ def create_jwt_token(email: str, auth_method: str) -> tuple[str, datetime]:
     expiration = now + timedelta(hours=JWT_EXPIRATION_HOURS)
 
     payload = {
-        'sub': email,
-        'auth_method': auth_method,
-        'role': 'admin',
-        'iat': now,
-        'exp': expiration
+        "sub": email,
+        "auth_method": auth_method,
+        "role": "admin",
+        "iat": now,
+        "exp": expiration,
     }
 
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
@@ -153,7 +156,7 @@ def decode_jwt_token(token: str) -> TokenPayload:
 
 
 async def require_admin_auth(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> TokenPayload:
     """
     FastAPI dependency to require admin authentication.
@@ -173,7 +176,7 @@ async def require_admin_auth(
             sub="admin@examp.com",
             auth_method="disabled",
             exp=datetime.now(timezone.utc) + timedelta(hours=24),
-            iat=datetime.now(timezone.utc)
+            iat=datetime.now(timezone.utc),
         )
 
     if not credentials:
@@ -201,7 +204,9 @@ def init_admin_users(db_manager):
     Skips initialization if AUTH_ENABLED is false.
     """
     if not AUTH_ENABLED:
-        print("[AUTH] Authentication disabled (AUTH_ENABLED=false), skipping admin user initialization")
+        print(
+            "[AUTH] Authentication disabled (AUTH_ENABLED=false), skipping admin user initialization"
+        )
         return
 
     from db_models import AdminUser
@@ -217,12 +222,14 @@ def init_admin_users(db_manager):
                 email="admin@example.com",
                 auth_method="password",
                 password_hash=hash_password("admin"),
-                is_active=True
+                is_active=True,
             )
             session.add(default_admin)
             session.commit()
             print("[AUTH] Created default admin user (admin@example.com / admin)")
-            print("[AUTH] IMPORTANT: Change this password or disable password auth in production!")
+            print(
+                "[AUTH] IMPORTANT: Change this password or disable password auth in production!"
+            )
     except Exception as e:
         print(f"[AUTH] Error initializing admin users: {e}")
         session.rollback()

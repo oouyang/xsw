@@ -1,4 +1,5 @@
 """Tests for reading progress API endpoints."""
+
 import os
 
 os.environ.setdefault("AUTH_ENABLED", "false")

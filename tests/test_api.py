@@ -1,4 +1,5 @@
 """API endpoint integration tests via FastAPI TestClient."""
+
 from html_fixtures import (
     CZBOOKS_HOMEPAGE_HTML,
     CZBOOKS_CATEGORY_PAGE_HTML,
@@ -31,9 +32,7 @@ class TestCategories:
             assert "url" in c
 
     def test_categories_books(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/c/fantasy", CZBOOKS_CATEGORY_PAGE_HTML
-        )
+        mock_fetch.register("https://czbooks.net/c/fantasy", CZBOOKS_CATEGORY_PAGE_HTML)
         resp = client.get(f"{BASE}/categories/fantasy/books")
         assert resp.status_code == 200
         books = resp.json()
@@ -44,9 +43,7 @@ class TestCategories:
         assert books[1]["book_id"] == "book2"
 
     def test_categories_books_include_counts(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/c/fantasy", CZBOOKS_CATEGORY_PAGE_HTML
-        )
+        mock_fetch.register("https://czbooks.net/c/fantasy", CZBOOKS_CATEGORY_PAGE_HTML)
         resp = client.get(f"{BASE}/categories/fantasy/books")
         assert resp.status_code == 200
         books = resp.json()
@@ -58,9 +55,7 @@ class TestCategories:
 
 class TestBookInfo:
     def test_get_book_info(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook")
         assert resp.status_code == 200
         data = resp.json()
@@ -71,18 +66,14 @@ class TestBookInfo:
         assert data["book_id"] == "testbook"
 
     def test_get_book_info_includes_description(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook")
         assert resp.status_code == 200
         data = resp.json()
         assert data["description"] == "這是一本測試小說。"
 
     def test_get_book_info_includes_counts(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook")
         assert resp.status_code == 200
         data = resp.json()
@@ -90,9 +81,7 @@ class TestBookInfo:
         assert data["view_count"] == 123456
 
     def test_get_book_info_cached(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp1 = client.get(f"{BASE}/books/testbook")
         assert resp1.status_code == 200
         resp2 = client.get(f"{BASE}/books/testbook")
@@ -102,9 +91,7 @@ class TestBookInfo:
 
     def test_get_book_info_cached_preserves_new_fields(self, client, mock_fetch):
         """New fields should survive the cache round-trip."""
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         client.get(f"{BASE}/books/testbook")  # populate cache
         resp = client.get(f"{BASE}/books/testbook")  # cache hit
         data = resp.json()
@@ -115,9 +102,7 @@ class TestBookInfo:
 
 class TestChapters:
     def test_get_chapters_all(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook/chapters?all=true")
         assert resp.status_code == 200
         data = resp.json()
@@ -128,18 +113,14 @@ class TestChapters:
         assert numbers == [1, 2, 3]
 
     def test_get_chapters_paginated(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook/chapters?page=1")
         assert resp.status_code == 200
         chapters = resp.json()
         assert len(chapters) > 0
 
     def test_get_chapter_content(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         mock_fetch.register(
             "https://czbooks.net/n/testbook/ch1", CZBOOKS_CHAPTER_DETAIL_HTML
         )
@@ -150,9 +131,7 @@ class TestChapters:
         assert "故事從這裡開始" in data["text"]
 
     def test_get_chapter_not_found(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook/chapters/999")
         assert resp.status_code == 404
         assert "999" in resp.json()["detail"]
@@ -163,9 +142,7 @@ class TestChapterFetchStoresBookInfo:
 
     def test_chapter_fetch_stores_book_info(self, client, mock_fetch):
         """Fetching chapters should also store description and counts."""
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         # Fetch chapters (triggers fetch_all_chapters_from_pagination)
         resp = client.get(f"{BASE}/books/testbook/chapters?all=true")
         assert resp.status_code == 200
@@ -183,9 +160,7 @@ class TestChapterFetchStoresBookInfo:
 
     def test_chapter_fetch_stores_last_chapter(self, client, mock_fetch):
         """Chapter fetch should set last_chapter_number from actual chapters."""
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         client.get(f"{BASE}/books/testbook/chapters?all=true")
         resp = client.get(f"{BASE}/books/testbook")
         data = resp.json()
@@ -202,13 +177,19 @@ class TestAuthorBooks:
         session = db_models.db_manager.get_session()
         try:
             b1 = db_models.Book(
-                id="auth1_book1", public_id=generate_public_id(),
-                name="Book A", author="TestAuthor", type="玄幻",
+                id="auth1_book1",
+                public_id=generate_public_id(),
+                name="Book A",
+                author="TestAuthor",
+                type="玄幻",
                 view_count=100,
             )
             b2 = db_models.Book(
-                id="auth1_book2", public_id=generate_public_id(),
-                name="Book B", author="TestAuthor", type="言情",
+                id="auth1_book2",
+                public_id=generate_public_id(),
+                name="Book B",
+                author="TestAuthor",
+                type="言情",
                 view_count=200,
             )
             session.add_all([b1, b2])
@@ -239,23 +220,35 @@ class TestSimilarBooks:
         session = db_models.db_manager.get_session()
         try:
             current = db_models.Book(
-                id="sim_current", public_id=generate_public_id(),
-                name="Current Book", author="SimAuthor", type="玄幻",
+                id="sim_current",
+                public_id=generate_public_id(),
+                name="Current Book",
+                author="SimAuthor",
+                type="玄幻",
                 view_count=50,
             )
             same_author = db_models.Book(
-                id="sim_author", public_id=generate_public_id(),
-                name="Same Author Book", author="SimAuthor", type="言情",
+                id="sim_author",
+                public_id=generate_public_id(),
+                name="Same Author Book",
+                author="SimAuthor",
+                type="言情",
                 view_count=300,
             )
             same_type = db_models.Book(
-                id="sim_type", public_id=generate_public_id(),
-                name="Same Type Book", author="OtherAuthor", type="玄幻",
+                id="sim_type",
+                public_id=generate_public_id(),
+                name="Same Type Book",
+                author="OtherAuthor",
+                type="玄幻",
                 view_count=200,
             )
             unrelated = db_models.Book(
-                id="sim_unrelated", public_id=generate_public_id(),
-                name="Unrelated", author="Someone", type="歷史",
+                id="sim_unrelated",
+                public_id=generate_public_id(),
+                name="Unrelated",
+                author="Someone",
+                type="歷史",
                 view_count=500,
             )
             session.add_all([current, same_author, same_type, unrelated])
@@ -283,9 +276,7 @@ class TestSimilarBooks:
 class TestChaptersWithVolumes:
     def test_chapters_all_returns_volumes(self, client, mock_fetch):
         """When fetching all chapters, volumes should be included."""
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook/chapters?all=true")
         assert resp.status_code == 200
         data = resp.json()
@@ -300,9 +291,7 @@ class TestChaptersWithVolumes:
 
     def test_chapters_paginated_returns_list(self, client, mock_fetch):
         """Paginated mode still returns a flat list for backward compat."""
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook/chapters?page=1")
         assert resp.status_code == 200
         data = resp.json()
@@ -315,7 +304,9 @@ class TestSearch:
 
         session = db_models.db_manager.get_session()
         try:
-            book = db_models.Book(id="searchtest", name="搜尋測試小說", author="搜尋作者")
+            book = db_models.Book(
+                id="searchtest", name="搜尋測試小說", author="搜尋作者"
+            )
             session.add(book)
             session.commit()
         finally:
@@ -329,9 +320,7 @@ class TestSearch:
 
 class TestByUrl:
     def test_chapters_by_url(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(
             f"{BASE}/by-url/chapters",
             params={"book_url": "https://czbooks.net/n/testbook"},
@@ -364,17 +353,13 @@ class TestCacheControlHeaders:
         assert resp.headers.get("cache-control") == "public, max-age=3600"
 
     def test_book_info_has_cache_header(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         resp = client.get(f"{BASE}/books/testbook")
         assert resp.status_code == 200
         assert resp.headers.get("cache-control") == "public, max-age=300"
 
     def test_chapter_content_has_long_cache(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML
-        )
+        mock_fetch.register("https://czbooks.net/n/testbook", CZBOOKS_BOOK_DETAIL_HTML)
         mock_fetch.register(
             "https://czbooks.net/n/testbook/ch1", CZBOOKS_CHAPTER_DETAIL_HTML
         )
@@ -383,9 +368,7 @@ class TestCacheControlHeaders:
         assert resp.headers.get("cache-control") == "public, max-age=86400"
 
     def test_search_has_short_cache(self, client, mock_fetch):
-        mock_fetch.register(
-            "https://czbooks.net/s?q=test", CZBOOKS_CATEGORY_PAGE_HTML
-        )
+        mock_fetch.register("https://czbooks.net/s?q=test", CZBOOKS_CATEGORY_PAGE_HTML)
         resp = client.get(f"{BASE}/search", params={"q": "test"})
         assert resp.status_code == 200
         assert resp.headers.get("cache-control") == "public, max-age=60"

@@ -2,6 +2,7 @@
 """
 Database utilities for migration, warmup, and maintenance.
 """
+
 from typing import Dict, Any
 from datetime import datetime, timedelta, timezone
 
@@ -44,7 +45,9 @@ def migrate_from_old_cache(old_cache_data: Dict[str, Any]) -> None:
                 book_id, chapter_num = key
                 existing = (
                     session.query(Chapter)
-                    .filter(Chapter.book_id == book_id, Chapter.chapter_num == chapter_num)
+                    .filter(
+                        Chapter.book_id == book_id, Chapter.chapter_num == chapter_num
+                    )
                     .first()
                 )
                 if not existing:
@@ -59,7 +62,9 @@ def migrate_from_old_cache(old_cache_data: Dict[str, Any]) -> None:
                     migrated_chapters += 1
 
         session.commit()
-        print(f"[Migration] Migrated {migrated_books} books, {migrated_chapters} chapters")
+        print(
+            f"[Migration] Migrated {migrated_books} books, {migrated_chapters} chapters"
+        )
     except Exception as e:
         try:
             session.rollback()
@@ -85,9 +90,7 @@ def cleanup_stale_data(days: int = 30) -> Dict[str, int]:
 
         # Find stale chapters
         stale_chapters = (
-            session.query(Chapter)
-            .filter(Chapter.updated_at < cutoff_date)
-            .all()
+            session.query(Chapter).filter(Chapter.updated_at < cutoff_date).all()
         )
 
         deleted_count = len(stale_chapters)
@@ -131,14 +134,10 @@ def get_database_stats() -> Dict[str, Any]:
         # Recent activity
         recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         stats["books_scraped_24h"] = (
-            session.query(Book)
-            .filter(Book.last_scraped_at >= recent_cutoff)
-            .count()
+            session.query(Book).filter(Book.last_scraped_at >= recent_cutoff).count()
         )
         stats["chapters_fetched_24h"] = (
-            session.query(Chapter)
-            .filter(Chapter.fetched_at >= recent_cutoff)
-            .count()
+            session.query(Chapter).filter(Chapter.fetched_at >= recent_cutoff).count()
         )
 
         # Top authors by book count

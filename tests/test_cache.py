@@ -1,10 +1,12 @@
 """Tests for cache_manager.py — TTLCache and CacheManager with in-memory SQLite."""
+
 import time
 
 from cache_manager import TTLCache
 
 
 # ===== TTLCache =====
+
 
 class TestTTLCache:
     def test_set_get(self):
@@ -44,6 +46,7 @@ class TestTTLCache:
 
 
 # ===== CacheManager =====
+
 
 class TestCacheManagerBookInfo:
     def test_store_and_get(self, cache_mgr_fixture):
@@ -95,9 +98,13 @@ class TestCacheManagerBookInfoNewFields:
 
     def _base_info(self, **overrides):
         base = {
-            "name": "Book", "author": "Author", "type": "Fantasy",
-            "status": "連載中", "update": "2026-01-01",
-            "last_chapter_title": "Ch 1", "last_chapter_url": "https://x.com/1",
+            "name": "Book",
+            "author": "Author",
+            "type": "Fantasy",
+            "status": "連載中",
+            "update": "2026-01-01",
+            "last_chapter_title": "Ch 1",
+            "last_chapter_url": "https://x.com/1",
             "last_chapter_number": 1,
         }
         base.update(overrides)
@@ -171,9 +178,7 @@ class TestCacheManagerBookInfoNewFields:
     def test_round_trip_via_memory_cache(self, cache_mgr_fixture):
         """New fields survive memory cache round-trip (not just DB)."""
         mgr = cache_mgr_fixture
-        info = self._base_info(
-            description="Desc", bookmark_count=42, view_count=7777
-        )
+        info = self._base_info(description="Desc", bookmark_count=42, view_count=7777)
         mgr.store_book_info("bk_mem", info)
 
         # First call populates memory cache during store
@@ -209,11 +214,19 @@ class TestCacheManagerChapters:
     def test_store_and_get_content(self, cache_mgr_fixture):
         mgr = cache_mgr_fixture
         # Need a book record first (foreign key)
-        mgr.store_book_info("bk1", {
-            "name": "B", "author": "A", "type": "", "status": "",
-            "update": "", "last_chapter_title": "", "last_chapter_url": "",
-            "last_chapter_number": 1,
-        })
+        mgr.store_book_info(
+            "bk1",
+            {
+                "name": "B",
+                "author": "A",
+                "type": "",
+                "status": "",
+                "update": "",
+                "last_chapter_title": "",
+                "last_chapter_url": "",
+                "last_chapter_number": 1,
+            },
+        )
         content = {"title": "Ch 1", "url": "https://x.com/1", "text": "Hello world"}
         mgr.store_chapter_content("bk1", 1, content)
         result = mgr.get_chapter_content("bk1", 1)
@@ -226,11 +239,19 @@ class TestCacheManagerChapters:
 
     def test_store_and_get_chapter_list(self, cache_mgr_fixture):
         mgr = cache_mgr_fixture
-        mgr.store_book_info("bk1", {
-            "name": "B", "author": "A", "type": "", "status": "",
-            "update": "", "last_chapter_title": "", "last_chapter_url": "",
-            "last_chapter_number": 2,
-        })
+        mgr.store_book_info(
+            "bk1",
+            {
+                "name": "B",
+                "author": "A",
+                "type": "",
+                "status": "",
+                "update": "",
+                "last_chapter_title": "",
+                "last_chapter_url": "",
+                "last_chapter_number": 2,
+            },
+        )
         refs = [
             {"number": 1, "title": "Ch 1", "url": "https://x.com/1"},
             {"number": 2, "title": "Ch 2", "url": "https://x.com/2"},
@@ -248,11 +269,19 @@ class TestCacheManagerChapters:
 
 class TestCacheManagerUtility:
     def _seed_book(self, mgr):
-        mgr.store_book_info("bk1", {
-            "name": "B", "author": "A", "type": "", "status": "",
-            "update": "", "last_chapter_title": "", "last_chapter_url": "",
-            "last_chapter_number": 1,
-        })
+        mgr.store_book_info(
+            "bk1",
+            {
+                "name": "B",
+                "author": "A",
+                "type": "",
+                "status": "",
+                "update": "",
+                "last_chapter_title": "",
+                "last_chapter_url": "",
+                "last_chapter_number": 1,
+            },
+        )
 
     def test_invalidate_book(self, cache_mgr_fixture):
         mgr = cache_mgr_fixture
@@ -267,9 +296,12 @@ class TestCacheManagerUtility:
     def test_delete_book_chapters(self, cache_mgr_fixture):
         mgr = cache_mgr_fixture
         self._seed_book(mgr)
-        mgr.store_chapter_refs("bk1", [
-            {"number": 1, "title": "Ch 1", "url": "https://x.com/1"},
-        ])
+        mgr.store_chapter_refs(
+            "bk1",
+            [
+                {"number": 1, "title": "Ch 1", "url": "https://x.com/1"},
+            ],
+        )
         deleted = mgr.delete_book_chapters("bk1")
         assert deleted == 1
         assert mgr.get_chapter_list("bk1") is None

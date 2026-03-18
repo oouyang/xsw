@@ -3,6 +3,7 @@
 Periodic sync scheduler for keeping books up-to-date throughout the day.
 Runs every 6 hours to check for new chapters in all unfinished books.
 """
+
 import threading
 import time
 import logging
@@ -71,7 +72,9 @@ class PeriodicSyncScheduler:
         logger.info("[PeriodicSync] Scheduler loop started")
 
         # Calculate first sync time (run immediately on startup, then every N hours)
-        self.next_sync_time = datetime.now() + timedelta(seconds=60)  # First sync after 1 minute
+        self.next_sync_time = datetime.now() + timedelta(
+            seconds=60
+        )  # First sync after 1 minute
         logger.info(f"[PeriodicSync] First sync scheduled for {self.next_sync_time}")
 
         while self.running:
@@ -84,7 +87,9 @@ class PeriodicSyncScheduler:
                     self._run_periodic_sync()
                     self.last_sync_time = now
                     self.next_sync_time = now + timedelta(hours=self.interval_hours)
-                    logger.info(f"[PeriodicSync] Next sync scheduled for {self.next_sync_time}")
+                    logger.info(
+                        f"[PeriodicSync] Next sync scheduled for {self.next_sync_time}"
+                    )
 
                 # Sleep for 1 minute before checking again
                 time.sleep(60)
@@ -102,8 +107,12 @@ class PeriodicSyncScheduler:
             self._run_periodic_sync()
             self.last_sync_time = datetime.now()
             # Reset next sync time to N hours from now
-            self.next_sync_time = self.last_sync_time + timedelta(hours=self.interval_hours)
-            logger.info(f"[PeriodicSync] Manual sync completed. Next sync at {self.next_sync_time}")
+            self.next_sync_time = self.last_sync_time + timedelta(
+                hours=self.interval_hours
+            )
+            logger.info(
+                f"[PeriodicSync] Manual sync completed. Next sync at {self.next_sync_time}"
+            )
         except Exception as e:
             logger.error(f"[PeriodicSync] Manual sync failed: {e}")
             raise
@@ -120,17 +129,15 @@ class PeriodicSyncScheduler:
             # Get all unfinished books
             logger.info("[PeriodicSync] Fetching all unfinished books")
 
-            unfinished_books = (
-                session.query(Book)
-                .filter(Book.status != "已完成")
-                .all()
-            )
+            unfinished_books = session.query(Book).filter(Book.status != "已完成").all()
 
             if not unfinished_books:
                 logger.info("[PeriodicSync] No unfinished books to sync")
                 return
 
-            logger.info(f"[PeriodicSync] Found {len(unfinished_books)} unfinished books")
+            logger.info(
+                f"[PeriodicSync] Found {len(unfinished_books)} unfinished books"
+            )
 
             # Enqueue all unfinished books with the job manager
             queued_count = 0
@@ -138,22 +145,27 @@ class PeriodicSyncScheduler:
 
             for book in unfinished_books:
                 if not self.running:
-                    logger.info("[PeriodicSync] Stopping sync early (scheduler stopped)")
+                    logger.info(
+                        "[PeriodicSync] Stopping sync early (scheduler stopped)"
+                    )
                     break
 
                 try:
                     if self.job_manager:
                         success = self.job_manager.enqueue_sync(
-                            book.id,
-                            priority=self.sync_priority
+                            book.id, priority=self.sync_priority
                         )
 
                         if success:
                             queued_count += 1
-                            logger.debug(f"[PeriodicSync] Queued book {book.id} ({book.name})")
+                            logger.debug(
+                                f"[PeriodicSync] Queued book {book.id} ({book.name})"
+                            )
                         else:
                             skipped_count += 1
-                            logger.debug(f"[PeriodicSync] Skipped book {book.id} (already in queue)")
+                            logger.debug(
+                                f"[PeriodicSync] Skipped book {book.id} (already in queue)"
+                            )
 
                 except Exception as e:
                     logger.error(f"[PeriodicSync] Failed to queue book {book.id}: {e}")
@@ -168,6 +180,7 @@ class PeriodicSyncScheduler:
         except Exception as e:
             logger.error(f"[PeriodicSync] Error during periodic sync: {e}")
             import traceback
+
             traceback.print_exc()
         finally:
             session.close()
@@ -177,8 +190,12 @@ class PeriodicSyncScheduler:
         return {
             "running": self.running,
             "interval_hours": self.interval_hours,
-            "last_sync_time": self.last_sync_time.isoformat() if self.last_sync_time else None,
-            "next_sync_time": self.next_sync_time.isoformat() if self.next_sync_time else None,
+            "last_sync_time": self.last_sync_time.isoformat()
+            if self.last_sync_time
+            else None,
+            "next_sync_time": self.next_sync_time.isoformat()
+            if self.next_sync_time
+            else None,
             "priority": self.sync_priority,
         }
 

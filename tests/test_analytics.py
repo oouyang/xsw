@@ -1,4 +1,5 @@
 """Tests for the analytics module and admin analytics endpoints."""
+
 import os
 
 os.environ.setdefault("AUTH_ENABLED", "false")
@@ -22,6 +23,7 @@ from main_optimized import app
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _fresh_analytics_db():
@@ -53,6 +55,7 @@ def client():
 # Unit tests: hashing
 # ---------------------------------------------------------------------------
 
+
 def test_hash_ip_deterministic():
     assert hash_ip("127.0.0.1") == hash_ip("127.0.0.1")
 
@@ -73,6 +76,7 @@ def test_different_inputs_different_hashes():
 # ---------------------------------------------------------------------------
 # Unit tests: queue / log_page_view
 # ---------------------------------------------------------------------------
+
 
 def test_log_page_view_enqueues():
     log_page_view(book_id="abc", chapter_num=1, ip="1.2.3.4")
@@ -103,6 +107,7 @@ def test_log_page_view_drops_when_full():
 # Unit tests: flush / batch insert
 # ---------------------------------------------------------------------------
 
+
 def test_flush_inserts_records(session):
     records = [
         {
@@ -125,6 +130,7 @@ def test_flush_inserts_records(session):
 # Unit tests: query helpers
 # ---------------------------------------------------------------------------
 
+
 def test_get_summary_empty(session):
     result = analytics.get_summary(session)
     assert result["total_views"] == 0
@@ -136,14 +142,22 @@ def test_get_summary_empty(session):
 def test_get_summary_with_data(session):
     now = datetime.now(timezone.utc)
     for i in range(3):
-        session.add(PageView(
-            book_id="book1", chapter_num=i + 1,
-            ip_hash=f"hash{i}", created_at=now,
-        ))
-    session.add(PageView(
-        book_id="book2", chapter_num=1,
-        ip_hash="hashX", created_at=now,
-    ))
+        session.add(
+            PageView(
+                book_id="book1",
+                chapter_num=i + 1,
+                ip_hash=f"hash{i}",
+                created_at=now,
+            )
+        )
+    session.add(
+        PageView(
+            book_id="book2",
+            chapter_num=1,
+            ip_hash="hashX",
+            created_at=now,
+        )
+    )
     session.commit()
 
     result = analytics.get_summary(session)
@@ -158,14 +172,22 @@ def test_get_summary_with_data(session):
 def test_get_book_analytics(session):
     now = datetime.now(timezone.utc)
     for i in range(5):
-        session.add(PageView(
-            book_id="bookA", chapter_num=1,
-            ip_hash="h1", created_at=now,
-        ))
-    session.add(PageView(
-        book_id="bookA", chapter_num=2,
-        ip_hash="h2", created_at=now,
-    ))
+        session.add(
+            PageView(
+                book_id="bookA",
+                chapter_num=1,
+                ip_hash="h1",
+                created_at=now,
+            )
+        )
+    session.add(
+        PageView(
+            book_id="bookA",
+            chapter_num=2,
+            ip_hash="h2",
+            created_at=now,
+        )
+    )
     session.commit()
 
     result = analytics.get_book_analytics(session, "bookA", days=30)
@@ -219,6 +241,7 @@ def test_cleanup_old_views(session):
 # ---------------------------------------------------------------------------
 # API endpoint tests
 # ---------------------------------------------------------------------------
+
 
 def test_admin_analytics_summary_endpoint(client):
     resp = client.get("/xsw/api/admin/analytics/summary")

@@ -9,6 +9,7 @@ Usage:
     python3 scripts/merge_bus_bundles.py
     python3 scripts/merge_bus_bundles.py --input-dir static/bus --output static/bus/bundle.json.gz
 """
+
 import sys
 import json
 import gzip
@@ -25,8 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 load_dotenv()
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -66,9 +66,9 @@ def merge_bundles(bundle_paths: List[Path], output_path: Path):
     logger.info(f"Merging {len(bundle_paths)} city bundles...")
 
     merged_bundle = {
-        "version": datetime.now().strftime('%Y-%m-%d-%H%M'),
+        "version": datetime.now().strftime("%Y-%m-%d-%H%M"),
         "generated_at": datetime.now().isoformat(),
-        "cities": {}
+        "cities": {},
     }
 
     total_routes = 0
@@ -83,7 +83,7 @@ def merge_bundles(bundle_paths: List[Path], output_path: Path):
         try:
             logger.info(f"Processing: {bundle_path.name}")
 
-            with gzip.open(bundle_path, 'rt', encoding='utf-8') as f:
+            with gzip.open(bundle_path, "rt", encoding="utf-8") as f:
                 bundle = json.load(f)
 
             # Merge cities
@@ -95,8 +95,8 @@ def merge_bundles(bundle_paths: List[Path], output_path: Path):
                     # Count stats
                     route_count = len(city_data.get("routes", {}))
                     stop_count = sum(
-                        len(route_data.get("stops", {}).get("0", [])) +
-                        len(route_data.get("stops", {}).get("1", []))
+                        len(route_data.get("stops", {}).get("0", []))
+                        + len(route_data.get("stops", {}).get("1", []))
                         for route_data in city_data.get("routes", {}).values()
                     )
 
@@ -120,7 +120,7 @@ def merge_bundles(bundle_paths: List[Path], output_path: Path):
     merged_bundle["stats"] = {
         "total_cities": len(merged_bundle["cities"]),
         "total_routes": total_routes,
-        "total_stops": total_stops
+        "total_stops": total_stops,
     }
 
     # Save merged bundle
@@ -128,10 +128,10 @@ def merge_bundles(bundle_paths: List[Path], output_path: Path):
 
     # Calculate sizes
     json_str = json.dumps(merged_bundle, ensure_ascii=False, indent=2)
-    uncompressed_size = len(json_str.encode('utf-8'))
+    uncompressed_size = len(json_str.encode("utf-8"))
 
     # Write compressed
-    with gzip.open(output_path, 'wt', encoding='utf-8') as f:
+    with gzip.open(output_path, "wt", encoding="utf-8") as f:
         json.dump(merged_bundle, f, ensure_ascii=False, indent=2)
 
     compressed_size = output_path.stat().st_size
@@ -154,17 +154,17 @@ def merge_bundles(bundle_paths: List[Path], output_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Merge multiple city bundles into one unified bundle'
+        description="Merge multiple city bundles into one unified bundle"
     )
     parser.add_argument(
-        '--input-dir',
-        default='static/bus',
-        help='Directory containing city bundles (default: static/bus)'
+        "--input-dir",
+        default="static/bus",
+        help="Directory containing city bundles (default: static/bus)",
     )
     parser.add_argument(
-        '--output',
-        default='static/bus/bundle.json.gz',
-        help='Output path for merged bundle (default: static/bus/bundle.json.gz)'
+        "--output",
+        default="static/bus/bundle.json.gz",
+        help="Output path for merged bundle (default: static/bus/bundle.json.gz)",
     )
 
     args = parser.parse_args()
@@ -186,7 +186,9 @@ def main():
 
     if not city_bundles:
         logger.error(f"No city bundles found in {input_dir}")
-        logger.info("Expected files like: bundle_taoyuan.json.gz, bundle_taipei.json.gz")
+        logger.info(
+            "Expected files like: bundle_taoyuan.json.gz, bundle_taipei.json.gz"
+        )
         sys.exit(1)
 
     logger.info(f"Found {len(city_bundles)} city bundles:")

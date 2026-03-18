@@ -1,4 +1,5 @@
 """Tests for comment API endpoints."""
+
 import os
 
 os.environ.setdefault("AUTH_ENABLED", "false")
@@ -44,7 +45,9 @@ def client(mock_fetch):
         yield c
 
 
-def _create_test_user(name="Test Reader", email="reader@example.com") -> tuple[int, str]:
+def _create_test_user(
+    name="Test Reader", email="reader@example.com"
+) -> tuple[int, str]:
     import db_models as _db
 
     session = _db.db_manager.get_session()

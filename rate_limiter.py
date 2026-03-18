@@ -21,11 +21,11 @@ class RateLimiter:
 
     # Thresholds and delays (requests per minute -> delay in seconds)
     THRESHOLDS = [
-        (50, 0.0),      # 0-50: no delay
-        (100, 1.0),     # 51-100: 1 second
-        (200, 10.0),    # 101-200: 10 seconds
-        (500, 60.0),    # 201-500: 60 seconds
-        (float('inf'), 300.0)  # 500+: 300 seconds
+        (50, 0.0),  # 0-50: no delay
+        (100, 1.0),  # 51-100: 1 second
+        (200, 10.0),  # 101-200: 10 seconds
+        (500, 60.0),  # 201-500: 60 seconds
+        (float("inf"), 300.0),  # 500+: 300 seconds
     ]
 
     WINDOW_SECONDS = 60.0  # 1-minute sliding window
@@ -43,7 +43,7 @@ class RateLimiter:
                 continue
             try:
                 # Try parsing as CIDR network
-                if '/' in entry:
+                if "/" in entry:
                     self._whitelist_networks.append(ip_network(entry, strict=False))
                     print(f"[RateLimiter] Added network to whitelist: {entry}")
                 else:
@@ -54,7 +54,9 @@ class RateLimiter:
             except ValueError:
                 print(f"[RateLimiter] Invalid whitelist entry: {entry}")
 
-        print(f"[RateLimiter] Initialized with {len(self._whitelist_ips)} IPs and {len(self._whitelist_networks)} networks")
+        print(
+            f"[RateLimiter] Initialized with {len(self._whitelist_ips)} IPs and {len(self._whitelist_networks)} networks"
+        )
 
     def _is_whitelisted(self, client_ip: str) -> bool:
         """Check if IP is whitelisted"""
@@ -81,8 +83,7 @@ class RateLimiter:
 
         cutoff = now - self.WINDOW_SECONDS
         self._request_history[client_ip] = [
-            ts for ts in self._request_history[client_ip]
-            if ts > cutoff
+            ts for ts in self._request_history[client_ip] if ts > cutoff
         ]
 
         # Remove empty entries to prevent memory bloat

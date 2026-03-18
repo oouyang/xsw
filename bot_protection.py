@@ -22,6 +22,7 @@ from datetime import datetime
 @dataclass
 class ClientReputation:
     """Track client behavior and reputation"""
+
     ip: str
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
@@ -86,33 +87,33 @@ class BotDetector:
 
     # Known bot user agents (bad bots)
     BAD_BOT_PATTERNS = [
-        r'(?i)(scrapy|curl|wget|python-requests|go-http-client)',
-        r'(?i)(bot|crawler|spider|scraper)',
-        r'(?i)(sqlmap|nikto|nmap|masscan)',
-        r'(?i)(scanner|penetration|attack)',
+        r"(?i)(scrapy|curl|wget|python-requests|go-http-client)",
+        r"(?i)(bot|crawler|spider|scraper)",
+        r"(?i)(sqlmap|nikto|nmap|masscan)",
+        r"(?i)(scanner|penetration|attack)",
     ]
 
     # Good bots (allow these)
     GOOD_BOT_PATTERNS = [
-        r'(?i)googlebot',
-        r'(?i)bingbot',
-        r'(?i)slackbot',
-        r'(?i)twitterbot',
-        r'(?i)facebookexternalhit',
+        r"(?i)googlebot",
+        r"(?i)bingbot",
+        r"(?i)slackbot",
+        r"(?i)twitterbot",
+        r"(?i)facebookexternalhit",
     ]
 
     # Suspicious paths
     SUSPICIOUS_PATHS = [
-        r'/admin',
-        r'/wp-admin',
-        r'\.php$',
-        r'\.asp$',
-        r'/phpmyadmin',
-        r'/\.env',
-        r'/\.git',
-        r'/api/v[0-9]+',  # Version scanning
-        r'/(etc|passwd|shadow)',
-        r'\.\./\.\.',  # Path traversal
+        r"/admin",
+        r"/wp-admin",
+        r"\.php$",
+        r"\.asp$",
+        r"/phpmyadmin",
+        r"/\.env",
+        r"/\.git",
+        r"/api/v[0-9]+",  # Version scanning
+        r"/(etc|passwd|shadow)",
+        r"\.\./\.\.",  # Path traversal
     ]
 
     def __init__(self):
@@ -158,7 +159,7 @@ class BotDetector:
             return True, "Known bad bot pattern"
 
         # Check for common browser patterns
-        browser_indicators = ['Mozilla', 'Chrome', 'Safari', 'Firefox', 'Edge']
+        browser_indicators = ["Mozilla", "Chrome", "Safari", "Firefox", "Edge"]
         has_browser = any(ind in user_agent for ind in browser_indicators)
 
         if not has_browser:
@@ -184,7 +185,7 @@ class DDoSProtection:
         max_requests_per_ip: int = 100,
         time_window: int = 60,
         block_duration: int = 3600,
-        max_suspicious_score: int = 10
+        max_suspicious_score: int = 10,
     ):
         self.max_requests_per_ip = max_requests_per_ip
         self.time_window = time_window
@@ -229,11 +230,7 @@ class DDoSProtection:
             del self._request_timestamps[ip]
 
     def check_request(
-        self,
-        ip: str,
-        path: str,
-        user_agent: Optional[str] = None,
-        method: str = "GET"
+        self, ip: str, path: str, user_agent: Optional[str] = None, method: str = "GET"
     ) -> Tuple[bool, str, int]:
         """
         Check if request should be allowed
@@ -258,7 +255,9 @@ class DDoSProtection:
 
             # Bot detection
             if user_agent:
-                is_suspicious_ua, ua_reason = self._bot_detector.analyze_user_agent(user_agent)
+                is_suspicious_ua, ua_reason = self._bot_detector.analyze_user_agent(
+                    user_agent
+                )
                 if is_suspicious_ua:
                     client.mark_suspicious()
                     self._suspicious_requests += 1
@@ -288,7 +287,11 @@ class DDoSProtection:
                 client.mark_suspicious()
                 # Auto-block aggressive clients
                 client.block(self.block_duration)
-                return False, f"Rate limit exceeded ({request_count} req/{self.time_window}s)", 0
+                return (
+                    False,
+                    f"Rate limit exceeded ({request_count} req/{self.time_window}s)",
+                    0,
+                )
 
             # Progressive delay for high-rate clients
             delay = 0
@@ -326,7 +329,9 @@ class DDoSProtection:
             else:
                 client = self._get_or_create_client(ip)
                 client.block(self.block_duration)
-                print(f"[DDoSProtection] Temporarily blocked IP: {ip} for {self.block_duration}s")
+                print(
+                    f"[DDoSProtection] Temporarily blocked IP: {ip} for {self.block_duration}s"
+                )
 
     def unblock_ip(self, ip: str):
         """Unblock an IP address"""
@@ -344,8 +349,11 @@ class DDoSProtection:
 
             # Clean up old clients (not seen in last hour)
             cutoff = now - 3600
-            old_clients = [ip for ip, client in self._clients.items()
-                          if client.last_seen < cutoff and not client.is_blocked()]
+            old_clients = [
+                ip
+                for ip, client in self._clients.items()
+                if client.last_seen < cutoff and not client.is_blocked()
+            ]
             for ip in old_clients:
                 del self._clients[ip]
                 if ip in self._request_timestamps:
@@ -354,14 +362,15 @@ class DDoSProtection:
             # Calculate statistics
             active_clients = len(self._clients)
             blocked_clients = sum(1 for c in self._clients.values() if c.is_blocked())
-            suspicious_clients = sum(1 for c in self._clients.values()
-                                    if c.suspicious_count > 0)
+            suspicious_clients = sum(
+                1 for c in self._clients.values() if c.suspicious_count > 0
+            )
 
             # Top offenders
             top_requesters = sorted(
                 self._clients.items(),
                 key=lambda x: len(self._request_timestamps.get(x[0], [])),
-                reverse=True
+                reverse=True,
             )[:10]
 
             return {
@@ -378,10 +387,10 @@ class DDoSProtection:
                         "requests": len(self._request_timestamps.get(ip, [])),
                         "reputation": client.get_reputation_score(),
                         "suspicious": client.suspicious_count,
-                        "blocked": client.is_blocked()
+                        "blocked": client.is_blocked(),
                     }
                     for ip, client in top_requesters
-                ]
+                ],
             }
 
     def get_client_info(self, ip: str) -> Optional[Dict]:
@@ -400,9 +409,12 @@ class DDoSProtection:
                 "suspicious_count": client.suspicious_count,
                 "reputation_score": client.get_reputation_score(),
                 "is_blocked": client.is_blocked(),
-                "blocked_until": datetime.fromtimestamp(client.blocked_until).isoformat()
-                                if client.blocked_until else None,
+                "blocked_until": datetime.fromtimestamp(
+                    client.blocked_until
+                ).isoformat()
+                if client.blocked_until
+                else None,
                 "user_agents": list(client.user_agents)[:10],
                 "recent_paths": client.paths[-20:],
-                "current_rate": len(self._request_timestamps.get(ip, []))
+                "current_rate": len(self._request_timestamps.get(ip, [])),
             }

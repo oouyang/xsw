@@ -22,7 +22,7 @@ def test_basic_functionality():
         delay = limiter.get_delay("192.168.1.100")
         limiter.record_request("192.168.1.100")
         if i in [0, 10, 25, 49]:
-            print(f"   Request {i+1}: delay = {delay}s")
+            print(f"   Request {i + 1}: delay = {delay}s")
 
     assert delay == 0.0, f"Expected 0s delay, got {delay}s"
     print("   ✓ First 50 requests have no delay")
@@ -173,10 +173,18 @@ def test_stats():
     print(f"   Whitelist IPs: {stats['whitelist_ips']}")
     print(f"   Whitelist networks: {stats['whitelist_networks']}")
 
-    assert stats['active_clients'] == 2, f"Expected 2 active clients, got {stats['active_clients']}"
-    assert stats['total_requests_in_window'] == 50, f"Expected 50 total requests, got {stats['total_requests_in_window']}"
-    assert stats['whitelist_ips'] == 1, f"Expected 1 whitelisted IP, got {stats['whitelist_ips']}"
-    assert stats['whitelist_networks'] == 1, f"Expected 1 whitelisted network, got {stats['whitelist_networks']}"
+    assert stats["active_clients"] == 2, (
+        f"Expected 2 active clients, got {stats['active_clients']}"
+    )
+    assert stats["total_requests_in_window"] == 50, (
+        f"Expected 50 total requests, got {stats['total_requests_in_window']}"
+    )
+    assert stats["whitelist_ips"] == 1, (
+        f"Expected 1 whitelisted IP, got {stats['whitelist_ips']}"
+    )
+    assert stats["whitelist_networks"] == 1, (
+        f"Expected 1 whitelisted network, got {stats['whitelist_networks']}"
+    )
     print("   ✓ Statistics are accurate")
 
 
@@ -202,5 +210,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ UNEXPECTED ERROR: {e}\n")
         import traceback
+
         traceback.print_exc()
         exit(1)

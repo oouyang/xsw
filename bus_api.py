@@ -1,6 +1,7 @@
 """
 Bus API Endpoints - yunbus-style with TDX backend
 """
+
 import logging
 import json
 import gzip
@@ -24,8 +25,8 @@ bus_cache = BusCache()
 bus_router = APIRouter(prefix="/bus/api")
 
 # Bundle configuration
-BUNDLE_PATH = os.getenv('BUS_BUNDLE_PATH', 'static/bus/bundle.json.gz')
-BUNDLE_VERSION_CACHE_KEY = 'bundle:version'
+BUNDLE_PATH = os.getenv("BUS_BUNDLE_PATH", "static/bus/bundle.json.gz")
+BUNDLE_VERSION_CACHE_KEY = "bundle:version"
 
 
 def parse_bus_query(query_string: str):
@@ -36,11 +37,11 @@ def parse_bus_query(query_string: str):
       - ?plate&709 → {"action": "plate", "route": "709"}
       - ?route&Taoyuan → {"action": "route", "city": "Taoyuan"}
     """
-    if not query_string or query_string == '?':
+    if not query_string or query_string == "?":
         raise HTTPException(status_code=400, detail="Missing query parameters")
 
-    query_string = query_string.lstrip('?')
-    parts = query_string.split('&')
+    query_string = query_string.lstrip("?")
+    parts = query_string.split("&")
 
     if len(parts) < 2:
         raise HTTPException(status_code=400, detail="Invalid query format")
@@ -74,7 +75,7 @@ async def bus_api_endpoint(request: Request):
         param = parsed["param"]
 
         # Default city (can be extracted from route_id prefix)
-        city = os.getenv('BUS_DEFAULT_CITY', 'Taoyuan')
+        city = os.getenv("BUS_DEFAULT_CITY", "Taoyuan")
 
         # Handle different actions
         if action == "estime" or action == "stopes":
@@ -173,6 +174,7 @@ async def handle_stop(route_id: str, city: str) -> JSONResponse:
         cached = bus_cache.get(cache_key)
         if cached:
             import json
+
             return JSONResponse(json.loads(cached))
 
         stops = tdx_client.get_bus_stops(city, route_id)
@@ -183,6 +185,7 @@ async def handle_stop(route_id: str, city: str) -> JSONResponse:
 
         # Cache for 24 hours (static data)
         import json
+
         bus_cache.set(cache_key, json.dumps(result), ttl=86400)
         return JSONResponse(result)
 
@@ -201,6 +204,7 @@ async def handle_mapstop(route_id: str, city: str) -> JSONResponse:
         cached = bus_cache.get(cache_key)
         if cached:
             import json
+
             return JSONResponse(json.loads(cached))
 
         stops = tdx_client.get_bus_stops(city, route_id)
@@ -210,6 +214,7 @@ async def handle_mapstop(route_id: str, city: str) -> JSONResponse:
         result["routeId"] = route_id
 
         import json
+
         bus_cache.set(cache_key, json.dumps(result), ttl=86400)
         return JSONResponse(result)
 
@@ -228,6 +233,7 @@ async def handle_mapshape(route_id: str, city: str) -> JSONResponse:
         cached = bus_cache.get(cache_key)
         if cached:
             import json
+
             return JSONResponse(json.loads(cached))
 
         shapes = tdx_client.get_bus_route_shape(city, route_id)
@@ -236,6 +242,7 @@ async def handle_mapshape(route_id: str, city: str) -> JSONResponse:
         result["routeId"] = route_id
 
         import json
+
         bus_cache.set(cache_key, json.dumps(result), ttl=86400)
         return JSONResponse(result)
 
@@ -254,6 +261,7 @@ async def handle_mapbus(route_id: str, city: str) -> JSONResponse:
         cached = bus_cache.get(cache_key)
         if cached:
             import json
+
             return JSONResponse(json.loads(cached))
 
         positions = tdx_client.get_bus_realtime_position(city, route_id)
@@ -262,6 +270,7 @@ async def handle_mapbus(route_id: str, city: str) -> JSONResponse:
         result["routeId"] = route_id
 
         import json
+
         bus_cache.set(cache_key, json.dumps(result), ttl=15)  # 15s for real-time
         return JSONResponse(result)
 
@@ -280,6 +289,7 @@ async def handle_route(city: str) -> JSONResponse:
         cached = bus_cache.get(cache_key)
         if cached:
             import json
+
             return JSONResponse(json.loads(cached))
 
         routes = tdx_client.get_routes(city)
@@ -287,6 +297,7 @@ async def handle_route(city: str) -> JSONResponse:
         result = transformer.tdx_to_route_list_json(routes, city)
 
         import json
+
         bus_cache.set(cache_key, json.dumps(result), ttl=86400)
         return JSONResponse(result)
 
@@ -296,6 +307,7 @@ async def handle_route(city: str) -> JSONResponse:
 
 
 # ===== Static Bundle OTA Endpoints =====
+
 
 @bus_router.get("/bundle/version")
 async def get_bundle_version() -> JSONResponse:
@@ -314,11 +326,9 @@ async def get_bundle_version() -> JSONResponse:
     bundle_file = Path(BUNDLE_PATH)
 
     if not bundle_file.exists():
-        return JSONResponse({
-            "version": None,
-            "available": False,
-            "error": "Bundle not generated yet"
-        })
+        return JSONResponse(
+            {"version": None, "available": False, "error": "Bundle not generated yet"}
+        )
 
     try:
         # Try to get cached version info
@@ -327,7 +337,7 @@ async def get_bundle_version() -> JSONResponse:
             return JSONResponse(json.loads(cached_version))
 
         # Read bundle metadata
-        with gzip.open(bundle_file, 'rt', encoding='utf-8') as f:
+        with gzip.open(bundle_file, "rt", encoding="utf-8") as f:
             bundle = json.load(f)
 
         version_info = {
@@ -336,7 +346,7 @@ async def get_bundle_version() -> JSONResponse:
             "size": bundle_file.stat().st_size,
             "cities": list(bundle.get("cities", {}).keys()),
             "stats": bundle.get("stats", {}),
-            "available": True
+            "available": True,
         }
 
         # Cache for 1 hour
@@ -346,11 +356,7 @@ async def get_bundle_version() -> JSONResponse:
 
     except Exception as e:
         logger.error(f"Error reading bundle version: {e}")
-        return JSONResponse({
-            "version": None,
-            "available": False,
-            "error": str(e)
-        })
+        return JSONResponse({"version": None, "available": False, "error": str(e)})
 
 
 @bus_router.get("/bundle/download")
@@ -373,13 +379,13 @@ async def download_bundle() -> Response:
 
     try:
         # Read bundle to get version for ETag
-        with gzip.open(bundle_file, 'rt', encoding='utf-8') as f:
+        with gzip.open(bundle_file, "rt", encoding="utf-8") as f:
             bundle = json.load(f)
 
         version = bundle.get("version", "unknown")
 
         # Return compressed file
-        with open(bundle_file, 'rb') as f:
+        with open(bundle_file, "rb") as f:
             content = f.read()
 
         return Response(
@@ -389,7 +395,7 @@ async def download_bundle() -> Response:
                 "Content-Encoding": "gzip",
                 "ETag": f'"{version}"',
                 "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
-            }
+            },
         )
 
     except Exception as e:
@@ -428,16 +434,18 @@ async def get_city_bundle(city: str) -> JSONResponse:
             return JSONResponse(json.loads(cached))
 
         # Read bundle
-        with gzip.open(bundle_file, 'rt', encoding='utf-8') as f:
+        with gzip.open(bundle_file, "rt", encoding="utf-8") as f:
             bundle = json.load(f)
 
         if city not in bundle.get("cities", {}):
-            raise HTTPException(status_code=404, detail=f"City '{city}' not found in bundle")
+            raise HTTPException(
+                status_code=404, detail=f"City '{city}' not found in bundle"
+            )
 
         city_data = {
             "city": city,
             "version": bundle.get("version"),
-            "routes": bundle["cities"][city].get("routes", {})
+            "routes": bundle["cities"][city].get("routes", {}),
         }
 
         # Cache for 24 hours

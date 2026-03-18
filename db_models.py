@@ -3,7 +3,8 @@
 SQLAlchemy models for persistent storage of scraped novel data.
 Database-first caching strategy: check DB before fetching from web.
 """
-from datetime import datetime
+
+from datetime import datetime, timezone
 from sqlalchemy import (
     create_engine,
     Column,
@@ -16,8 +17,7 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.sql import text as sql_text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
 import os
 
@@ -47,11 +47,15 @@ class Book(Base):
 
     # Metadata
     source_url = Column(String, unique=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_scraped_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_scraped_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationships
-    chapters = relationship("Chapter", back_populates="book", cascade="all, delete-orphan")
+    chapters = relationship(
+        "Chapter", back_populates="book", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Book(id='{self.id}', name='{self.name}', author='{self.author}')>"
@@ -72,8 +76,8 @@ class Chapter(Base):
 
     # Metadata
     word_count = Column(Integer)
-    fetched_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fetched_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     book = relationship("Book", back_populates="chapters")
@@ -96,7 +100,7 @@ class Category(Base):
     id = Column(String, primary_key=True)  # cat_id
     name = Column(String)
     url = Column(String, unique=True)
-    discovered_at = Column(DateTime, default=datetime.utcnow)
+    discovered_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def __repr__(self):
         return f"<Category(id='{self.id}', name='{self.name}')>"
@@ -115,7 +119,7 @@ class ScrapeLog(Base):
     status_code = Column(Integer)
     error_message = Column(Text)
     response_time_ms = Column(Integer)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Indexes
     __table_args__ = (
@@ -130,12 +134,16 @@ class PendingSyncQueue(Base):
     __tablename__ = "pending_sync_queue"
 
     book_id = Column(String, primary_key=True)
-    added_at = Column(DateTime, default=datetime.utcnow)
-    accessed_at = Column(DateTime, default=datetime.utcnow)  # Last time book was accessed
+    added_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    accessed_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )  # Last time book was accessed
     access_count = Column(Integer, default=1)  # Number of times accessed
     priority = Column(Integer, default=0)  # Higher = sync sooner
     last_sync_attempt = Column(DateTime, nullable=True)  # Last time sync was attempted
-    sync_status = Column(String, default="pending")  # pending, syncing, completed, failed
+    sync_status = Column(
+        String, default="pending"
+    )  # pending, syncing, completed, failed
 
     # Indexes
     __table_args__ = (
@@ -163,8 +171,8 @@ class SmtpSettings(Base):
     from_name = Column(String, default="看小說 Admin")
 
     # Metadata
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     last_test_at = Column(DateTime, nullable=True)
     last_test_status = Column(String, nullable=True)  # success, error
 
@@ -182,12 +190,16 @@ class User(Base):
     email = Column(String, nullable=True)  # WeChat may not provide email
     avatar_url = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login_at = Column(DateTime, nullable=True)
 
     # Relationships
-    oauth_accounts = relationship("UserOAuth", back_populates="user", cascade="all, delete-orphan")
-    reading_progress = relationship("ReadingProgress", back_populates="user", cascade="all, delete-orphan")
+    oauth_accounts = relationship(
+        "UserOAuth", back_populates="user", cascade="all, delete-orphan"
+    )
+    reading_progress = relationship(
+        "ReadingProgress", back_populates="user", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<User(id={self.id}, display_name='{self.display_name}', email='{self.email}')>"
@@ -207,8 +219,8 @@ class UserOAuth(Base):
     provider_avatar = Column(String, nullable=True)
     access_token = Column(Text, nullable=True)
     refresh_token = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_used_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_used_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User", back_populates="oauth_accounts")
@@ -236,7 +248,7 @@ class ReadingProgress(Base):
     chapter_title = Column(String, nullable=True)
     chapter_id = Column(String, nullable=True)
     scroll_position = Column(Integer, default=0)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User", back_populates="reading_progress")
@@ -260,8 +272,8 @@ class Comment(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     book_id = Column(String, nullable=False)  # public_id
     text = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User")
@@ -274,7 +286,9 @@ class Comment(Base):
     )
 
     def __repr__(self):
-        return f"<Comment(id={self.id}, user_id={self.user_id}, book_id='{self.book_id}')>"
+        return (
+            f"<Comment(id={self.id}, user_id={self.user_id}, book_id='{self.book_id}')>"
+        )
 
 
 class AdminUser(Base):
@@ -293,7 +307,7 @@ class AdminUser(Base):
     picture_url = Column(String, nullable=True)
 
     # Metadata
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login_at = Column(DateTime, nullable=True)
 
     # Indexes
@@ -320,13 +334,11 @@ class DatabaseManager:
             db_url,
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
-            echo=os.getenv("DB_ECHO", "false").lower() == "true"
+            echo=os.getenv("DB_ECHO", "false").lower() == "true",
         )
 
         self.SessionLocal = sessionmaker(
-            autocommit=False,
-            autoflush=False,
-            bind=self.engine
+            autocommit=False, autoflush=False, bind=self.engine
         )
 
     def create_tables(self):

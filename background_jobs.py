@@ -3,6 +3,7 @@
 Background job system for syncing book chapters and metadata.
 Uses threading to avoid blocking the main request handlers.
 """
+
 import threading
 import time
 import logging
@@ -17,6 +18,7 @@ logger = logging.getLogger("background-jobs")
 @dataclass
 class SyncJob:
     """Represents a sync job for a book."""
+
     book_id: str
     priority: int = 0  # Higher priority = processed first
     added_at: float = 0.0
@@ -60,7 +62,9 @@ class BackgroundJobManager:
         self.fetch_book_info_callback = None
         self.fetch_chapters_callback = None
 
-        logger.info(f"[BackgroundJobManager] Initialized with {num_workers} workers, rate_limit={rate_limit_seconds}s")
+        logger.info(
+            f"[BackgroundJobManager] Initialized with {num_workers} workers, rate_limit={rate_limit_seconds}s"
+        )
 
     def start(self):
         """Start worker threads."""
@@ -100,20 +104,26 @@ class BackgroundJobManager:
         with self.lock:
             # Check if already active or recently completed
             if book_id in self.active_jobs:
-                logger.debug(f"[BackgroundJobManager] Book {book_id} already being synced")
+                logger.debug(
+                    f"[BackgroundJobManager] Book {book_id} already being synced"
+                )
                 return False
 
             # Check if completed recently (within last 5 minutes)
             if book_id in self.completed_jobs:
                 completed_at = self.completed_jobs[book_id]
                 if datetime.now() - completed_at < timedelta(minutes=5):
-                    logger.debug(f"[BackgroundJobManager] Book {book_id} synced recently, skipping")
+                    logger.debug(
+                        f"[BackgroundJobManager] Book {book_id} synced recently, skipping"
+                    )
                     return False
 
             # Add to queue
             job = SyncJob(book_id=book_id, priority=priority)
             self.job_queue.put(job)
-            logger.info(f"[BackgroundJobManager] Queued sync job for book {book_id} (priority={priority})")
+            logger.info(
+                f"[BackgroundJobManager] Queued sync job for book {book_id} (priority={priority})"
+            )
             return True
 
     def enqueue_batch(self, book_ids: List[str], priority: int = 0) -> int:
@@ -144,18 +154,24 @@ class BackgroundJobManager:
         with self.lock:
             # Check if already active
             if book_id in self.active_jobs:
-                logger.debug(f"[BackgroundJobManager] Book {book_id} already being synced, cannot force resync")
+                logger.debug(
+                    f"[BackgroundJobManager] Book {book_id} already being synced, cannot force resync"
+                )
                 return False
 
             # Remove from completed jobs to bypass recent completion check
             if book_id in self.completed_jobs:
                 del self.completed_jobs[book_id]
-                logger.info(f"[BackgroundJobManager] Removed book {book_id} from completed cache for forced resync")
+                logger.info(
+                    f"[BackgroundJobManager] Removed book {book_id} from completed cache for forced resync"
+                )
 
             # Add to queue
             job = SyncJob(book_id=book_id, priority=priority)
             self.job_queue.put(job)
-            logger.info(f"[BackgroundJobManager] Force queued resync for book {book_id} (priority={priority})")
+            logger.info(
+                f"[BackgroundJobManager] Force queued resync for book {book_id} (priority={priority})"
+            )
             return True
 
     def _worker(self):
@@ -193,10 +209,14 @@ class BackgroundJobManager:
                         if job.book_id in self.failed_jobs:
                             del self.failed_jobs[job.book_id]
 
-                    logger.info(f"[{threading.current_thread().name}] Successfully synced book {job.book_id}")
+                    logger.info(
+                        f"[{threading.current_thread().name}] Successfully synced book {job.book_id}"
+                    )
 
                 except Exception as e:
-                    logger.error(f"[{threading.current_thread().name}] Failed to sync book {job.book_id}: {e}")
+                    logger.error(
+                        f"[{threading.current_thread().name}] Failed to sync book {job.book_id}: {e}"
+                    )
 
                     # Mark as failed
                     with self.lock:
@@ -279,7 +299,9 @@ class BackgroundJobManager:
             self.failed_jobs.clear()
 
             # Note: active_jobs is not cleared as jobs may still be processing
-        logger.info("[BackgroundJobManager] Cleared all job state (queue, completed, failed)")
+        logger.info(
+            "[BackgroundJobManager] Cleared all job state (queue, completed, failed)"
+        )
 
 
 # Global job manager instance

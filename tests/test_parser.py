@@ -1,4 +1,5 @@
 """Unit tests for parser.py — pure function tests, no network calls."""
+
 import pytest
 from parser import (
     extract_text_by_id,
@@ -23,6 +24,7 @@ from html_fixtures import (
 
 # ===== extract_text_by_id =====
 
+
 class TestExtractTextById:
     def test_basic(self):
         html = '<div id="msg">Hello World</div>'
@@ -46,6 +48,7 @@ class TestExtractTextById:
 
 # ===== extract_text_by_selector =====
 
+
 class TestExtractTextBySelector:
     def test_basic(self):
         html = '<div class="content"><p>Hello</p></div>'
@@ -58,6 +61,7 @@ class TestExtractTextBySelector:
 
 # ===== extract_chapter_title =====
 
+
 class TestExtractChapterTitle:
     def test_czbooks_div_name(self):
         title = extract_chapter_title(CZBOOKS_CHAPTER_DETAIL_HTML)
@@ -68,7 +72,9 @@ class TestExtractChapterTitle:
         assert extract_chapter_title(html) == "第五十章 決戰"
 
     def test_page_title_strategy(self):
-        html = "<html><head><title>第三章 出發 - 小說名</title></head><body></body></html>"
+        html = (
+            "<html><head><title>第三章 出發 - 小說名</title></head><body></body></html>"
+        )
         title = extract_chapter_title(html)
         assert title is not None
         assert "第三章" in title
@@ -79,6 +85,7 @@ class TestExtractChapterTitle:
 
 
 # ===== chinese_to_arabic =====
+
 
 @pytest.mark.parametrize(
     "chinese,expected",
@@ -99,6 +106,7 @@ def test_chinese_to_arabic(chinese, expected):
 
 # ===== chapter_title_to_number =====
 
+
 class TestChapterTitleToNumber:
     def test_arabic(self):
         assert chapter_title_to_number("第123章 標題") == 123
@@ -112,12 +120,15 @@ class TestChapterTitleToNumber:
 
 # ===== extract_book_id_from_url =====
 
+
 class TestExtractBookIdFromUrl:
     def test_czbooks(self):
         assert extract_book_id_from_url("https://czbooks.net/n/cr382b") == "cr382b"
 
     def test_with_chapter_path(self):
-        assert extract_book_id_from_url("https://czbooks.net/n/cr382b/crdic") == "cr382b"
+        assert (
+            extract_book_id_from_url("https://czbooks.net/n/cr382b/crdic") == "cr382b"
+        )
 
     def test_protocol_relative(self):
         assert extract_book_id_from_url("//czbooks.net/n/abc123") == "abc123"
@@ -130,6 +141,7 @@ class TestExtractBookIdFromUrl:
 
 
 # ===== find_categories_from_nav =====
+
 
 class TestFindCategoriesFromNav:
     def test_czbooks_nav_links(self):
@@ -149,11 +161,14 @@ class TestFindCategoriesFromNav:
         assert xuanhuan_count == 1
 
     def test_empty_html(self):
-        cats = find_categories_from_nav("<html><body></body></html>", "https://czbooks.net")
+        cats = find_categories_from_nav(
+            "<html><body></body></html>", "https://czbooks.net"
+        )
         assert cats == []
 
 
 # ===== parse_books =====
+
 
 class TestParseBooks:
     def test_czbooks_structure(self):
@@ -236,6 +251,7 @@ class TestParseBooks:
 
 
 # ===== parse_book_info =====
+
 
 class TestParseBookInfo:
     def test_czbooks_detail(self):
@@ -331,6 +347,7 @@ class TestParseBookInfo:
 
 # ===== fetch_chapters_from_liebiao =====
 
+
 class TestFetchChaptersFromLiebiao:
     BASE = "https://czbooks.net"
     PAGE_URL = "https://czbooks.net/n/testbook"
@@ -417,6 +434,7 @@ class TestFetchChaptersFromLiebiao:
 
 
 # ===== _normalize_czbooks_url =====
+
 
 class TestNormalizeCzbooksUrl:
     def test_protocol_relative(self):

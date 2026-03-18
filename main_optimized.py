@@ -3,6 +3,7 @@
 Optimized FastAPI backend with SQLite database-first caching.
 Strategy: Check DB → Fetch from web → Store to DB
 """
+
 import asyncio
 import re
 import time
@@ -12,7 +13,17 @@ from datetime import datetime, timezone
 
 import httpx
 from db_models import init_database
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request, Depends, status, APIRouter
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    UploadFile,
+    File,
+    Request,
+    Depends,
+    status,
+    APIRouter,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, JSONResponse
@@ -31,10 +42,13 @@ import logging
 # Import OpenCC for Chinese conversion
 try:
     from opencc import OpenCC
-    cc = OpenCC('s2t')  # Simplified to Traditional
+
+    cc = OpenCC("s2t")  # Simplified to Traditional
 except ImportError:
     cc = None
-    print("[WARNING] opencc-python-reimplemented not installed, CN->TW search conversion disabled")
+    print(
+        "[WARNING] opencc-python-reimplemented not installed, CN->TW search conversion disabled"
+    )
 
 # Import our refactored modules
 import cache_manager as cache_mgr
@@ -66,7 +80,7 @@ from auth import (
     AuthResponse,
     require_admin_auth,
     TokenPayload,
-    JWT_EXPIRATION_HOURS
+    JWT_EXPIRATION_HOURS,
 )
 from user_auth import (
     verify_google_user,
@@ -105,6 +119,7 @@ RATE_LIMIT_WHITELIST = os.getenv("RATE_LIMIT_WHITELIST", "127.0.0.1,::1").split(
 # Falls back to standard requests if curl_cffi is unavailable.
 try:
     from curl_cffi.requests import Session as CffiSession
+
     _cffi_session = CffiSession(impersonate="chrome")
     _use_cffi = True
     print("[init] Using curl_cffi with Chrome TLS impersonation")
@@ -114,10 +129,12 @@ except ImportError:
     print("[init] curl_cffi not available, using standard requests")
 
 session = requests.Session()
-session.headers.update({
-    "User-Agent": "curl/8.14.1",
-    "Accept": "*/*",
-})
+session.headers.update(
+    {
+        "User-Agent": "curl/8.14.1",
+        "Accept": "*/*",
+    }
+)
 
 
 # Per-book locks to prevent concurrent web fetches of the same book
@@ -139,6 +156,7 @@ def _get_book_lock(book_id: str) -> threading.Lock:
 def canonical_base() -> str:
     """Return the canonical scheme+host."""
     from urllib.parse import urlparse
+
     p = urlparse(BASE_URL)
     return f"{p.scheme}://{p.netloc}"
 
@@ -151,6 +169,7 @@ def resolve_book_home(book_id: str) -> str:
 
 PROXY_URL = os.getenv("HTTP_PROXY_URL", "http://taleon.work.gd:55128")
 
+
 def fetch_html(url: str) -> str:
     """
     Fetch HTML with Cloudflare bypass.
@@ -160,7 +179,9 @@ def fetch_html(url: str) -> str:
     proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
 
     if _use_cffi and _cffi_session:
-        resp = _cffi_session.get(url, timeout=DEFAULT_TIMEOUT, verify=False, proxies=proxies)
+        resp = _cffi_session.get(
+            url, timeout=DEFAULT_TIMEOUT, verify=False, proxies=proxies
+        )
         resp.raise_for_status()
         return resp.text
 
@@ -359,7 +380,11 @@ def _backfill_public_ids():
         book_cols = {c["name"] for c in inspector.get_columns("books")}
         if "public_id" not in book_cols:
             conn.execute(sa_text("ALTER TABLE books ADD COLUMN public_id TEXT"))
-            conn.execute(sa_text("CREATE UNIQUE INDEX IF NOT EXISTS ix_books_public_id ON books (public_id)"))
+            conn.execute(
+                sa_text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_books_public_id ON books (public_id)"
+                )
+            )
             conn.commit()
             print("[Migration] Added public_id column to books table")
 
@@ -381,24 +406,32 @@ def _backfill_public_ids():
         ch_cols = {c["name"] for c in inspector.get_columns("chapters")}
         if "public_id" not in ch_cols:
             conn.execute(sa_text("ALTER TABLE chapters ADD COLUMN public_id TEXT"))
-            conn.execute(sa_text("CREATE UNIQUE INDEX IF NOT EXISTS ix_chapters_public_id ON chapters (public_id)"))
+            conn.execute(
+                sa_text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_chapters_public_id ON chapters (public_id)"
+                )
+            )
             conn.commit()
             print("[Migration] Added public_id column to chapters table")
 
     # Use raw SQL for fast bulk backfill — Python-level ORM is too slow for 1M+ rows
     with engine.connect() as conn:
         # Backfill books
-        result = conn.execute(sa_text(
-            "UPDATE books SET public_id = lower(hex(randomblob(5))) WHERE public_id IS NULL"
-        ))
+        result = conn.execute(
+            sa_text(
+                "UPDATE books SET public_id = lower(hex(randomblob(5))) WHERE public_id IS NULL"
+            )
+        )
         if result.rowcount:
             conn.commit()
             print(f"[Backfill] Assigned public_id to {result.rowcount} books")
 
         # Backfill chapters
-        result = conn.execute(sa_text(
-            "UPDATE chapters SET public_id = lower(hex(randomblob(5))) WHERE public_id IS NULL"
-        ))
+        result = conn.execute(
+            sa_text(
+                "UPDATE chapters SET public_id = lower(hex(randomblob(5))) WHERE public_id IS NULL"
+            )
+        )
         if result.rowcount:
             conn.commit()
             print(f"[Backfill] Assigned public_id to {result.rowcount} chapters")
@@ -418,12 +451,21 @@ async def lifespan(app: FastAPI):
     # Initialize admin users
     from auth import init_admin_users
     import db_models
+
     if db_models.db_manager:
         init_admin_users(db_models.db_manager)
 
     # Initialize analytics (separate SQLite DB) and start background writer
     analytics.init_db()
     analytics.start_writer()
+
+    # Initialize Octile scoreboard DB
+    try:
+        import octile_api as octile_mod
+
+        octile_mod.init_db()
+    except Exception as e:
+        print(f"[WARNING] Failed to initialize Octile DB: {e}")
 
     print("[App] Database, cache, auth, and analytics initialized")
 
@@ -434,11 +476,12 @@ async def lifespan(app: FastAPI):
     analytics.stop_writer()
     print("[App] Shutdown complete")
 
+
 app = FastAPI(
     title="看小說 API (Optimized)",
     version="2.0.0",
     description="Optimized API with SQLite database-first caching",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Create API router for all API endpoints
@@ -449,6 +492,7 @@ api_router = APIRouter()
 # -----------------------
 # Initialize rate limiter
 rate_limiter = RateLimiter(RATE_LIMIT_WHITELIST) if RATE_LIMIT_ENABLED else None
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware to apply progressive rate limiting per client IP"""
@@ -471,7 +515,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Apply delay if needed
         if delay > 0:
             request_count = len(rate_limiter._request_history.get(client_ip, [])) + 1
-            print(f"[RateLimit] Client {client_ip} has {request_count} requests in last 60s - applying {delay}s delay")
+            print(
+                f"[RateLimit] Client {client_ip} has {request_count} requests in last 60s - applying {delay}s delay"
+            )
             await asyncio.sleep(delay)
 
         # Record this request
@@ -480,6 +526,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Process request
         response = await call_next(request)
         return response
+
 
 # Add rate limiting middleware before CORS (so it runs first)
 if RATE_LIMIT_ENABLED:
@@ -501,23 +548,23 @@ app.add_middleware(
 # Route patterns → max-age in seconds (only for GET, only for 2xx responses)
 _CACHE_RULES: list[tuple[re.Pattern, int]] = [
     # Chapter content — immutable once fetched, cache aggressively
-    (re.compile(r"^/xsw/api/books/[^/]+/chapters/[^/]+$"), 86400),   # 1 day
+    (re.compile(r"^/xsw/api/books/[^/]+/chapters/[^/]+$"), 86400),  # 1 day
     # Book info — changes when new chapters appear
-    (re.compile(r"^/xsw/api/books/[^/]+$"), 300),                    # 5 min
+    (re.compile(r"^/xsw/api/books/[^/]+$"), 300),  # 5 min
     # Chapter list
-    (re.compile(r"^/xsw/api/books/[^/]+/chapters$"), 300),           # 5 min
+    (re.compile(r"^/xsw/api/books/[^/]+/chapters$"), 300),  # 5 min
     # Similar books / author books
-    (re.compile(r"^/xsw/api/books/[^/]+/similar$"), 3600),           # 1 hour
-    (re.compile(r"^/xsw/api/authors/[^/]+/books$"), 3600),           # 1 hour
+    (re.compile(r"^/xsw/api/books/[^/]+/similar$"), 3600),  # 1 hour
+    (re.compile(r"^/xsw/api/authors/[^/]+/books$"), 3600),  # 1 hour
     # Comments list (not mutations)
-    (re.compile(r"^/xsw/api/books/[^/]+/comments$"), 60),            # 1 min
+    (re.compile(r"^/xsw/api/books/[^/]+/comments$"), 60),  # 1 min
     # Categories — very stable
-    (re.compile(r"^/xsw/api/categories$"), 3600),                    # 1 hour
-    (re.compile(r"^/xsw/api/categories/[^/]+/books$"), 300),         # 5 min
+    (re.compile(r"^/xsw/api/categories$"), 3600),  # 1 hour
+    (re.compile(r"^/xsw/api/categories/[^/]+/books$"), 300),  # 5 min
     # Search results
-    (re.compile(r"^/xsw/api/search$"), 60),                          # 1 min
+    (re.compile(r"^/xsw/api/search$"), 60),  # 1 min
     # by-url helpers
-    (re.compile(r"^/xsw/api/by-url/"), 300),                         # 5 min
+    (re.compile(r"^/xsw/api/by-url/"), 300),  # 5 min
 ]
 
 
@@ -547,6 +594,7 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
                 response.headers["Cache-Control"] = "private, no-store"
 
         return response
+
 
 app.add_middleware(CacheControlMiddleware)
 
@@ -604,19 +652,21 @@ def parse_etfs(data: dict) -> list[dict]:
             if not code.startswith("00"):
                 continue
 
-            etfs.append({
-                "code": code,
-                "name": (row[1] or "").strip(),
-                "price": (row[2] or "").strip().replace(",", ""),
-                "change": (row[3] or "").strip().replace(",", ""),
-                "open": (row[4] or "").strip().replace(",", ""),
-                "high": (row[5] or "").strip().replace(",", ""),
-                "low": (row[6] or "").strip().replace(",", ""),
-                "volume": (row[8] or "").strip().replace(",", ""),
-                "transactions": (row[10] or "").strip().replace(",", ""),
-                "date": date,
-                "source": "tpex",
-            })
+            etfs.append(
+                {
+                    "code": code,
+                    "name": (row[1] or "").strip(),
+                    "price": (row[2] or "").strip().replace(",", ""),
+                    "change": (row[3] or "").strip().replace(",", ""),
+                    "open": (row[4] or "").strip().replace(",", ""),
+                    "high": (row[5] or "").strip().replace(",", ""),
+                    "low": (row[6] or "").strip().replace(",", ""),
+                    "volume": (row[8] or "").strip().replace(",", ""),
+                    "transactions": (row[10] or "").strip().replace(",", ""),
+                    "date": date,
+                    "source": "tpex",
+                }
+            )
 
     return etfs
 
@@ -625,6 +675,7 @@ def parse_etfs(data: dict) -> list[dict]:
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"ok": True}
+
 
 # Mount ubike PWA static files (multi-page app)
 ubike_dir = "/app/dist/ubike"
@@ -668,7 +719,13 @@ if os.path.exists(spa_dir):
         raise HTTPException(status_code=404, detail="File not found")
 
     # 5) Social crawler OG meta tags
-    SOCIAL_CRAWLERS = ("facebookexternalhit", "Twitterbot", "LinkedInBot", "Line", "Slackbot")
+    SOCIAL_CRAWLERS = (
+        "facebookexternalhit",
+        "Twitterbot",
+        "LinkedInBot",
+        "Line",
+        "Slackbot",
+    )
 
     def _is_social_crawler(user_agent: str) -> bool:
         ua_lower = user_agent.lower()
@@ -676,6 +733,7 @@ if os.path.exists(spa_dir):
 
     def _build_og_html(title: str, description: str, url: str) -> str:
         import html as html_mod
+
         t = html_mod.escape(title)
         d = html_mod.escape(description[:200] if description else "")
         u = html_mod.escape(url)
@@ -701,8 +759,11 @@ if os.path.exists(spa_dir):
 
         if _is_social_crawler(ua) and not path.startswith("/xsw/api"):
             import re
+
             # Match /book/{bookId}/chapters or /book/{bookId}/chapter/{chapterId}/{title}
-            book_match = re.match(r"^/book/([^/]+)/(chapters|chapter/([^/]+)/?(.*))$", path)
+            book_match = re.match(
+                r"^/book/([^/]+)/(chapters|chapter/([^/]+)/?(.*))$", path
+            )
             if book_match:
                 book_id = book_match.group(1)
                 chapter_title = book_match.group(4) or ""
@@ -715,6 +776,7 @@ if os.path.exists(spa_dir):
                     desc = info.get("description", "") or f"by {info.get('author', '')}"
                     if chapter_title:
                         from urllib.parse import unquote
+
                         title = f"{title} - {unquote(chapter_title)}"
                     full_url = str(request.url)
                     return Response(
@@ -745,6 +807,7 @@ if os.path.exists(spa_dir):
         # For missing real files, keep 404
         return response
 
+
 # -----------------------
 # API Routes
 # -----------------------
@@ -756,8 +819,10 @@ def health():
         "status": "ok",
         "base_url": BASE_URL,
         "db_path": DB_PATH,
-        "cache_stats": cache_stats, "service": "TPEX Proxy"
+        "cache_stats": cache_stats,
+        "service": "TPEX Proxy",
     }
+
 
 @app.get("/tpex/etf-list")
 async def tpex_etf_list():
@@ -778,6 +843,7 @@ async def tpex_etf_list():
         "etfs": etfs,
     }
 
+
 @api_router.get("/categories", response_model=List[Category])
 def get_categories():
     """Get categories from homepage."""
@@ -794,6 +860,7 @@ def get_categories():
     except Exception as e:
         print(f"[API] Exception fetching categories: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -828,9 +895,7 @@ def list_books_in_category(
                 bookmark_count=bm,
                 view_count=vc,
             )
-            book_summaries.append(
-                BookSummary(**b, book_id=czid, public_id=pub_id)
-            )
+            book_summaries.append(BookSummary(**b, book_id=czid, public_id=pub_id))
 
         return book_summaries
     except requests.HTTPError as e:
@@ -904,7 +969,7 @@ def get_book_chapters(
     page: int = Query(1, ge=1),
     nocache: bool = Query(False),
     www: bool = Query(False),
-    all_chapters_flag: bool = Query(False, alias="all")
+    all_chapters_flag: bool = Query(False, alias="all"),
 ):
     """
     Get chapter list for a book.
@@ -932,10 +997,14 @@ def get_book_chapters(
                 # Stale data from old parser may have non-sequential numbers parsed from titles
                 first_num = min(c.number for c in all_chapters)
                 if first_num != 1:
-                    print(f"[API] Chapters for {book_id} - DB stale (first chapter is {first_num}, expected 1), re-fetching")
+                    print(
+                        f"[API] Chapters for {book_id} - DB stale (first chapter is {first_num}, expected 1), re-fetching"
+                    )
                     all_chapters = None
                 else:
-                    print(f"[API] Chapters for {book_id} - DB hit ({len(all_chapters)} chapters)")
+                    print(
+                        f"[API] Chapters for {book_id} - DB hit ({len(all_chapters)} chapters)"
+                    )
 
         if not all_chapters:
             # Cache miss or nocache - use per-book lock to prevent concurrent fetches
@@ -947,24 +1016,32 @@ def get_book_chapters(
                     if all_chapters:
                         first_num = min(c.number for c in all_chapters)
                         if first_num == 1:
-                            print(f"[API] Chapters for {book_id} - DB hit after lock ({len(all_chapters)} chapters)")
+                            print(
+                                f"[API] Chapters for {book_id} - DB hit after lock ({len(all_chapters)} chapters)"
+                            )
                         else:
                             all_chapters = None
 
                 if not all_chapters:
                     # Still a cache miss - fetch from web
-                    print(f"[API] Chapters for {book_id} - fetching from web (www={www})")
+                    print(
+                        f"[API] Chapters for {book_id} - fetching from web (www={www})"
+                    )
 
                     if www:
                         # Fetch from home page only (mobile site - latest 10 chapters)
                         # NOTE: Don't cache these results as they may be partial and incorrectly numbered
                         home_url = resolve_book_home(book_id)
                         html_content = fetch_html(home_url)
-                        items = fetch_chapters_from_liebiao(html_content, home_url, canonical_base(), start_index=1)
+                        items = fetch_chapters_from_liebiao(
+                            html_content, home_url, canonical_base(), start_index=1
+                        )
                     else:
                         # Fetch from pagination pages (all chapters)
                         volumes = []
-                        items = fetch_all_chapters_from_pagination(book_id, volumes_out=volumes)
+                        items = fetch_all_chapters_from_pagination(
+                            book_id, volumes_out=volumes
+                        )
 
                     if not items:
                         raise HTTPException(status_code=404, detail="No chapters found")
@@ -976,7 +1053,9 @@ def get_book_chapters(
 
                     # Convert to ChapterRef list
                     all_chapters = [
-                        ChapterRef(number=item["number"], title=item["title"], url=item["url"])
+                        ChapterRef(
+                            number=item["number"], title=item["title"], url=item["url"]
+                        )
                         for item in items
                         if item.get("number") is not None
                     ]
@@ -999,14 +1078,18 @@ def get_book_chapters(
         # Server-side pagination: slice the results
         CHAPTERS_PAGE_SIZE = 20
         total_chapters = len(all_chapters)
-        total_pages = max(1, (total_chapters + CHAPTERS_PAGE_SIZE - 1) // CHAPTERS_PAGE_SIZE)
+        total_pages = max(
+            1, (total_chapters + CHAPTERS_PAGE_SIZE - 1) // CHAPTERS_PAGE_SIZE
+        )
         current_page = min(max(page, 1), total_pages)
 
         start_idx = (current_page - 1) * CHAPTERS_PAGE_SIZE
         end_idx = start_idx + CHAPTERS_PAGE_SIZE
         page_chapters = all_chapters[start_idx:end_idx]
 
-        print(f"[API] Returning page {current_page}/{total_pages} ({len(page_chapters)} chapters)")
+        print(
+            f"[API] Returning page {current_page}/{total_pages} ({len(page_chapters)} chapters)"
+        )
         return page_chapters
 
     except requests.HTTPError as e:
@@ -1027,7 +1110,9 @@ def fetch_all_chapters_from_pagination(book_id: str, volumes_out: list = None) -
     html_content = fetch_html(book_url)
 
     # czbooks.net has all chapters on a single page in ul.chapter-list
-    items = fetch_chapters_from_liebiao(html_content, book_url, base, start_index=1, volumes_out=volumes_out)
+    items = fetch_chapters_from_liebiao(
+        html_content, book_url, base, start_index=1, volumes_out=volumes_out
+    )
     print(f"[API] Fetched {len(items)} chapters for book {book_id} from {book_url}")
 
     # Parse and store book info from the same HTML (description, bookmark/view counts)
@@ -1067,10 +1152,17 @@ def get_chapter_content(
         # Resolve chapter_id (public_id or sequential number)
         _, chapter_num = resolve_chapter(czbooks_book_id, chapter_id)
         if chapter_num < 0:
-            raise HTTPException(status_code=404, detail=f"Chapter '{chapter_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Chapter '{chapter_id}' not found"
+            )
 
         # Track page view (non-blocking)
-        client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.client.host if request.client else None
+        client_ip = (
+            request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or request.client.host
+            if request.client
+            else None
+        )
         analytics.log_page_view(
             book_id=czbooks_book_id,
             chapter_num=chapter_num,
@@ -1082,39 +1174,51 @@ def get_chapter_content(
 
         if not nocache:
             # Check cache first
-            cached_content = cache_mgr.cache_manager.get_chapter_content(czbooks_book_id, chapter_num)
+            cached_content = cache_mgr.cache_manager.get_chapter_content(
+                czbooks_book_id, chapter_num
+            )
             if cached_content:
                 print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - cache hit")
                 return cached_content
 
         # Cache miss - need to fetch
-        print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - cache miss, fetching from web")
+        print(
+            f"[API] Chapter {czbooks_book_id}:{chapter_num} - cache miss, fetching from web"
+        )
 
         # Strategy: Try to get chapter URL from DB first (fastest)
         chapter_url = get_chapter_url_from_db(czbooks_book_id, chapter_num)
 
         if not chapter_url:
             # Chapter URL not in DB - need to fetch chapter list first
-            print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - URL not in DB, fetching chapter list")
+            print(
+                f"[API] Chapter {czbooks_book_id}:{chapter_num} - URL not in DB, fetching chapter list"
+            )
 
             # Try home page first (for recent chapters)
             home_url = resolve_book_home(czbooks_book_id)
             home_html = fetch_html(home_url)
-            items = fetch_chapters_from_liebiao(home_html, home_url, canonical_base(), start_index=1)
+            items = fetch_chapters_from_liebiao(
+                home_html, home_url, canonical_base(), start_index=1
+            )
 
             # Find target chapter in home page
             target = next((it for it in items if it.get("number") == chapter_num), None)
 
             if not target:
                 # Not in home page - fetch all chapters from pagination
-                print(f"[API] Chapter {chapter_num} not in home page, fetching all chapters")
+                print(
+                    f"[API] Chapter {chapter_num} not in home page, fetching all chapters"
+                )
                 items = fetch_all_chapters_from_pagination(czbooks_book_id)
 
                 # Store all chapters to DB for future use
                 cache_mgr.cache_manager.store_chapter_refs(czbooks_book_id, items)
 
                 # Find target chapter
-                target = next((it for it in items if it.get("number") == chapter_num), None)
+                target = next(
+                    (it for it in items if it.get("number") == chapter_num), None
+                )
                 if not target:
                     raise HTTPException(
                         status_code=404, detail=f"Chapter {chapter_num} not found"
@@ -1124,8 +1228,13 @@ def get_chapter_content(
             chapter_title = target["title"]
         else:
             # Got URL from DB - get title too
-            chapter_title = get_chapter_title_from_db(czbooks_book_id, chapter_num) or f"Chapter {chapter_num}"
-            print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - found URL in DB: {chapter_url}")
+            chapter_title = (
+                get_chapter_title_from_db(czbooks_book_id, chapter_num)
+                or f"Chapter {chapter_num}"
+            )
+            print(
+                f"[API] Chapter {czbooks_book_id}:{chapter_num} - found URL in DB: {chapter_url}"
+            )
 
         # Fetch chapter content
         chapter_html = fetch_html(chapter_url)
@@ -1148,10 +1257,14 @@ def get_chapter_content(
             "url": chapter_url,
             "text": text,
         }
-        cache_mgr.cache_manager.store_chapter_content(czbooks_book_id, chapter_num, content_data)
+        cache_mgr.cache_manager.store_chapter_content(
+            czbooks_book_id, chapter_num, content_data
+        )
 
         # Re-read from cache to get the chapter_id (public_id)
-        cached = cache_mgr.cache_manager.get_chapter_content(czbooks_book_id, chapter_num)
+        cached = cache_mgr.cache_manager.get_chapter_content(
+            czbooks_book_id, chapter_num
+        )
         if cached:
             return cached
 
@@ -1220,6 +1333,7 @@ def get_chapter_title_from_db(book_id: str, chapter_num: int) -> Optional[str]:
 
 class SearchResult(BaseModel):
     """Search result with match context."""
+
     book_id: str
     public_id: Optional[str] = None  # book public_id
     book_name: str
@@ -1259,7 +1373,9 @@ def _extract_snippet(text: str, query: str, context_chars: int = 100) -> str:
 @api_router.get("/search")
 def search_comprehensive(
     q: str = Query(..., min_length=1, description="Search query"),
-    search_type: str = Query("all", description="Search scope: all, books, chapters, content"),
+    search_type: str = Query(
+        "all", description="Search scope: all, books, chapters, content"
+    ),
     limit: int = Query(20, ge=1, le=100, description="Max results to return"),
 ):
     """
@@ -1298,10 +1414,12 @@ def search_comprehensive(
             # 1. Search Books (name and author)
             if search_type in ["all", "books"]:
                 from db_models import Book
+
                 books = (
                     session.query(Book)
                     .filter(
-                        (Book.name.like(f"%{search_query}%")) | (Book.author.like(f"%{search_query}%"))
+                        (Book.name.like(f"%{search_query}%"))
+                        | (Book.author.like(f"%{search_query}%"))
                     )
                     .limit(limit)
                     .all()
@@ -1372,8 +1490,7 @@ def search_comprehensive(
                     session.query(Chapter, Book.name, Book.author)
                     .join(Book, Chapter.book_id == Book.id)
                     .filter(
-                        Chapter.text.isnot(None),
-                        Chapter.text.like(f"%{search_query}%")
+                        Chapter.text.isnot(None), Chapter.text.like(f"%{search_query}%")
                     )
                     .limit(limit)
                     .all()
@@ -1453,17 +1570,20 @@ def search_comprehensive(
 
 class GoogleAuthRequest(BaseModel):
     """Request body for Google OAuth authentication."""
+
     id_token: str
 
 
 class PasswordAuthRequest(BaseModel):
     """Request body for password authentication."""
+
     email: str
     password: str
 
 
 class PasswordChangeRequest(BaseModel):
     """Request body for changing password."""
+
     current_password: str
     new_password: str
 
@@ -1492,26 +1612,26 @@ async def authenticate_with_google(request: GoogleAuthRequest):
 
         session = db_models.db_manager.get_session()
         try:
-            admin_user = session.query(AdminUser).filter_by(
-                email=user_info['email']
-            ).first()
+            admin_user = (
+                session.query(AdminUser).filter_by(email=user_info["email"]).first()
+            )
 
             if not admin_user:
                 # Create new admin user
                 admin_user = AdminUser(
-                    email=user_info['email'],
-                    auth_method='google',
-                    google_id=user_info['google_id'],
-                    picture_url=user_info['picture'],
+                    email=user_info["email"],
+                    auth_method="google",
+                    google_id=user_info["google_id"],
+                    picture_url=user_info["picture"],
                     is_active=True,
-                    last_login_at=datetime.now(timezone.utc)
+                    last_login_at=datetime.now(timezone.utc),
                 )
                 session.add(admin_user)
             else:
                 # Update existing user
                 admin_user.last_login_at = datetime.now(timezone.utc)
-                admin_user.google_id = user_info['google_id']
-                admin_user.picture_url = user_info['picture']
+                admin_user.google_id = user_info["google_id"]
+                admin_user.picture_url = user_info["picture"]
 
             session.commit()
 
@@ -1519,34 +1639,31 @@ async def authenticate_with_google(request: GoogleAuthRequest):
             if not admin_user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Admin account is deactivated"
+                    detail="Admin account is deactivated",
                 )
 
             # Generate JWT token
-            token, expiration = create_jwt_token(admin_user.email, 'google')
+            token, expiration = create_jwt_token(admin_user.email, "google")
 
             return AuthResponse(
                 access_token=token,
                 expires_in=JWT_EXPIRATION_HOURS * 3600,
                 user={
-                    'email': admin_user.email,
-                    'auth_method': 'google',
-                    'picture': admin_user.picture_url
-                }
+                    "email": admin_user.email,
+                    "auth_method": "google",
+                    "picture": admin_user.picture_url,
+                },
             )
         finally:
             session.close()
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
     except Exception as e:
         print(f"[AUTH] Google authentication failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication failed"
+            detail="Authentication failed",
         )
 
 
@@ -1565,29 +1682,28 @@ async def authenticate_with_password(request: PasswordAuthRequest):
     session = db_models.db_manager.get_session()
     try:
         # Find admin user
-        admin_user = session.query(AdminUser).filter_by(
-            email=request.email,
-            auth_method='password'
-        ).first()
+        admin_user = (
+            session.query(AdminUser)
+            .filter_by(email=request.email, auth_method="password")
+            .first()
+        )
 
         if not admin_user or not admin_user.password_hash:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
 
         # Verify password
         if not verify_password(request.password, admin_user.password_hash):
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
 
         # Check if user is active
         if not admin_user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin account is deactivated"
+                detail="Admin account is deactivated",
             )
 
         # Update last login
@@ -1595,15 +1711,12 @@ async def authenticate_with_password(request: PasswordAuthRequest):
         session.commit()
 
         # Generate JWT token
-        token, expiration = create_jwt_token(admin_user.email, 'password')
+        token, expiration = create_jwt_token(admin_user.email, "password")
 
         return AuthResponse(
             access_token=token,
             expires_in=JWT_EXPIRATION_HOURS * 3600,
-            user={
-                'email': admin_user.email,
-                'auth_method': 'password'
-            }
+            user={"email": admin_user.email, "auth_method": "password"},
         )
     finally:
         session.close()
@@ -1611,8 +1724,7 @@ async def authenticate_with_password(request: PasswordAuthRequest):
 
 @api_router.post("/auth/password/change")
 async def change_password(
-    request: PasswordChangeRequest,
-    auth: TokenPayload = Depends(require_admin_auth)
+    request: PasswordChangeRequest, auth: TokenPayload = Depends(require_admin_auth)
 ):
     """
     Change admin user password (requires authentication).
@@ -1626,22 +1738,23 @@ async def change_password(
     session = db_models.db_manager.get_session()
     try:
         # Find admin user
-        admin_user = session.query(AdminUser).filter_by(
-            email=auth.sub,
-            auth_method='password'
-        ).first()
+        admin_user = (
+            session.query(AdminUser)
+            .filter_by(email=auth.sub, auth_method="password")
+            .first()
+        )
 
         if not admin_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Password authentication not enabled for this user"
+                detail="Password authentication not enabled for this user",
             )
 
         # Verify current password
         if not verify_password(request.current_password, admin_user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Current password is incorrect"
+                detail="Current password is incorrect",
             )
 
         # Update password
@@ -1659,11 +1772,7 @@ async def verify_token(auth: TokenPayload = Depends(require_admin_auth)):
     Verify if current JWT token is valid.
     Used by frontend to check authentication status.
     """
-    return {
-        "valid": True,
-        "email": auth.sub,
-        "auth_method": auth.auth_method
-    }
+    return {"valid": True, "email": auth.sub, "auth_method": auth.auth_method}
 
 
 # -----------------------
@@ -1677,7 +1786,9 @@ def clear_memory_cache(auth: TokenPayload = Depends(require_admin_auth)):
 
 
 @api_router.post("/admin/cache/invalidate/{book_id}")
-def invalidate_book_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
+def invalidate_book_cache(
+    book_id: str, auth: TokenPayload = Depends(require_admin_auth)
+):
     """Invalidate memory cache for a specific book (DB remains intact)."""
     book_id = resolve_book_id(book_id)
     cache_mgr.cache_manager.invalidate_book(book_id)
@@ -1685,7 +1796,9 @@ def invalidate_book_cache(book_id: str, auth: TokenPayload = Depends(require_adm
 
 
 @api_router.delete("/admin/cache/chapters/{book_id}")
-def delete_book_chapters_cache(book_id: str, auth: TokenPayload = Depends(require_admin_auth)):
+def delete_book_chapters_cache(
+    book_id: str, auth: TokenPayload = Depends(require_admin_auth)
+):
     """Delete all chapter records for a book from database and memory cache."""
     book_id = resolve_book_id(book_id)
     deleted_count = cache_mgr.cache_manager.delete_book_chapters(book_id)
@@ -1712,7 +1825,7 @@ def get_rate_limit_stats(auth: TokenPayload = Depends(require_admin_auth)):
     return {
         "enabled": True,
         "whitelist": RATE_LIMIT_WHITELIST,
-        **rate_limiter.get_stats()
+        **rate_limiter.get_stats(),
     }
 
 
@@ -1734,10 +1847,7 @@ def get_smtp_settings(auth: TokenPayload = Depends(require_admin_auth)):
     try:
         settings = session.query(SmtpSettings).filter_by(id=1).first()
         if not settings:
-            return {
-                "configured": False,
-                "message": "SMTP not configured"
-            }
+            return {"configured": False, "message": "SMTP not configured"}
 
         return {
             "configured": True,
@@ -1749,7 +1859,9 @@ def get_smtp_settings(auth: TokenPayload = Depends(require_admin_auth)):
             "use_ssl": settings.use_ssl,
             "from_email": settings.from_email,
             "from_name": settings.from_name,
-            "last_test_at": settings.last_test_at.isoformat() if settings.last_test_at else None,
+            "last_test_at": settings.last_test_at.isoformat()
+            if settings.last_test_at
+            else None,
             "last_test_status": settings.last_test_status,
         }
     finally:
@@ -1766,7 +1878,7 @@ def save_smtp_settings(
     use_ssl: bool = Query(False),
     from_email: str = Query(None),
     from_name: str = Query("看小說 Admin"),
-    auth: TokenPayload = Depends(require_admin_auth)
+    auth: TokenPayload = Depends(require_admin_auth),
 ):
     """Save SMTP configuration."""
     import db_models
@@ -1799,24 +1911,23 @@ def save_smtp_settings(
 
         # Initialize email sender
         smtp_config = {
-            'smtp_host': smtp_host,
-            'smtp_port': smtp_port,
-            'smtp_user': smtp_user,
-            'smtp_password': smtp_password,
-            'use_tls': use_tls,
-            'use_ssl': use_ssl,
-            'from_email': from_email or smtp_user,
-            'from_name': from_name,
+            "smtp_host": smtp_host,
+            "smtp_port": smtp_port,
+            "smtp_user": smtp_user,
+            "smtp_password": smtp_password,
+            "use_tls": use_tls,
+            "use_ssl": use_ssl,
+            "from_email": from_email or smtp_user,
+            "from_name": from_name,
         }
         init_email_sender(smtp_config)
 
-        return {
-            "status": "success",
-            "message": "SMTP settings saved successfully"
-        }
+        return {"status": "success", "message": "SMTP settings saved successfully"}
     except Exception as e:
         session.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to save SMTP settings: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to save SMTP settings: {str(e)}"
+        )
     finally:
         session.close()
 
@@ -1854,7 +1965,7 @@ def test_smtp_connection(auth: TokenPayload = Depends(require_admin_auth)):
 
         # Update last test time and status
         settings.last_test_at = datetime.now(timezone.utc)
-        settings.last_test_status = result['status']
+        settings.last_test_status = result["status"]
         session.commit()
 
         return result
@@ -1871,7 +1982,7 @@ def send_email(
     cc: str = Query(None),
     bcc: str = Query(None),
     attachments: str = Query(None),
-    auth: TokenPayload = Depends(require_admin_auth)
+    auth: TokenPayload = Depends(require_admin_auth),
 ):
     """
     Send an email using configured SMTP settings.
@@ -1900,33 +2011,33 @@ def send_email(
                 raise HTTPException(status_code=404, detail="SMTP not configured")
 
             smtp_config = {
-                'smtp_host': settings.smtp_host,
-                'smtp_port': settings.smtp_port,
-                'smtp_user': settings.smtp_user,
-                'smtp_password': settings.smtp_password,
-                'use_tls': settings.use_tls,
-                'use_ssl': settings.use_ssl,
-                'from_email': settings.from_email,
-                'from_name': settings.from_name,
+                "smtp_host": settings.smtp_host,
+                "smtp_port": settings.smtp_port,
+                "smtp_user": settings.smtp_user,
+                "smtp_password": settings.smtp_password,
+                "use_tls": settings.use_tls,
+                "use_ssl": settings.use_ssl,
+                "from_email": settings.from_email,
+                "from_name": settings.from_name,
             }
             init_email_sender(smtp_config)
         finally:
             session.close()
 
     # Parse CC and BCC
-    cc_list = [email.strip() for email in cc.split(',')] if cc else None
-    bcc_list = [email.strip() for email in bcc.split(',')] if bcc else None
+    cc_list = [email.strip() for email in cc.split(",")] if cc else None
+    bcc_list = [email.strip() for email in bcc.split(",")] if bcc else None
 
     # Parse attachment paths
     attachment_paths = None
     if attachments:
         attachment_paths = []
-        for path in attachments.split(','):
+        for path in attachments.split(","):
             path = path.strip()
             if path:
                 # Convert relative paths (e.g., /spa/upload/file.pdf) to absolute paths
-                if path.startswith('/spa/'):
-                    path = path.replace('/spa/', '/app/dist/spa/', 1)
+                if path.startswith("/spa/"):
+                    path = path.replace("/spa/", "/app/dist/spa/", 1)
                 attachment_paths.append(path)
 
     # Send email
@@ -1940,14 +2051,16 @@ def send_email(
         attachments=attachment_paths,
     )
 
-    if result['status'] == 'error':
-        raise HTTPException(status_code=500, detail=result['message'])
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result["message"])
 
     return result
 
 
 @api_router.post("/admin/upload")
-async def upload_file(file: UploadFile = File(...), auth: TokenPayload = Depends(require_admin_auth)):
+async def upload_file(
+    file: UploadFile = File(...), auth: TokenPayload = Depends(require_admin_auth)
+):
     """
     Upload a file to the /dist/spa/upload folder.
     Returns the URL path to access the uploaded file.
@@ -1975,12 +2088,13 @@ async def upload_file(file: UploadFile = File(...), auth: TokenPayload = Depends
             "filename": unique_filename,
             "original_filename": file.filename,
             "url": file_url,
-            "size": file_path.stat().st_size
+            "size": file_path.stat().st_size,
         }
 
     except Exception as e:
         print(f"[Upload] Failed to upload file: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
@@ -1994,7 +2108,7 @@ def send_chapter_validation_alert(
     last_chapter_number: int = Query(0),
     actual_chapter_count: int = Query(0),
     to_email: str = Query(...),
-    auth: TokenPayload = Depends(require_admin_auth)
+    auth: TokenPayload = Depends(require_admin_auth),
 ):
     """
     Send an alert email when chapter validation fails after max retries.
@@ -2014,17 +2128,20 @@ def send_chapter_validation_alert(
         try:
             settings = session.query(SmtpSettings).filter_by(id=1).first()
             if not settings:
-                raise HTTPException(status_code=404, detail="SMTP not configured, cannot send alert email")
+                raise HTTPException(
+                    status_code=404,
+                    detail="SMTP not configured, cannot send alert email",
+                )
 
             smtp_config = {
-                'smtp_host': settings.smtp_host,
-                'smtp_port': settings.smtp_port,
-                'smtp_user': settings.smtp_user,
-                'smtp_password': settings.smtp_password,
-                'use_tls': settings.use_tls,
-                'use_ssl': settings.use_ssl,
-                'from_email': settings.from_email,
-                'from_name': settings.from_name,
+                "smtp_host": settings.smtp_host,
+                "smtp_port": settings.smtp_port,
+                "smtp_user": settings.smtp_user,
+                "smtp_password": settings.smtp_password,
+                "use_tls": settings.use_tls,
+                "use_ssl": settings.use_ssl,
+                "from_email": settings.from_email,
+                "from_name": settings.from_name,
             }
             init_email_sender(smtp_config)
         finally:
@@ -2092,7 +2209,7 @@ def send_chapter_validation_alert(
 
             <div class="footer">
                 <p>This is an automated alert from 看小說 monitoring system.</p>
-                <p>Timestamp: {__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+                <p>Timestamp: {__import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}</p>
             </div>
         </div>
     </body>
@@ -2107,8 +2224,10 @@ def send_chapter_validation_alert(
         is_html=True,
     )
 
-    if result['status'] == 'error':
-        raise HTTPException(status_code=500, detail=f"Failed to send alert email: {result['message']}")
+    if result["status"] == "error":
+        raise HTTPException(
+            status_code=500, detail=f"Failed to send alert email: {result['message']}"
+        )
 
     return {
         "status": "success",
@@ -2126,7 +2245,9 @@ def chapters_by_url(book_url: str = Query(...)):
     try:
         url = book_url
         html_content = fetch_html(url)
-        chaps = fetch_chapters_from_liebiao(html_content, url, canonical_base(), start_index=1)
+        chaps = fetch_chapters_from_liebiao(
+            html_content, url, canonical_base(), start_index=1
+        )
         return [
             ChapterRef(number=ch["number"], title=ch["title"], url=ch["url"])
             for ch in chaps
@@ -2206,18 +2327,22 @@ def content_by_url(chapter_url: str = Query(...)):
 
 #     raise HTTPException(status_code=404, detail="Vue SPA not built. Run 'npm run build' first.")
 
+
 # -----------------------
 # User Authentication Endpoints
 # -----------------------
 class GoogleUserLoginRequest(BaseModel):
     id_token: str
 
+
 class FacebookUserLoginRequest(BaseModel):
     access_token: str
+
 
 class AppleUserLoginRequest(BaseModel):
     id_token: str
     authorization_code: Optional[str] = None
+
 
 class WeChatUserLoginRequest(BaseModel):
     code: str
@@ -2232,6 +2357,7 @@ def user_login_google(req: GoogleUserLoginRequest):
         raise HTTPException(status_code=401, detail=str(e))
 
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         user = find_or_create_user(
@@ -2256,6 +2382,7 @@ def user_login_facebook(req: FacebookUserLoginRequest):
         raise HTTPException(status_code=401, detail=str(e))
 
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         user = find_or_create_user(
@@ -2280,6 +2407,7 @@ def user_login_apple(req: AppleUserLoginRequest):
         raise HTTPException(status_code=401, detail=str(e))
 
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         user = find_or_create_user(
@@ -2304,6 +2432,7 @@ def user_login_wechat(req: WeChatUserLoginRequest):
         raise HTTPException(status_code=401, detail=str(e))
 
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         user = find_or_create_user(
@@ -2331,6 +2460,7 @@ def user_verify_token(auth: UserTokenPayload = Depends(require_user_auth)):
 def user_get_profile(auth: UserTokenPayload = Depends(require_user_auth)):
     """Get current user profile."""
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         user = db.query(User).filter(User.id == auth.sub).first()
@@ -2371,6 +2501,7 @@ class ProgressResponse(BaseModel):
 def user_list_progress(auth: UserTokenPayload = Depends(require_user_auth)):
     """List all reading progress for the current user, sorted by most recent."""
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         progress_list = (
@@ -2402,6 +2533,7 @@ def user_get_progress(
 ):
     """Get reading progress for a specific book."""
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         progress = (
@@ -2413,7 +2545,9 @@ def user_get_progress(
             .first()
         )
         if not progress:
-            raise HTTPException(status_code=404, detail="No progress found for this book")
+            raise HTTPException(
+                status_code=404, detail="No progress found for this book"
+            )
         return ProgressResponse(
             book_id=progress.book_id,
             book_name=progress.book_name,
@@ -2435,6 +2569,7 @@ def user_upsert_progress(
 ):
     """Upsert reading progress for a specific book."""
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         progress = (
@@ -2488,6 +2623,7 @@ def user_delete_progress(
 ):
     """Delete reading progress for a specific book."""
     import db_models as _db
+
     db = _db.db_manager.get_session()
     try:
         deleted = (
@@ -2500,7 +2636,9 @@ def user_delete_progress(
         )
         db.commit()
         if deleted == 0:
-            raise HTTPException(status_code=404, detail="No progress found for this book")
+            raise HTTPException(
+                status_code=404, detail="No progress found for this book"
+            )
         return {"deleted": True}
     finally:
         db.close()
@@ -2528,18 +2666,20 @@ def list_books_by_author(author_name: str):
         )
         result = []
         for b in books:
-            result.append(BookSummary(
-                bookname=b.name or "",
-                author=b.author or "",
-                lastchapter=b.last_chapter_title or "",
-                lasturl=b.last_chapter_url or "",
-                intro=b.description or "",
-                bookurl=b.source_url or "",
-                book_id=b.id,
-                public_id=b.public_id,
-                bookmark_count=b.bookmark_count,
-                view_count=b.view_count,
-            ))
+            result.append(
+                BookSummary(
+                    bookname=b.name or "",
+                    author=b.author or "",
+                    lastchapter=b.last_chapter_title or "",
+                    lasturl=b.last_chapter_url or "",
+                    intro=b.description or "",
+                    bookurl=b.source_url or "",
+                    book_id=b.id,
+                    public_id=b.public_id,
+                    bookmark_count=b.bookmark_count,
+                    view_count=b.view_count,
+                )
+            )
         return result
     finally:
         session.close()
@@ -2583,18 +2723,20 @@ def get_similar_books(book_id: str):
         )
         result = []
         for b in books:
-            result.append(BookSummary(
-                bookname=b.name or "",
-                author=b.author or "",
-                lastchapter=b.last_chapter_title or "",
-                lasturl=b.last_chapter_url or "",
-                intro=b.description or "",
-                bookurl=b.source_url or "",
-                book_id=b.id,
-                public_id=b.public_id,
-                bookmark_count=b.bookmark_count,
-                view_count=b.view_count,
-            ))
+            result.append(
+                BookSummary(
+                    bookname=b.name or "",
+                    author=b.author or "",
+                    lastchapter=b.last_chapter_title or "",
+                    lasturl=b.last_chapter_url or "",
+                    intro=b.description or "",
+                    bookurl=b.source_url or "",
+                    book_id=b.id,
+                    public_id=b.public_id,
+                    bookmark_count=b.bookmark_count,
+                    view_count=b.view_count,
+                )
+            )
         return result
     finally:
         session.close()
@@ -2724,7 +2866,9 @@ def delete_comment(
         if not comment:
             raise HTTPException(status_code=404, detail="Comment not found")
         if comment.user_id != auth.sub:
-            raise HTTPException(status_code=403, detail="Cannot delete another user's comment")
+            raise HTTPException(
+                status_code=403, detail="Cannot delete another user's comment"
+            )
         session.delete(comment)
         session.commit()
         return {"deleted": True}
@@ -2735,6 +2879,7 @@ def delete_comment(
 # -----------------------
 # Admin Analytics Endpoints
 # -----------------------
+
 
 @api_router.get("/admin/analytics/summary")
 def analytics_summary(auth: TokenPayload = Depends(require_admin_auth)):
@@ -2809,10 +2954,20 @@ def analytics_cleanup(
 # Include bus API router
 try:
     from bus_api import bus_router
+
     app.include_router(bus_router)
     print("[INFO] Bus API router included successfully")
 except Exception as e:
     print(f"[WARNING] Failed to include bus API router: {e}")
+
+# Include Octile API router
+try:
+    from octile_api import octile_router
+
+    app.include_router(octile_router)
+    print("[INFO] Octile API router included successfully")
+except Exception as e:
+    print(f"[WARNING] Failed to include Octile API router: {e}")
 
 # Include main API router
 app.include_router(api_router, prefix="/xsw/api")
@@ -2820,4 +2975,5 @@ app.include_router(api_router, prefix="/xsw/api")
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

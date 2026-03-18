@@ -2,6 +2,7 @@
 Simple in-memory cache for bus API data
 Uses TTL-based expiration
 """
+
 import time
 import threading
 from typing import Optional
@@ -48,8 +49,7 @@ class BusCache:
         with self._lock:
             now = time.time()
             expired_keys = [
-                k for k, (_, expires_at) in self._cache.items()
-                if now >= expires_at
+                k for k, (_, expires_at) in self._cache.items() if now >= expires_at
             ]
             for k in expired_keys:
                 del self._cache[k]
@@ -58,7 +58,4 @@ class BusCache:
         """Get cache statistics"""
         with self._lock:
             self.cleanup_expired()
-            return {
-                "size": len(self._cache),
-                "keys": list(self._cache.keys())
-            }
+            return {"size": len(self._cache), "keys": list(self._cache.keys())}

@@ -11,6 +11,7 @@ Usage:
 Then configure main app to use:
     BASE_URL=http://relay-host:8080/proxy
 """
+
 import argparse
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -24,13 +25,15 @@ TARGET_BASE = "https://m.xsw.tw"
 
 # Session with proper headers
 session = requests.Session()
-session.headers.update({
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0 Safari/537.36"
-    )
-})
+session.headers.update(
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0 Safari/537.36"
+        )
+    }
+)
 
 
 @app.get("/proxy/")
@@ -72,12 +75,14 @@ async def proxy_request(path: str = ""):
             headers={
                 "X-Relay-Target": target_url,
                 "X-Relay-Encoding": enc,
-            }
+            },
         )
 
     except requests.RequestException as e:
         print(f"[Relay] Error: {e}")
-        raise HTTPException(status_code=502, detail=f"Failed to fetch from target: {str(e)}")
+        raise HTTPException(
+            status_code=502, detail=f"Failed to fetch from target: {str(e)}"
+        )
 
 
 @app.get("/health")

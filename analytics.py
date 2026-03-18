@@ -9,6 +9,7 @@ main cache DB, avoiding write contention.
 - log_page_view() is non-blocking; silently drops if queue is full.
 - Query helpers power the admin analytics endpoints.
 """
+
 import hashlib
 import os
 import queue
@@ -26,8 +27,7 @@ from sqlalchemy import (
     Index,
     func,
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import text as sql_text
 
@@ -49,11 +49,9 @@ class PageView(AnalyticsBase):
     ip_hash = Column(String(16), nullable=True)
     user_agent_hash = Column(String(16), nullable=True)
     referer = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
-    __table_args__ = (
-        Index("idx_pv_book_created", "book_id", "created_at"),
-    )
+    __table_args__ = (Index("idx_pv_book_created", "book_id", "created_at"),)
 
     def __repr__(self):
         return f"<PageView(book_id='{self.book_id}', chapter_num={self.chapter_num})>"
@@ -99,13 +97,16 @@ def init_db(db_url: str = None):
 def get_session() -> Session:
     """Get a new analytics database session."""
     if _SessionLocal is None:
-        raise RuntimeError("Analytics DB not initialized. Call analytics.init_db() first.")
+        raise RuntimeError(
+            "Analytics DB not initialized. Call analytics.init_db() first."
+        )
     return _SessionLocal()
 
 
 # ---------------------------------------------------------------------------
 # Hashing helpers (privacy: truncated SHA-256)
 # ---------------------------------------------------------------------------
+
 
 def _hash16(value: str) -> str:
     """Return first 16 hex chars of SHA-256 digest."""
@@ -201,6 +202,7 @@ def stop_writer():
 # Public logging API
 # ---------------------------------------------------------------------------
 
+
 def log_page_view(
     book_id: str,
     chapter_num: Optional[int] = None,
@@ -229,6 +231,7 @@ def log_page_view(
 # Query helpers (called from admin endpoints)
 # ---------------------------------------------------------------------------
 
+
 def get_summary(session: Session) -> dict:
     """Total views, unique visitors, today/week/month counts, top 5 books."""
     now = datetime.now(timezone.utc)
@@ -237,22 +240,27 @@ def get_summary(session: Session) -> dict:
     month_start = today_start.replace(day=1)
 
     total_views = session.query(func.count(PageView.id)).scalar() or 0
-    unique_visitors = session.query(func.count(func.distinct(PageView.ip_hash))).scalar() or 0
+    unique_visitors = (
+        session.query(func.count(func.distinct(PageView.ip_hash))).scalar() or 0
+    )
 
     today_views = (
         session.query(func.count(PageView.id))
         .filter(PageView.created_at >= today_start)
-        .scalar() or 0
+        .scalar()
+        or 0
     )
     week_views = (
         session.query(func.count(PageView.id))
         .filter(PageView.created_at >= week_start)
-        .scalar() or 0
+        .scalar()
+        or 0
     )
     month_views = (
         session.query(func.count(PageView.id))
         .filter(PageView.created_at >= month_start)
-        .scalar() or 0
+        .scalar()
+        or 0
     )
 
     top_books = (
@@ -304,7 +312,8 @@ def get_book_analytics(session: Session, book_id: str, days: int = 30) -> dict:
     total = (
         session.query(func.count(PageView.id))
         .filter(PageView.book_id == book_id, PageView.created_at >= cutoff)
-        .scalar() or 0
+        .scalar()
+        or 0
     )
 
     return {
@@ -316,7 +325,9 @@ def get_book_analytics(session: Session, book_id: str, days: int = 30) -> dict:
     }
 
 
-def get_top_books(session: Session, period: str = "week", limit: int = 20) -> list[dict]:
+def get_top_books(
+    session: Session, period: str = "week", limit: int = 20
+) -> list[dict]:
     """Top books by views within a time period."""
     cutoffs = {
         "day": timedelta(days=1),

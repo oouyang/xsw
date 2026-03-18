@@ -1,4 +1,5 @@
 """Shared test fixtures for XSW backend tests."""
+
 import os
 
 # Set environment variables BEFORE importing the app
@@ -18,6 +19,7 @@ from main_optimized import app
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 class FetchMock:
     """Mock replacement for main_optimized.fetch_html with URL registry."""

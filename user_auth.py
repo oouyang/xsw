@@ -3,6 +3,7 @@ User authentication module for regular readers.
 Supports Google, Facebook, Apple, and WeChat OAuth.
 Separate from admin auth (auth.py).
 """
+
 import os
 import jwt
 import requests
@@ -43,6 +44,7 @@ APPLE_KEYS_TTL = 3600  # 1 hour
 
 class UserTokenPayload(BaseModel):
     """User JWT token payload."""
+
     sub: int  # user_id
     display_name: str
     role: str  # "user"
@@ -52,6 +54,7 @@ class UserTokenPayload(BaseModel):
 
 class UserProfile(BaseModel):
     """User profile response."""
+
     id: int
     display_name: str
     email: Optional[str] = None
@@ -60,6 +63,7 @@ class UserProfile(BaseModel):
 
 class UserAuthResponse(BaseModel):
     """User authentication response."""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int
@@ -191,9 +195,7 @@ def find_or_create_user(
     user = None
     if email:
         existing_oauth = (
-            db.query(UserOAuth)
-            .filter(UserOAuth.provider_email == email)
-            .first()
+            db.query(UserOAuth).filter(UserOAuth.provider_email == email).first()
         )
         if existing_oauth:
             user = existing_oauth.user

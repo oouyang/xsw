@@ -3,6 +3,7 @@
 HTML parsing functions for czbooks.net.
 All parsing logic centralized here for easier testing and maintenance.
 """
+
 from typing import Dict, List, Any, Optional
 from bs4 import BeautifulSoup
 import html as html_unescape
@@ -62,7 +63,9 @@ def extract_chapter_title(html_content: str) -> Optional[str]:
             return title
 
     # Strategy 3: Look for div/h2 with class containing "title" or "chapter"
-    for tag in soup.find_all(["h1", "h2", "h3", "div"], class_=re.compile(r"(title|chapter|tit)", re.I)):
+    for tag in soup.find_all(
+        ["h1", "h2", "h3", "div"], class_=re.compile(r"(title|chapter|tit)", re.I)
+    ):
         title = tag.get_text(strip=True)
         if re.search(r"第.+章", title):
             return title
@@ -132,7 +135,7 @@ def parse_book_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     if title_el:
         name = title_el.get_text(strip=True)
         # Strip surrounding 《》 if present
-        name = re.sub(r'^[《\u300a]|[》\u300b]$', '', name).strip()
+        name = re.sub(r"^[《\u300a]|[》\u300b]$", "", name).strip()
 
     # Author from .info .author a
     author = ""
@@ -160,10 +163,10 @@ def parse_book_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
                 elif "更新" in label_compact:
                     update = value
                 elif "收藏數" in label_compact or "收藏数" in label_compact:
-                    num = re.sub(r'\D', '', value)
+                    num = re.sub(r"\D", "", value)
                     bookmark_count = int(num) if num else None
                 elif "觀看數" in label_compact or "观看数" in label_compact:
-                    num = re.sub(r'\D', '', value)
+                    num = re.sub(r"\D", "", value)
                     view_count = int(num) if num else None
 
     # Category from a#novel-category
@@ -268,7 +271,7 @@ def parse_books(html: str, base_url: str = "") -> List[Dict[str, str]]:
                 icon = li.select_one("i")
                 if icon:
                     text = li.get_text(strip=True)
-                    num = int(re.sub(r'\D', '', text) or 0)
+                    num = int(re.sub(r"\D", "", text) or 0)
                     classes = icon.get("class", [])
                     if "fa-bookmark" in classes:
                         bookmark_count = num
@@ -303,24 +306,43 @@ def chinese_to_arabic(chinese_num: str) -> Optional[int]:
     """
     # Chinese digit mapping
     chinese_digits = {
-        '零': 0, '〇': 0,
-        '一': 1, '壹': 1,
-        '二': 2, '贰': 2, '貳': 2, '两': 2, '兩': 2,
-        '三': 3, '叁': 3, '參': 3,
-        '四': 4, '肆': 4,
-        '五': 5, '伍': 5,
-        '六': 6, '陆': 6, '陸': 6,
-        '七': 7, '柒': 7,
-        '八': 8, '捌': 8,
-        '九': 9, '玖': 9,
+        "零": 0,
+        "〇": 0,
+        "一": 1,
+        "壹": 1,
+        "二": 2,
+        "贰": 2,
+        "貳": 2,
+        "两": 2,
+        "兩": 2,
+        "三": 3,
+        "叁": 3,
+        "參": 3,
+        "四": 4,
+        "肆": 4,
+        "五": 5,
+        "伍": 5,
+        "六": 6,
+        "陆": 6,
+        "陸": 6,
+        "七": 7,
+        "柒": 7,
+        "八": 8,
+        "捌": 8,
+        "九": 9,
+        "玖": 9,
     }
 
     # Chinese unit mapping
     chinese_units = {
-        '十': 10, '拾': 10,
-        '百': 100, '佰': 100,
-        '千': 1000, '仟': 1000,
-        '万': 10000, '萬': 10000,
+        "十": 10,
+        "拾": 10,
+        "百": 100,
+        "佰": 100,
+        "千": 1000,
+        "仟": 1000,
+        "万": 10000,
+        "萬": 10000,
     }
 
     result = 0
@@ -375,7 +397,10 @@ def chapter_title_to_number(title: str) -> Optional[int]:
         return int(m.group(1))
 
     # Try Chinese numerals
-    m = re.search(r"第\s*([零〇一二三四五六七八九十百千万壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬兩两]+)\s*章", title)
+    m = re.search(
+        r"第\s*([零〇一二三四五六七八九十百千万壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬兩两]+)\s*章",
+        title,
+    )
     if m:
         chinese_num = m.group(1)
         return chinese_to_arabic(chinese_num)
@@ -384,7 +409,10 @@ def chapter_title_to_number(title: str) -> Optional[int]:
 
 
 def fetch_chapters_from_liebiao(
-    html_content: str, page_url: str, canonical_base: str, start_index: int = 1,
+    html_content: str,
+    page_url: str,
+    canonical_base: str,
+    start_index: int = 1,
     volumes_out: Optional[list] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -414,7 +442,9 @@ def fetch_chapters_from_liebiao(
                 if volumes_out is not None:
                     vol_name = li.get_text(strip=True)
                     if vol_name:
-                        volumes_out.append({"name": vol_name, "start_chapter": chapter_index})
+                        volumes_out.append(
+                            {"name": vol_name, "start_chapter": chapter_index}
+                        )
                 continue
             a_tag = li.find("a", href=True)
             if not a_tag:
@@ -427,7 +457,14 @@ def fetch_chapters_from_liebiao(
             target = urlparse(absolute)
             base = urlparse(canonical_base)
             absolute = urlunparse(
-                (base.scheme, base.netloc, target.path, target.params, target.query, target.fragment)
+                (
+                    base.scheme,
+                    base.netloc,
+                    target.path,
+                    target.params,
+                    target.query,
+                    target.fragment,
+                )
             )
             out.append(
                 {
@@ -456,7 +493,14 @@ def fetch_chapters_from_liebiao(
         target = urlparse(absolute)
         base = urlparse(canonical_base)
         absolute = urlunparse(
-            (base.scheme, base.netloc, target.path, target.params, target.query, target.fragment)
+            (
+                base.scheme,
+                base.netloc,
+                target.path,
+                target.params,
+                target.query,
+                target.fragment,
+            )
         )
         out.append(
             {

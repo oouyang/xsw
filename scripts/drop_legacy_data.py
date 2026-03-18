@@ -15,6 +15,7 @@ Usage:
     # Use a specific database file
     python scripts/drop_legacy_data.py --db /app/data/xsw_cache.db --confirm
 """
+
 import argparse
 import os
 import sys
@@ -26,7 +27,9 @@ from sqlalchemy import create_engine, text
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Drop legacy numeric-ID data from the SQLite cache")
+    parser = argparse.ArgumentParser(
+        description="Drop legacy numeric-ID data from the SQLite cache"
+    )
     parser.add_argument(
         "--db",
         default=os.environ.get("DB_PATH", "xsw_cache.db"),
@@ -68,7 +71,9 @@ def main():
 
         print(f"Database: {db_path}")
         print(f"Total books: {total_books}, Total chapters: {total_chapters}")
-        print(f"Legacy books (numeric ID): {len(legacy_books)}, Legacy chapters: {legacy_chapter_count}")
+        print(
+            f"Legacy books (numeric ID): {len(legacy_books)}, Legacy chapters: {legacy_chapter_count}"
+        )
         print()
 
         if not legacy_books:
@@ -77,7 +82,7 @@ def main():
 
         print("Legacy books to remove:")
         print(f"  {'ID':>10}  {'Chapters':>8}  Name / Author")
-        print(f"  {'—'*10}  {'—'*8}  {'—'*40}")
+        print(f"  {'—' * 10}  {'—' * 8}  {'—' * 40}")
         for row in legacy_books:
             book_id, name, author, ch_count = row
             print(f"  {book_id:>10}  {ch_count:>8}  {name} / {author or '?'}")
@@ -119,7 +124,9 @@ def main():
 
         # Show remaining counts
         remaining_books = conn.execute(text("SELECT COUNT(*) FROM books")).scalar()
-        remaining_chapters = conn.execute(text("SELECT COUNT(*) FROM chapters")).scalar()
+        remaining_chapters = conn.execute(
+            text("SELECT COUNT(*) FROM chapters")
+        ).scalar()
         print(f"Remaining: {remaining_books} books, {remaining_chapters} chapters")
 
 

@@ -9,6 +9,7 @@ Usage:
     python3 scripts/generate_bus_bundle.py
     python3 scripts/generate_bus_bundle.py --city Taipei --city Taoyuan
 """
+
 import sys
 import os
 import json
@@ -31,8 +32,7 @@ from tdx_client import TDXClient  # noqa: E402
 from bus_transformer import BusTransformer  # noqa: E402
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -42,23 +42,42 @@ class BundleGenerator:
 
     # All Taiwan cities
     ALL_CITIES = [
-        'Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Kaohsiung',
-        'Keelung', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'ChanghuaCounty',
-        'NantouCounty', 'YunlinCounty', 'ChiayiCounty', 'Chiayi', 'PingtungCounty',
-        'YilanCounty', 'HualienCounty', 'TaitungCounty', 'KinmenCounty',
-        'PenghuCounty', 'LienchiangCounty'
+        "Taipei",
+        "NewTaipei",
+        "Taoyuan",
+        "Taichung",
+        "Tainan",
+        "Kaohsiung",
+        "Keelung",
+        "Hsinchu",
+        "HsinchuCounty",
+        "MiaoliCounty",
+        "ChanghuaCounty",
+        "NantouCounty",
+        "YunlinCounty",
+        "ChiayiCounty",
+        "Chiayi",
+        "PingtungCounty",
+        "YilanCounty",
+        "HualienCounty",
+        "TaitungCounty",
+        "KinmenCounty",
+        "PenghuCounty",
+        "LienchiangCounty",
     ]
 
     def __init__(self, cities: List[str] = None, rate_limit_delay: float = None):
         self.client = TDXClient()
         self.transformer = BusTransformer()
-        self.cities = cities or ['Taoyuan']  # Default to Taoyuan only
+        self.cities = cities or ["Taoyuan"]  # Default to Taoyuan only
 
         # Rate limiting: delay between requests (in seconds)
         # Free tier: 20 req/min = 3.0s delay
         # Basic tier: 100 req/min = 0.6s delay
         # Premium tier: 500 req/min = 0.12s delay
-        self.rate_limit_delay = rate_limit_delay or float(os.getenv('TDX_RATE_LIMIT_DELAY', '1.0'))
+        self.rate_limit_delay = rate_limit_delay or float(
+            os.getenv("TDX_RATE_LIMIT_DELAY", "1.0")
+        )
 
         # Request counter
         self.request_count = 0
@@ -71,12 +90,12 @@ class BundleGenerator:
             Bundle dictionary with all static data
         """
         if output_path is None:
-            output_path = os.getenv('BUS_BUNDLE_PATH', 'static/bus/bundle.json.gz')
+            output_path = os.getenv("BUS_BUNDLE_PATH", "static/bus/bundle.json.gz")
 
         bundle = {
-            "version": datetime.now().strftime('%Y-%m-%d-%H%M'),
+            "version": datetime.now().strftime("%Y-%m-%d-%H%M"),
             "generated_at": datetime.now().isoformat(),
-            "cities": {}
+            "cities": {},
         }
 
         total_routes = 0
@@ -91,8 +110,8 @@ class BundleGenerator:
 
                 route_count = len(city_data.get("routes", {}))
                 stop_count = sum(
-                    len(route_data.get("stops", {}).get("0", [])) +
-                    len(route_data.get("stops", {}).get("1", []))
+                    len(route_data.get("stops", {}).get("0", []))
+                    + len(route_data.get("stops", {}).get("1", []))
                     for route_data in city_data.get("routes", {}).values()
                 )
 
@@ -104,15 +123,12 @@ class BundleGenerator:
             except Exception as e:
                 logger.error(f"Failed to process {city}: {e}")
                 # Continue with other cities
-                bundle["cities"][city] = {
-                    "error": str(e),
-                    "routes": {}
-                }
+                bundle["cities"][city] = {"error": str(e), "routes": {}}
 
         bundle["stats"] = {
             "total_cities": len(self.cities),
             "total_routes": total_routes,
-            "total_stops": total_stops
+            "total_stops": total_stops,
         }
 
         # Save bundle
@@ -158,9 +174,9 @@ class BundleGenerator:
         logger.info(f"  Found {len(routes)} routes")
 
         # Process each route (limit to avoid timeout)
-        max_routes = int(os.getenv('BUS_BUNDLE_MAX_ROUTES_PER_CITY', '50'))
+        max_routes = int(os.getenv("BUS_BUNDLE_MAX_ROUTES_PER_CITY", "50"))
         for idx, route in enumerate(routes[:max_routes]):
-            route_id = route.get('RouteID', '')
+            route_id = route.get("RouteID", "")
 
             if not route_id:
                 continue
@@ -170,7 +186,9 @@ class BundleGenerator:
                 city_data["routes"][route_id] = route_data
 
                 if (idx + 1) % 10 == 0:
-                    logger.info(f"  Processed {idx + 1}/{min(len(routes), max_routes)} routes")
+                    logger.info(
+                        f"  Processed {idx + 1}/{min(len(routes), max_routes)} routes"
+                    )
 
             except Exception as e:
                 logger.warning(f"  Failed to process route {route_id}: {e}")
@@ -179,27 +197,29 @@ class BundleGenerator:
 
         return city_data
 
-    def _generate_route_data(self, city: str, route_id: str, route_info: Dict) -> Dict[str, Any]:
+    def _generate_route_data(
+        self, city: str, route_id: str, route_info: Dict
+    ) -> Dict[str, Any]:
         """
         Generate data for a single route
         """
-        route_name = route_info.get('RouteName', {}).get('Zh_tw', route_id)
+        route_name = route_info.get("RouteName", {}).get("Zh_tw", route_id)
 
         # Get from/to from SubRoutes
-        sub_routes = route_info.get('SubRoutes', [])
+        sub_routes = route_info.get("SubRoutes", [])
         from_stop = ""
         to_stop = ""
         if sub_routes:
             sub = sub_routes[0]
-            from_stop = sub.get('DepartureStopNameZh', '')
-            to_stop = sub.get('DestinationStopNameZh', '')
+            from_stop = sub.get("DepartureStopNameZh", "")
+            to_stop = sub.get("DestinationStopNameZh", "")
 
         route_data = {
             "name": route_name,
             "from": from_stop,
             "to": to_stop,
             "stops": {},
-            "shapes": {}
+            "shapes": {},
         }
 
         # Get stops with sequence
@@ -215,14 +235,17 @@ class BundleGenerator:
 
             # Add coordinates to stops
             mapstop_json = self.transformer.tdx_to_mapstop_json(stops, stop_of_route)
-            stop_coords = {s['id']: {'lat': s['lat'], 'lng': s['lng']} for s in mapstop_json.get('stops', [])}
+            stop_coords = {
+                s["id"]: {"lat": s["lat"], "lng": s["lng"]}
+                for s in mapstop_json.get("stops", [])
+            }
 
             # Merge coordinates into stops
             for direction in route_data["stops"]:
                 for stop in route_data["stops"][direction]:
-                    if stop['id'] in stop_coords:
-                        stop['lat'] = stop_coords[stop['id']]['lat']
-                        stop['lng'] = stop_coords[stop['id']]['lng']
+                    if stop["id"] in stop_coords:
+                        stop["lat"] = stop_coords[stop["id"]]["lat"]
+                        stop["lng"] = stop_coords[stop["id"]]["lng"]
 
         except Exception as e:
             logger.warning(f"    Failed to get stops for {route_id}: {e}")
@@ -248,14 +271,14 @@ class BundleGenerator:
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Save uncompressed JSON (for debugging)
-        json_path = output_file.with_suffix('.json')
-        with open(json_path, 'w', encoding='utf-8') as f:
+        json_path = output_file.with_suffix(".json")
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(bundle, f, ensure_ascii=False, indent=2)
 
         json_size = json_path.stat().st_size
 
         # Save compressed version
-        with gzip.open(output_path, 'wt', encoding='utf-8') as f:
+        with gzip.open(output_path, "wt", encoding="utf-8") as f:
             json.dump(bundle, f, ensure_ascii=False)
 
         gz_size = Path(output_path).stat().st_size
@@ -263,13 +286,13 @@ class BundleGenerator:
         logger.info(f"Saved to: {output_path}")
         logger.info(f"  Uncompressed: {json_size / 1024:.1f} KB")
         logger.info(f"  Compressed: {gz_size / 1024:.1f} KB")
-        logger.info(f"  Compression: {(1 - gz_size/json_size) * 100:.1f}%")
+        logger.info(f"  Compression: {(1 - gz_size / json_size) * 100:.1f}%")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate bus data bundle',
-        epilog='''
+        description="Generate bus data bundle",
+        epilog="""
 Rate Limit Examples:
   Free tier (20 req/min):   --delay 3.0
   Basic tier (100 req/min): --delay 0.6
@@ -279,48 +302,44 @@ Rate Limit Examples:
 Estimated Time:
   Taoyuan (400 routes): ~27 min at 1.0s delay
   All 6 cities (1700 routes): ~115 min at 1.0s delay
-        ''',
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        '--city',
-        action='append',
-        dest='cities',
-        help='City to include (can be specified multiple times)'
+        "--city",
+        action="append",
+        dest="cities",
+        help="City to include (can be specified multiple times)",
     )
+    parser.add_argument("--all", action="store_true", help="Include all Taiwan cities")
     parser.add_argument(
-        '--all',
-        action='store_true',
-        help='Include all Taiwan cities'
-    )
-    parser.add_argument(
-        '--output',
+        "--output",
         default=None,
-        help='Output path (default: static/bus/bundle.json.gz)'
+        help="Output path (default: static/bus/bundle.json.gz)",
     )
     parser.add_argument(
-        '--delay',
+        "--delay",
         type=float,
         default=None,
-        help='Delay between API requests in seconds (default: 1.0)'
+        help="Delay between API requests in seconds (default: 1.0)",
     )
     parser.add_argument(
-        '--max-routes',
+        "--max-routes",
         type=int,
         default=None,
-        help='Maximum routes per city (default: 50, set BUS_BUNDLE_MAX_ROUTES_PER_CITY)'
+        help="Maximum routes per city (default: 50, set BUS_BUNDLE_MAX_ROUTES_PER_CITY)",
     )
     parser.add_argument(
-        '--check-limits',
-        action='store_true',
-        help='Calculate API requests needed without generating'
+        "--check-limits",
+        action="store_true",
+        help="Calculate API requests needed without generating",
     )
 
     args = parser.parse_args()
 
     # Set environment variables if specified
     if args.max_routes:
-        os.environ['BUS_BUNDLE_MAX_ROUTES_PER_CITY'] = str(args.max_routes)
+        os.environ["BUS_BUNDLE_MAX_ROUTES_PER_CITY"] = str(args.max_routes)
 
     # Determine which cities to process
     if args.all:
@@ -331,13 +350,15 @@ Estimated Time:
         logger.info(f"Processing {len(cities)} cities: {', '.join(cities)}")
     else:
         # Default: Taoyuan only
-        cities = ['Taoyuan']
+        cities = ["Taoyuan"]
         logger.info("Processing default city: Taoyuan")
 
     # Check limits mode
     if args.check_limits:
-        max_routes = int(os.getenv('BUS_BUNDLE_MAX_ROUTES_PER_CITY', '50'))
-        total_requests = len(cities) + (len(cities) * max_routes * 3)  # 3 API calls per route
+        max_routes = int(os.getenv("BUS_BUNDLE_MAX_ROUTES_PER_CITY", "50"))
+        total_requests = len(cities) + (
+            len(cities) * max_routes * 3
+        )  # 3 API calls per route
         delay = args.delay or 1.0
         estimated_time = (total_requests * delay) / 60
 

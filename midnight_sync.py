@@ -3,6 +3,7 @@
 Midnight sync scheduler for deferred book syncing.
 Tracks book accesses and syncs them at midnight with slow rate limiting.
 """
+
 import threading
 import time
 import logging
@@ -88,7 +89,9 @@ class MidnightSyncScheduler:
                 if pending.sync_status in ["completed", "failed"]:
                     pending.sync_status = "pending"
                     pending.last_sync_attempt = None
-                logger.debug(f"[MidnightSync] Updated access for book {book_id} (count={pending.access_count})")
+                logger.debug(
+                    f"[MidnightSync] Updated access for book {book_id} (count={pending.access_count})"
+                )
             else:
                 # Add new entry
                 pending = PendingSyncQueue(
@@ -99,7 +102,9 @@ class MidnightSyncScheduler:
                     sync_status="pending",
                 )
                 session.add(pending)
-                logger.info(f"[MidnightSync] Added book {book_id} to pending sync queue")
+                logger.info(
+                    f"[MidnightSync] Added book {book_id} to pending sync queue"
+                )
 
             session.commit()
 
@@ -108,7 +113,9 @@ class MidnightSyncScheduler:
             try:
                 session.rollback()
             except Exception as rollback_error:
-                logger.debug(f"[MidnightSync] Rollback failed (no active transaction): {rollback_error}")
+                logger.debug(
+                    f"[MidnightSync] Rollback failed (no active transaction): {rollback_error}"
+                )
         finally:
             session.close()
 
@@ -124,7 +131,10 @@ class MidnightSyncScheduler:
 
                 # Check if we've passed the sync time and haven't synced today yet
                 should_sync = False
-                if self.last_sync_date is None or self.last_sync_date.date() < now.date():
+                if (
+                    self.last_sync_date is None
+                    or self.last_sync_date.date() < now.date()
+                ):
                     # Check if current time is past target time
                     if current_time >= target_time:
                         should_sync = True
@@ -154,20 +164,22 @@ class MidnightSyncScheduler:
         session = self.db_session_factory()
         try:
             # STEP 1: Add all unfinished books to the pending queue
-            logger.info("[MidnightSync] Step 1: Adding all unfinished books to sync queue")
-
-            unfinished_books = (
-                session.query(Book)
-                .filter(Book.status != "已完成")
-                .all()
+            logger.info(
+                "[MidnightSync] Step 1: Adding all unfinished books to sync queue"
             )
 
-            logger.info(f"[MidnightSync] Found {len(unfinished_books)} unfinished books")
+            unfinished_books = session.query(Book).filter(Book.status != "已完成").all()
+
+            logger.info(
+                f"[MidnightSync] Found {len(unfinished_books)} unfinished books"
+            )
 
             added_count = 0
             for book in unfinished_books:
                 # Check if already in queue
-                existing = session.query(PendingSyncQueue).filter_by(book_id=book.id).first()
+                existing = (
+                    session.query(PendingSyncQueue).filter_by(book_id=book.id).first()
+                )
 
                 if existing:
                     # Update existing entry - reset to pending if was completed/failed
@@ -176,7 +188,9 @@ class MidnightSyncScheduler:
                         existing.accessed_at = datetime.now(timezone.utc)
                         existing.access_count += 1
                         existing.priority = 1  # Give unfinished books priority 1
-                        logger.debug(f"[MidnightSync] Reset status for unfinished book: {book.id}")
+                        logger.debug(
+                            f"[MidnightSync] Reset status for unfinished book: {book.id}"
+                        )
                 else:
                     # Add new entry for unfinished book
                     pending = PendingSyncQueue(
@@ -185,14 +199,18 @@ class MidnightSyncScheduler:
                         accessed_at=datetime.now(timezone.utc),
                         access_count=1,
                         sync_status="pending",
-                        priority=1  # Unfinished books get priority 1
+                        priority=1,  # Unfinished books get priority 1
                     )
                     session.add(pending)
                     added_count += 1
-                    logger.debug(f"[MidnightSync] Added unfinished book to queue: {book.id}")
+                    logger.debug(
+                        f"[MidnightSync] Added unfinished book to queue: {book.id}"
+                    )
 
             session.commit()
-            logger.info(f"[MidnightSync] Added {added_count} new unfinished books to sync queue")
+            logger.info(
+                f"[MidnightSync] Added {added_count} new unfinished books to sync queue"
+            )
 
             # STEP 2: Get all pending books, ordered by priority (high to low) and access count (high to low)
             logger.info("[MidnightSync] Step 2: Processing pending sync queue")
@@ -200,7 +218,10 @@ class MidnightSyncScheduler:
             pending_books = (
                 session.query(PendingSyncQueue)
                 .filter_by(sync_status="pending")
-                .order_by(PendingSyncQueue.priority.desc(), PendingSyncQueue.access_count.desc())
+                .order_by(
+                    PendingSyncQueue.priority.desc(),
+                    PendingSyncQueue.access_count.desc(),
+                )
                 .all()
             )
 
@@ -213,12 +234,14 @@ class MidnightSyncScheduler:
             # Process each book with slow rate limiting
             for i, pending in enumerate(pending_books):
                 if not self.running:
-                    logger.info("[MidnightSync] Stopping sync early (scheduler stopped)")
+                    logger.info(
+                        "[MidnightSync] Stopping sync early (scheduler stopped)"
+                    )
                     break
 
                 try:
                     logger.info(
-                        f"[MidnightSync] Syncing book {i+1}/{len(pending_books)}: "
+                        f"[MidnightSync] Syncing book {i + 1}/{len(pending_books)}: "
                         f"{pending.book_id} (accessed {pending.access_count} times)"
                     )
 
@@ -230,32 +253,41 @@ class MidnightSyncScheduler:
                     # Enqueue the sync job (this will use the normal background job system)
                     if self.job_manager:
                         success = self.job_manager.enqueue_sync(
-                            pending.book_id,
-                            priority=pending.priority
+                            pending.book_id, priority=pending.priority
                         )
 
                         if success:
                             # Mark as completed (the background job will handle actual syncing)
                             pending.sync_status = "completed"
-                            logger.info(f"[MidnightSync] Queued sync for {pending.book_id}")
+                            logger.info(
+                                f"[MidnightSync] Queued sync for {pending.book_id}"
+                            )
                         else:
                             # Already being synced or recently synced
                             pending.sync_status = "completed"
-                            logger.debug(f"[MidnightSync] Book {pending.book_id} already synced/syncing")
+                            logger.debug(
+                                f"[MidnightSync] Book {pending.book_id} already synced/syncing"
+                            )
 
                     session.commit()
 
                     # Slow rate limiting - wait between books to avoid blocking
                     if i < len(pending_books) - 1:  # Don't sleep after last book
-                        logger.debug(f"[MidnightSync] Waiting {self.slow_rate_limit}s before next book...")
+                        logger.debug(
+                            f"[MidnightSync] Waiting {self.slow_rate_limit}s before next book..."
+                        )
                         time.sleep(self.slow_rate_limit)
 
                 except Exception as e:
-                    logger.error(f"[MidnightSync] Failed to sync book {pending.book_id}: {e}")
+                    logger.error(
+                        f"[MidnightSync] Failed to sync book {pending.book_id}: {e}"
+                    )
                     pending.sync_status = "failed"
                     session.commit()
 
-            logger.info(f"[MidnightSync] Completed processing {len(pending_books)} books")
+            logger.info(
+                f"[MidnightSync] Completed processing {len(pending_books)} books"
+            )
 
         except Exception as e:
             logger.error(f"[MidnightSync] Error during midnight sync: {e}")
@@ -268,10 +300,20 @@ class MidnightSyncScheduler:
 
         session = self.db_session_factory()
         try:
-            pending_count = session.query(PendingSyncQueue).filter_by(sync_status="pending").count()
-            syncing_count = session.query(PendingSyncQueue).filter_by(sync_status="syncing").count()
-            completed_count = session.query(PendingSyncQueue).filter_by(sync_status="completed").count()
-            failed_count = session.query(PendingSyncQueue).filter_by(sync_status="failed").count()
+            pending_count = (
+                session.query(PendingSyncQueue).filter_by(sync_status="pending").count()
+            )
+            syncing_count = (
+                session.query(PendingSyncQueue).filter_by(sync_status="syncing").count()
+            )
+            completed_count = (
+                session.query(PendingSyncQueue)
+                .filter_by(sync_status="completed")
+                .count()
+            )
+            failed_count = (
+                session.query(PendingSyncQueue).filter_by(sync_status="failed").count()
+            )
             total_count = session.query(PendingSyncQueue).count()
 
             return {
@@ -280,7 +322,9 @@ class MidnightSyncScheduler:
                 "syncing": syncing_count,
                 "completed": completed_count,
                 "failed": failed_count,
-                "last_sync_date": self.last_sync_date.isoformat() if self.last_sync_date else None,
+                "last_sync_date": self.last_sync_date.isoformat()
+                if self.last_sync_date
+                else None,
                 "next_sync_time": f"{self.sync_hour:02d}:{self.sync_minute:02d}",
                 "slow_rate_limit": self.slow_rate_limit,
             }
@@ -298,18 +342,18 @@ class MidnightSyncScheduler:
         session = self.db_session_factory()
         try:
             # Get all unfinished books
-            unfinished_books = (
-                session.query(Book)
-                .filter(Book.status != "已完成")
-                .all()
-            )
+            unfinished_books = session.query(Book).filter(Book.status != "已完成").all()
 
-            logger.info(f"[MidnightSync] Found {len(unfinished_books)} unfinished books")
+            logger.info(
+                f"[MidnightSync] Found {len(unfinished_books)} unfinished books"
+            )
 
             added_count = 0
             for book in unfinished_books:
                 # Check if already in queue
-                existing = session.query(PendingSyncQueue).filter_by(book_id=book.id).first()
+                existing = (
+                    session.query(PendingSyncQueue).filter_by(book_id=book.id).first()
+                )
 
                 if existing:
                     # Update existing entry - reset to pending if was completed/failed
@@ -318,7 +362,9 @@ class MidnightSyncScheduler:
                         existing.accessed_at = datetime.now(timezone.utc)
                         existing.access_count += 1
                         existing.priority = 1
-                        logger.debug(f"[MidnightSync] Reset status for unfinished book: {book.id}")
+                        logger.debug(
+                            f"[MidnightSync] Reset status for unfinished book: {book.id}"
+                        )
                 else:
                     # Add new entry for unfinished book
                     pending = PendingSyncQueue(
@@ -327,14 +373,18 @@ class MidnightSyncScheduler:
                         accessed_at=datetime.now(timezone.utc),
                         access_count=1,
                         sync_status="pending",
-                        priority=1
+                        priority=1,
                     )
                     session.add(pending)
                     added_count += 1
-                    logger.debug(f"[MidnightSync] Added unfinished book to queue: {book.id}")
+                    logger.debug(
+                        f"[MidnightSync] Added unfinished book to queue: {book.id}"
+                    )
 
             session.commit()
-            logger.info(f"[MidnightSync] Enqueued {added_count} new unfinished books for sync")
+            logger.info(
+                f"[MidnightSync] Enqueued {added_count} new unfinished books for sync"
+            )
             return added_count
 
         except Exception as e:
@@ -342,7 +392,9 @@ class MidnightSyncScheduler:
             try:
                 session.rollback()
             except Exception as rollback_error:
-                logger.debug(f"[MidnightSync] Rollback failed (no active transaction): {rollback_error}")
+                logger.debug(
+                    f"[MidnightSync] Rollback failed (no active transaction): {rollback_error}"
+                )
             return 0
         finally:
             session.close()
@@ -367,7 +419,9 @@ class MidnightSyncScheduler:
             try:
                 session.rollback()
             except Exception as rollback_error:
-                logger.debug(f"[MidnightSync] Rollback failed (no active transaction): {rollback_error}")
+                logger.debug(
+                    f"[MidnightSync] Rollback failed (no active transaction): {rollback_error}"
+                )
             return 0
         finally:
             session.close()
