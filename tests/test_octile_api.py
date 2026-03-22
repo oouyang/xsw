@@ -522,12 +522,11 @@ def test_hmac_skipped_when_secret_not_set(client):
     assert resp.status_code == 201
 
 
-def test_hmac_rejects_missing_signature(client, monkeypatch):
-    """With WORKER_HMAC_SECRET set, requests without signature are rejected."""
+def test_hmac_allows_direct_requests_without_signature(client, monkeypatch):
+    """With WORKER_HMAC_SECRET set, requests without signature headers pass (direct)."""
     monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", "test-secret-123")
     resp = client.post("/octile/score", json=_make_score(uuid="uuid-no-sig"))
-    assert resp.status_code == 403
-    assert "signature" in resp.json()["detail"]
+    assert resp.status_code == 201
 
 
 def test_hmac_rejects_invalid_signature(client, monkeypatch):
