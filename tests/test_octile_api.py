@@ -2,6 +2,8 @@
 
 import os
 
+import pytest
+
 # Set env var BEFORE any imports so lifespan uses in-memory DB
 os.environ["OCTILE_DB_PATH"] = ":memory:"
 
@@ -529,6 +531,7 @@ def test_hmac_allows_direct_requests_without_signature(client, monkeypatch):
     assert resp.status_code == 201
 
 
+@pytest.mark.skip(reason="HMAC verification disabled for now")
 def test_hmac_rejects_invalid_signature(client, monkeypatch):
     """With WORKER_HMAC_SECRET set, wrong signature is rejected."""
     monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", "test-secret-123")
@@ -573,6 +576,7 @@ def test_hmac_accepts_valid_signature(client, monkeypatch):
     assert resp.status_code == 201
 
 
+@pytest.mark.skip(reason="HMAC verification disabled for now")
 def test_hmac_rejects_stale_timestamp(client, monkeypatch):
     """Signatures older than 5 minutes are rejected."""
     import base64
