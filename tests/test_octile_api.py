@@ -511,6 +511,101 @@ def test_not_flagged_normal_player(client):
 
 
 # ---------------------------------------------------------------------------
+# Worker HMAC signature verification (Layer 0)
+# ---------------------------------------------------------------------------
+
+
+def test_hmac_skipped_when_secret_not_set(client):
+    """Without WORKER_HMAC_SECRET, requests pass without signature."""
+    # Default env has no secret, so all prior tests pass. Verify explicitly.
+    resp = client.post("/octile/score", json=_make_score(uuid="uuid-no-hmac"))
+    assert resp.status_code == 201
+
+
+def test_hmac_rejects_missing_signature(client, monkeypatch):
+    """With WORKER_HMAC_SECRET set, requests without signature are rejected."""
+    monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", "test-secret-123")
+    resp = client.post("/octile/score", json=_make_score(uuid="uuid-no-sig"))
+    assert resp.status_code == 403
+    assert "signature" in resp.json()["detail"]
+
+
+def test_hmac_rejects_invalid_signature(client, monkeypatch):
+    """With WORKER_HMAC_SECRET set, wrong signature is rejected."""
+    monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", "test-secret-123")
+    resp = client.post(
+        "/octile/score",
+        json=_make_score(uuid="uuid-bad-sig"),
+        headers={
+            "X-Worker-Signature": "aW52YWxpZA==",
+            "X-Worker-Timestamp": str(int(__import__("time").time())),
+        },
+    )
+    assert resp.status_code == 403
+
+
+def test_hmac_accepts_valid_signature(client, monkeypatch):
+    """With WORKER_HMAC_SECRET set, correctly signed requests pass."""
+    import base64
+    import hashlib
+    import hmac as hmac_mod
+    import json
+    import time as time_mod
+
+    secret = "test-secret-123"
+    monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", secret)
+
+    payload = _make_score(uuid="uuid-valid-sig")
+    body_str = json.dumps(payload)
+    timestamp = str(int(time_mod.time()))
+    message = body_str + timestamp
+    sig = hmac_mod.new(secret.encode(), message.encode(), hashlib.sha256).digest()
+    sig_b64 = base64.b64encode(sig).decode()
+
+    resp = client.post(
+        "/octile/score",
+        content=body_str,
+        headers={
+            "Content-Type": "application/json",
+            "X-Worker-Signature": sig_b64,
+            "X-Worker-Timestamp": timestamp,
+        },
+    )
+    assert resp.status_code == 201
+
+
+def test_hmac_rejects_stale_timestamp(client, monkeypatch):
+    """Signatures older than 5 minutes are rejected."""
+    import base64
+    import hashlib
+    import hmac as hmac_mod
+    import json
+    import time as time_mod
+
+    secret = "test-secret-123"
+    monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", secret)
+
+    payload = _make_score(uuid="uuid-stale-sig")
+    body_str = json.dumps(payload)
+    # 10 minutes ago
+    timestamp = str(int(time_mod.time()) - 600)
+    message = body_str + timestamp
+    sig = hmac_mod.new(secret.encode(), message.encode(), hashlib.sha256).digest()
+    sig_b64 = base64.b64encode(sig).decode()
+
+    resp = client.post(
+        "/octile/score",
+        content=body_str,
+        headers={
+            "Content-Type": "application/json",
+            "X-Worker-Signature": sig_b64,
+            "X-Worker-Timestamp": timestamp,
+        },
+    )
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # GET /octile/scoreboard
 # ---------------------------------------------------------------------------
 

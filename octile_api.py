@@ -5,7 +5,10 @@ Uses a **separate SQLite database** (octile.db) to store puzzle solve scores,
 isolated from the main XSW cache and analytics databases.
 """
 
+import hashlib
+import hmac
 import os
+import time as _time
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -332,6 +335,47 @@ def _extract_client_info(request: Request) -> dict:
     }
 
 
+# HMAC secret shared with Cloudflare Worker (optional — skip if not set)
+_WORKER_HMAC_SECRET = os.getenv("WORKER_HMAC_SECRET", "")
+_WORKER_HMAC_MAX_AGE = 300  # reject signatures older than 5 minutes
+
+
+def _verify_worker_signature(request: Request, body_bytes: bytes) -> bool:
+    """Verify HMAC signature from Cloudflare Worker. Returns True if valid."""
+    if not _WORKER_HMAC_SECRET:
+        return True  # not configured, skip verification
+
+    signature = request.headers.get("X-Worker-Signature")
+    timestamp = request.headers.get("X-Worker-Timestamp")
+    if not signature or not timestamp:
+        return False
+
+    # Reject stale signatures
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(_time.time() - ts) > _WORKER_HMAC_MAX_AGE:
+        return False
+
+    # Verify HMAC(body + timestamp, secret)
+    message = body_bytes.decode("utf-8", errors="replace") + timestamp
+    expected = hmac.new(
+        _WORKER_HMAC_SECRET.encode(),
+        message.encode(),
+        hashlib.sha256,
+    ).digest()
+
+    import base64
+
+    try:
+        received = base64.b64decode(signature)
+    except Exception:
+        return False
+
+    return hmac.compare_digest(expected, received)
+
+
 def _check_rate_limit(session: Session, browser_uuid: str) -> bool:
     """Return True if the UUID has submitted within the last 30 seconds."""
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=30)
@@ -384,8 +428,24 @@ octile_router = APIRouter(prefix="/octile")
 
 
 @octile_router.post("/score")
-def submit_score(body: ScoreSubmitRequest, request: Request):
+async def submit_score(request: Request):
     """Submit a puzzle solve score."""
+
+    # --- Worker HMAC verification (Layer 0) ---
+    raw_body = await request.body()
+    if not _verify_worker_signature(request, raw_body):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "invalid or missing worker signature"},
+        )
+
+    try:
+        body = ScoreSubmitRequest.model_validate_json(raw_body)
+    except Exception:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "invalid request body"},
+        )
 
     # --- Validation (Layer 2) ---
     if not (1 <= body.puzzle_number <= PUZZLE_COUNT):
