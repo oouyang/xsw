@@ -429,8 +429,8 @@ def submit_score(body: ScoreSubmitRequest, request: Request):
         # --- Anomaly detection (Layer 4) ---
         flagged = 1 if _check_anomalies(session, body.browser_uuid) else 0
 
-        # Parse legacy timestamp if provided
-        timestamp = None
+        # Parse legacy timestamp if provided, default to server time
+        timestamp = datetime.now(timezone.utc)
         if body.timestamp_utc:
             try:
                 timestamp = _parse_timestamp(body.timestamp_utc)

@@ -81,8 +81,8 @@ def test_submit_score_legacy_timestamp_stored(client):
         session.close()
 
 
-def test_submit_score_invalid_legacy_timestamp_ignored(client):
-    """Bad timestamp_utc doesn't crash — stored as None."""
+def test_submit_score_invalid_legacy_timestamp_uses_server_time(client):
+    """Bad timestamp_utc doesn't crash — falls back to server time."""
     payload = _make_score(uuid="uuid-bad-ts")
     payload["timestamp_utc"] = "not-a-date"
     resp = client.post("/octile/score", json=payload)
@@ -96,7 +96,8 @@ def test_submit_score_invalid_legacy_timestamp_ignored(client):
             .first()
         )
         assert score is not None
-        assert score.timestamp_utc is None
+        # Falls back to server time, not None
+        assert score.timestamp_utc is not None
     finally:
         session.close()
 
