@@ -58,6 +58,49 @@ def test_submit_score_legacy_fields_accepted(client):
     assert resp.status_code == 201
 
 
+def test_submit_score_legacy_timestamp_stored(client):
+    """Legacy timestamp_utc is parsed and stored in DB."""
+    payload = _make_score(uuid="uuid-ts-store")
+    payload["timestamp_utc"] = "2026-03-18T10:00:00Z"
+    resp = client.post("/octile/score", json=payload)
+    assert resp.status_code == 201
+
+    session = octile_api.get_session()
+    try:
+        score = (
+            session.query(OctileScore)
+            .filter(OctileScore.browser_uuid == "uuid-ts-store")
+            .first()
+        )
+        assert score is not None
+        assert score.timestamp_utc is not None
+        assert score.timestamp_utc.year == 2026
+        assert score.timestamp_utc.month == 3
+        assert score.timestamp_utc.day == 18
+    finally:
+        session.close()
+
+
+def test_submit_score_invalid_legacy_timestamp_ignored(client):
+    """Bad timestamp_utc doesn't crash — stored as None."""
+    payload = _make_score(uuid="uuid-bad-ts")
+    payload["timestamp_utc"] = "not-a-date"
+    resp = client.post("/octile/score", json=payload)
+    assert resp.status_code == 201
+
+    session = octile_api.get_session()
+    try:
+        score = (
+            session.query(OctileScore)
+            .filter(OctileScore.browser_uuid == "uuid-bad-ts")
+            .first()
+        )
+        assert score is not None
+        assert score.timestamp_utc is None
+    finally:
+        session.close()
+
+
 def test_submit_score_without_solution_accepted(client):
     """During transition, solution is optional."""
     payload = {
@@ -122,6 +165,33 @@ def test_submit_score_stores_solution(client):
 
 
 # ---------------------------------------------------------------------------
+# POST /octile/score — response backward compatibility
+# ---------------------------------------------------------------------------
+
+
+def test_response_timestamp_utc_alias(client):
+    """Response includes timestamp_utc as alias for created_at (old client compat)."""
+    resp = client.post("/octile/score", json=_make_score(uuid="uuid-ts-alias"))
+    assert resp.status_code == 201
+    data = resp.json()
+    assert "timestamp_utc" in data
+    assert "created_at" in data
+    assert data["timestamp_utc"] == data["created_at"]
+
+
+def test_scoreboard_response_includes_timestamp_utc(client):
+    """Scoreboard scores include timestamp_utc so old clients can sort."""
+    _insert_scores(client, [_make_score(uuid="uuid-sb-ts")])
+    resp = client.get("/octile/scoreboard")
+    data = resp.json()
+    assert data["total"] >= 1
+    score = data["scores"][0]
+    assert "timestamp_utc" in score
+    assert "created_at" in score
+    assert score["timestamp_utc"] == score["created_at"]
+
+
+# ---------------------------------------------------------------------------
 # POST /octile/score — validation (Layer 2)
 # ---------------------------------------------------------------------------
 
@@ -148,6 +218,57 @@ def test_reject_too_slow(client):
     resp = client.post("/octile/score", json=_make_score(resolve_time=100000.0))
     assert resp.status_code == 400
     assert "too large" in resp.json()["detail"]
+
+
+def test_accept_boundary_min_time(client):
+    """Exactly 10 seconds is allowed."""
+    resp = client.post(
+        "/octile/score", json=_make_score(resolve_time=10.0, uuid="uuid-min-time")
+    )
+    assert resp.status_code == 201
+
+
+def test_accept_boundary_max_time(client):
+    """Exactly 86400 seconds (24h) is allowed."""
+    resp = client.post(
+        "/octile/score", json=_make_score(resolve_time=86400.0, uuid="uuid-max-time")
+    )
+    assert resp.status_code == 201
+
+
+def test_accept_boundary_puzzle_1(client):
+    """Puzzle 1 (lowest valid) is accepted."""
+    resp = client.post(
+        "/octile/score", json=_make_score(puzzle=1, uuid="uuid-p1")
+    )
+    assert resp.status_code == 201
+
+
+def test_accept_boundary_puzzle_max(client):
+    """Puzzle 11378 (highest valid) is accepted — solution omitted for simplicity."""
+    payload = {
+        "puzzle_number": 11378,
+        "resolve_time": 30.0,
+        "browser_uuid": "uuid-pmax",
+    }
+    resp = client.post("/octile/score", json=payload)
+    assert resp.status_code == 201
+
+
+def test_reject_boundary_time_just_under(client):
+    """9.99 seconds is rejected."""
+    resp = client.post(
+        "/octile/score", json=_make_score(resolve_time=9.99, uuid="uuid-under")
+    )
+    assert resp.status_code == 400
+
+
+def test_reject_boundary_time_just_over(client):
+    """86401 seconds is rejected."""
+    resp = client.post(
+        "/octile/score", json=_make_score(resolve_time=86401.0, uuid="uuid-over")
+    )
+    assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +424,89 @@ def test_verify_solution_wrong_puzzle():
     # Solution for puzzle 1 should fail for puzzle 2
     ok, err = octile_api.verify_solution(2, VALID_SOLUTION_P1)
     assert ok is False
+
+
+def test_verify_solution_wrong_cell_count():
+    """A piece with the wrong number of cells is rejected."""
+    # Replace one b2 cell with b1, giving b1 too many and b2 too few
+    bad = list(VALID_SOLUTION_P1)
+    # Row 1, col 0-1 is "b2" (index 16-17). Change to "b1".
+    bad[16:18] = list("b1")
+    ok, err = octile_api.verify_solution(1, "".join(bad))
+    assert ok is False
+    assert "expected" in err and "cells" in err
+
+
+def test_verify_solution_non_rectangle():
+    """Cells that don't form a solid rectangle are rejected."""
+    # Swap two adjacent cells of different pieces to break rectangularity
+    bad = list(VALID_SOLUTION_P1)
+    # Row 4: "r2y1y1y1y2y2b1b1" — swap r2(col0) with y1(col1)
+    # r2 at indices 64-65, y1 at 66-67
+    bad[64:66] = list("y1")
+    bad[66:68] = list("r2")
+    ok, err = octile_api.verify_solution(1, "".join(bad))
+    assert ok is False
+
+
+def test_verify_solution_missing_piece():
+    """If a piece is entirely missing (replaced by another), rejected."""
+    # Replace all w2 with w1 — w2 disappears, w1 has too many cells
+    bad = VALID_SOLUTION_P1.replace("w2", "w1")
+    ok, err = octile_api.verify_solution(1, bad)
+    assert ok is False
+
+
+def test_verify_solution_grey2_wrong_position():
+    """Grey2 at wrong positions is rejected even if rest is valid."""
+    bad = list(VALID_SOLUTION_P1)
+    # Swap g2 (positions 2-3, 4-5) with g3 (positions 6-11)
+    # g2 should be at cells 1,2 but we put g3 there
+    bad[2:4] = list("g3")
+    bad[6:8] = list("g2")
+    ok, err = octile_api.verify_solution(1, "".join(bad))
+    assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# POST /octile/score — anomaly flagging: fast average
+# ---------------------------------------------------------------------------
+
+
+def test_flagging_fast_average(client):
+    """UUID with avg resolve_time < 20s over 10+ solves gets flagged."""
+    from datetime import datetime, timezone, timedelta
+
+    session = octile_api.get_session()
+    try:
+        # Insert 10 fast scores (15s each) spread over time to avoid rate-limit
+        for i in range(10):
+            score = OctileScore(
+                puzzle_number=1,
+                resolve_time=15.0,
+                browser_uuid="uuid-fast-avg",
+                created_at=datetime.now(timezone.utc) - timedelta(hours=2, minutes=i),
+            )
+            session.add(score)
+        session.commit()
+    finally:
+        session.close()
+
+    # Next submission should be flagged (avg 15s < 20s over 10+ solves)
+    resp = client.post(
+        "/octile/score", json=_make_score(resolve_time=15.0, uuid="uuid-fast-avg")
+    )
+    assert resp.status_code == 201
+    assert resp.json()["flagged"] == 1
+
+
+def test_not_flagged_normal_player(client):
+    """A normal player with reasonable times is not flagged."""
+    resp = client.post(
+        "/octile/score", json=_make_score(resolve_time=60.0, uuid="uuid-normal")
+    )
+    assert resp.status_code == 201
+    assert resp.json()["flagged"] == 0
 
 
 # ---------------------------------------------------------------------------
