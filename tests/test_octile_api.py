@@ -1,7 +1,6 @@
 """Tests for the Octile scoreboard API."""
 
 import os
-import time
 
 # Set env var BEFORE any imports so lifespan uses in-memory DB
 os.environ["OCTILE_DB_PATH"] = ":memory:"
@@ -22,11 +21,11 @@ VALID_SOLUTION_P1 = (
 )
 
 
-def _make_score(puzzle=1, time=30.0, uuid="uuid-aaa", solution=VALID_SOLUTION_P1):
+def _make_score(puzzle=1, resolve_time=30.0, uuid="uuid-aaa", solution=VALID_SOLUTION_P1):
     """Build a valid score submission payload."""
     return {
         "puzzle_number": puzzle,
-        "resolve_time": time,
+        "resolve_time": resolve_time,
         "browser_uuid": uuid,
         "solution": solution,
     }
@@ -140,13 +139,13 @@ def test_reject_puzzle_number_too_high(client):
 
 
 def test_reject_too_fast(client):
-    resp = client.post("/octile/score", json=_make_score(time=5.0))
+    resp = client.post("/octile/score", json=_make_score(resolve_time=5.0))
     assert resp.status_code == 400
     assert "too fast" in resp.json()["detail"]
 
 
 def test_reject_too_slow(client):
-    resp = client.post("/octile/score", json=_make_score(time=100000.0))
+    resp = client.post("/octile/score", json=_make_score(resolve_time=100000.0))
     assert resp.status_code == 400
     assert "too large" in resp.json()["detail"]
 
@@ -330,9 +329,9 @@ def test_scoreboard_returns_scores_ordered(client):
     _insert_scores(
         client,
         [
-            _make_score(time=20.0, uuid="u1"),
-            _make_score(time=10.0, uuid="u2"),
-            _make_score(time=15.0, uuid="u3"),
+            _make_score(resolve_time=20.0, uuid="u1"),
+            _make_score(resolve_time=10.0, uuid="u2"),
+            _make_score(resolve_time=15.0, uuid="u3"),
         ],
     )
     resp = client.get("/octile/scoreboard")
@@ -346,8 +345,8 @@ def test_scoreboard_filter_by_puzzle(client):
     _insert_scores(
         client,
         [
-            _make_score(puzzle=1, time=10.0, uuid="u1"),
-            _make_score(puzzle=1, time=20.0, uuid="u2"),
+            _make_score(puzzle=1, resolve_time=10.0, uuid="u1"),
+            _make_score(puzzle=1, resolve_time=20.0, uuid="u2"),
         ],
     )
     resp = client.get("/octile/scoreboard?puzzle=1")
@@ -360,8 +359,8 @@ def test_scoreboard_filter_by_uuid(client):
     _insert_scores(
         client,
         [
-            _make_score(time=10.0, uuid="u1"),
-            _make_score(time=20.0, uuid="u2"),
+            _make_score(resolve_time=10.0, uuid="u1"),
+            _make_score(resolve_time=20.0, uuid="u2"),
         ],
     )
     resp = client.get("/octile/scoreboard?uuid=u1")
@@ -373,7 +372,7 @@ def test_scoreboard_filter_by_uuid(client):
 def test_scoreboard_best_mode(client):
     """best=true (default) returns only the fastest score per uuid per puzzle."""
     # Insert first, then wait and insert second (bypass rate limit)
-    resp1 = client.post("/octile/score", json=_make_score(time=30.0, uuid="u1"))
+    resp1 = client.post("/octile/score", json=_make_score(resolve_time=30.0, uuid="u1"))
     assert resp1.status_code == 201
 
     # Insert second score directly to DB to bypass rate limiting
@@ -399,7 +398,7 @@ def test_scoreboard_best_mode(client):
 
 
 def test_scoreboard_all_mode(client):
-    resp1 = client.post("/octile/score", json=_make_score(time=30.0, uuid="u1"))
+    resp1 = client.post("/octile/score", json=_make_score(resolve_time=30.0, uuid="u1"))
     assert resp1.status_code == 201
 
     # Insert another directly
@@ -426,7 +425,7 @@ def test_scoreboard_all_mode(client):
 def test_scoreboard_pagination(client):
     _insert_scores(
         client,
-        [_make_score(time=float(i + 10), uuid=f"u{i}") for i in range(10)],
+        [_make_score(resolve_time=float(i + 10), uuid=f"u{i}") for i in range(10)],
     )
     resp = client.get("/octile/scoreboard?limit=3&offset=0")
     data = resp.json()
@@ -449,8 +448,8 @@ def test_puzzles_endpoint(client):
     _insert_scores(
         client,
         [
-            _make_score(puzzle=1, time=10.0, uuid="u1"),
-            _make_score(puzzle=1, time=15.0, uuid="u2"),
+            _make_score(puzzle=1, resolve_time=10.0, uuid="u1"),
+            _make_score(puzzle=1, resolve_time=15.0, uuid="u2"),
         ],
     )
     resp = client.get("/octile/puzzles")
