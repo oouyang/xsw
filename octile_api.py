@@ -425,7 +425,6 @@ def verify_solution(puzzle_number: int, solution_str: str) -> tuple[bool, str | 
         return False, "solution must be 8 or 128 characters"
 
     puzzle_cells = decode_puzzle_extended(puzzle_number)
-    grey_cell_set = set(puzzle_cells)
 
     if len(solution_str) == 8:
         # --- Compact format (8-char placement-based) ---

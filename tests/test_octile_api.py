@@ -48,10 +48,14 @@ def _encode_compact(grid_128: str) -> str:
             bounds[pid] = [r, c, r, c]
         else:
             b = bounds[pid]
-            if r < b[0]: b[0] = r
-            if c < b[1]: b[1] = c
-            if r > b[2]: b[2] = r
-            if c > b[3]: b[3] = c
+            if r < b[0]:
+                b[0] = r
+            if c < b[1]:
+                b[1] = c
+            if r > b[2]:
+                b[2] = r
+            if c > b[3]:
+                b[3] = c
 
     n = 0
     for i in range(7, -1, -1):
@@ -1086,7 +1090,8 @@ def test_verify_compact_and_legacy_agree():
     """Both formats should produce the same validation result for puzzle 1."""
     ok_legacy, _ = verify_solution(1, VALID_SOLUTION_P1)
     ok_compact, _ = verify_solution(1, VALID_COMPACT_P1)
-    assert ok_legacy == ok_compact == True
+    assert ok_legacy is True
+    assert ok_compact is True
 
 
 def test_verify_solution_rejects_invalid_lengths():
