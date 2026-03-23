@@ -3,6 +3,59 @@ Octile puzzle game scoreboard API with anti-cheat verification.
 
 Uses a **separate SQLite database** (octile.db) to store puzzle solve scores,
 isolated from the main XSW cache and analytics databases.
+
+Encoding Reference
+==================
+
+Base-92 Alphabet (P92)
+----------------------
+Printable ASCII 33–126 excluding ' (39) and \\ (92) → 92 characters:
+  !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~
+
+Puzzle Data Encoding (3 chars per puzzle)
+-----------------------------------------
+Each puzzle defines 6 grey cells: 1×grey1 + 2×grey2 + 3×grey3 on an 8×8 board.
+
+Encoding:
+  combined = g1_pos × 10752 + g2_placement × 96 + g3_placement
+  → 3 base-92 chars (little-endian): c0 + c1×92 + c2×92²
+
+Where:
+  - g1_pos: cell index 0–63
+  - g2_placement (0–111): grey2 is a 1×2 domino
+      0–55:  horizontal — row = idx÷7, col = idx%7, cells = (row×8+col, +1)
+      56–111: vertical  — row = (idx-56)÷8, col = (idx-56)%8, cells = (row×8+col, +8)
+  - g3_placement (0–95): grey3 is a 1×3 tromino
+      0–47:  horizontal — row = idx÷6, col = idx%6, cells = (row×8+col, +1, +2)
+      48–95: vertical  — row = (idx-48)÷8, col = (idx-48)%8, cells = (row×8+col, +8, +16)
+
+Max combined = 63 × 10752 + 111 × 96 + 95 = 688,031 < 92³ = 778,688 ✓
+
+Solution Encoding (27 chars, compact format)
+--------------------------------------------
+Encodes only the 58 non-grey cells (grey positions are known from puzzle data).
+
+8 player piece IDs mapped to indices 0–7:
+  0=r1(red1), 1=r2(red2), 2=w1(white1), 3=w2(white2),
+  4=b1(blue1), 5=b2(blue2), 6=y1(yel1), 7=y2(yel2)
+
+The 58 values (3 bits each) are split into 4 groups:
+  Group 0: 15 cells → 45 bits → 7 base-92 chars (92⁷ > 2⁴⁵ ✓)
+  Group 1: 15 cells → 45 bits → 7 base-92 chars
+  Group 2: 15 cells → 45 bits → 7 base-92 chars
+  Group 3: 13 cells → 39 bits → 6 base-92 chars (92⁶ > 2³⁹ ✓)
+  Total: 7+7+7+6 = 27 chars
+
+Each group encodes as little-endian mixed-radix:
+  n = val[0] + val[1]×8 + val[2]×64 + ... (big end first in loop)
+  chars: n%92, (n÷92)%92, ...
+
+Cells are visited in order 0–63, skipping grey cells.
+
+Legacy Format (128 chars)
+-------------------------
+64 × 2-char piece IDs: g1/g2/g3/r1/r2/w1/w2/b1/b2/y1/y2
+Still accepted for backward compatibility.
 """
 
 import hashlib
@@ -35,8 +88,9 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 # Puzzle data and verification constants
 # ---------------------------------------------------------------------------
-B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-B64_MAP = {c: i for i, c in enumerate(B64)}
+# Base-92 alphabet: printable ASCII 33-126, excluding ' (39) and \ (92)
+P92 = '!"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+P92_MAP = {c: i for i, c in enumerate(P92)}
 
 # Loaded lazily from puzzle_data.py to keep this file readable
 _PUZZLE_DATA: str | None = None
@@ -72,10 +126,54 @@ PLAYER_IDS = ALL_PIECE_IDS - GREY_IDS
 
 
 def decode_puzzle(index: int) -> list[int]:
-    """Decode puzzle at 0-based index. Returns [g1, g2a, g2b, g3a, g3b, g3c]."""
+    """Decode puzzle at 0-based index from base-92 encoded data.
+
+    Each puzzle is 3 base-92 chars encoding a combined index:
+        combined = g1_pos * 10752 + g2_placement * 96 + g3_placement
+
+    Grey2 placements (0-111):
+        0-55: horizontal (row*7 + col, cell at row*8+col and +1)
+        56-111: vertical ((idx-56)//8 = row, (idx-56)%8 = col, cell at row*8+col and +8)
+
+    Grey3 placements (0-95):
+        0-47: horizontal (row*6 + col, cells at row*8+col, +1, +2)
+        48-95: vertical ((idx-48)//8 = row, (idx-48)%8 = col, cells at row*8+col, +8, +16)
+
+    Returns [g1, g2a, g2b, g3a, g3b, g3c] as cell indices (0-63).
+    """
     data = _get_puzzle_data()
-    off = index * 6
-    return [B64_MAP[data[off + i]] for i in range(6)]
+    o = index * 3
+    n = P92_MAP[data[o]] + P92_MAP[data[o + 1]] * 92 + P92_MAP[data[o + 2]] * 92 * 92
+
+    g3_idx = n % 96
+    g2_idx = (n // 96) % 112
+    g1 = n // 10752
+
+    # Decode grey2
+    if g2_idx < 56:
+        r, c = divmod(g2_idx, 7)
+        g2a = r * 8 + c
+        g2b = g2a + 1
+    else:
+        i = g2_idx - 56
+        r, c = divmod(i, 8)
+        g2a = r * 8 + c
+        g2b = g2a + 8
+
+    # Decode grey3
+    if g3_idx < 48:
+        r, c = divmod(g3_idx, 6)
+        g3a = r * 8 + c
+        g3b = g3a + 1
+        g3c = g3a + 2
+    else:
+        i = g3_idx - 48
+        r, c = divmod(i, 8)
+        g3a = r * 8 + c
+        g3b = g3a + 8
+        g3c = g3a + 16
+
+    return [g1, g2a, g2b, g3a, g3b, g3c]
 
 
 def _cells_form_rectangle(
@@ -96,13 +194,87 @@ def _cells_form_rectangle(
     return set(cells) == expected
 
 
-def verify_solution(puzzle_number: int, solution_str: str) -> tuple[bool, str | None]:
-    """Verify a solution string against a puzzle. Returns (ok, error_msg)."""
-    if not isinstance(solution_str, str) or len(solution_str) != 128:
-        return False, "solution must be 128 characters"
+# Piece ID mappings for compact 27-char solution format
+_SOL_PIECES = ["r1", "r2", "w1", "w2", "b1", "b2", "y1", "y2"]
+_SOL_IDX = {pid: i for i, pid in enumerate(_SOL_PIECES)}
 
-    # Parse into list of 64 two-char piece IDs
-    grid = [solution_str[i : i + 2] for i in range(0, 128, 2)]
+
+def _decode_compact_solution(
+    solution_str: str, grey_cells: set[int]
+) -> list[str] | None:
+    """Decode a 27-char base-92 compact solution into a 64-cell board.
+
+    Encoding: 58 non-grey cells, each with piece index 0-7 (3 bits).
+    Grouped as 15+15+15+13 cells → 7+7+7+6 = 27 base-92 chars.
+    Cells are visited in order 0-63, skipping grey cells.
+
+    Returns list of 64 piece short-IDs (g1/g2/g3 for grey, r1/r2/w1/w2/b1/b2/y1/y2
+    for player pieces), or None on decode error.
+    """
+    if len(solution_str) != 27:
+        return None
+    for c in solution_str:
+        if c not in P92_MAP:
+            return None
+
+    groups = [15, 15, 15, 13]
+    char_counts = [7, 7, 7, 6]
+    board: list[str | None] = [None] * 64
+    pos = 0  # position in solution string
+    ci = 0   # cell index 0-63
+
+    for g in range(4):
+        # Decode base-92 group → big integer
+        n = 0
+        for i in range(char_counts[g] - 1, -1, -1):
+            n = n * 92 + P92_MAP[solution_str[pos + i]]
+        pos += char_counts[g]
+
+        # Extract piece indices
+        for _ in range(groups[g]):
+            while ci < 64 and ci in grey_cells:
+                ci += 1
+            if ci >= 64:
+                return None
+            board[ci] = _SOL_PIECES[n % 8]
+            n //= 8
+            ci += 1
+
+    return board  # type: ignore[return-value]
+
+
+def verify_solution(puzzle_number: int, solution_str: str) -> tuple[bool, str | None]:
+    """Verify a solution string against a puzzle. Returns (ok, error_msg).
+
+    Accepts two formats:
+    - 128-char legacy: 64 × 2-char piece IDs (g1/g2/g3/r1/r2/w1/w2/b1/b2/y1/y2)
+    - 27-char compact: base-92 encoded non-grey cells only (see _decode_compact_solution)
+    """
+    if not isinstance(solution_str, str) or len(solution_str) not in (27, 128):
+        return False, "solution must be 27 or 128 characters"
+
+    puzzle_cells = decode_puzzle(puzzle_number - 1)
+    grey_cell_set = set(puzzle_cells)
+
+    if len(solution_str) == 27:
+        # --- Compact format ---
+        board = _decode_compact_solution(solution_str, grey_cell_set)
+        if board is None:
+            return False, "failed to decode compact solution"
+
+        # Fill in grey cells
+        board[puzzle_cells[0]] = "g1"
+        board[puzzle_cells[1]] = "g2"
+        board[puzzle_cells[2]] = "g2"
+        board[puzzle_cells[3]] = "g3"
+        board[puzzle_cells[4]] = "g3"
+        board[puzzle_cells[5]] = "g3"
+
+        # Convert flat board to piece_cells for validation
+        grid = board
+    else:
+        # --- Legacy 128-char format ---
+        grid = [solution_str[i : i + 2] for i in range(0, 128, 2)]
 
     # Check all IDs are valid
     for pid in grid:
@@ -129,8 +301,6 @@ def verify_solution(puzzle_number: int, solution_str: str) -> tuple[bool, str | 
             return False, f"{pid}: cells don't form valid rectangle"
 
     # Check grey pieces at correct positions
-    puzzle_cells = decode_puzzle(puzzle_number - 1)
-
     g1_r, g1_c = divmod(puzzle_cells[0], 8)
     if piece_cells["g1"] != [(g1_r, g1_c)]:
         return False, "grey1 not at correct position"
@@ -176,7 +346,7 @@ class OctileScore(OctileBase):
     browser = Column(String, nullable=True)
 
     # Anti-cheat fields
-    solution = Column(String, nullable=True)  # 128-char board state
+    solution = Column(String, nullable=True)  # 27-char compact or 128-char legacy
     flagged = Column(Integer, default=0)  # 0=normal, 1=flagged for review
 
     created_at = Column(
@@ -265,7 +435,7 @@ class ScoreSubmitRequest(BaseModel):
     puzzle_number: int
     resolve_time: float
     browser_uuid: str
-    solution: Optional[str] = None  # 128-char compact board state
+    solution: Optional[str] = None  # 27-char compact or 128-char legacy
     # Legacy fields (accepted but ignored during transition)
     timestamp_utc: Optional[str] = None
     os: Optional[str] = None
