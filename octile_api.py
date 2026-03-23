@@ -31,26 +31,35 @@ Where:
 
 Max combined = 63 × 10752 + 111 × 96 + 95 = 688,031 < 92³ = 778,688 ✓
 
-Solution Encoding (27 chars, compact format)
+Solution Encoding (8 chars, compact format)
 --------------------------------------------
-Encodes only the 58 non-grey cells (grey positions are known from puzzle data).
+Encodes the position and orientation of 8 non-grey pieces using mixed-radix
+base-92. Grey piece positions are known from puzzle data.
 
-8 player piece IDs mapped to indices 0–7:
-  0=r1(red1), 1=r2(red2), 2=w1(white1), 3=w2(white2),
-  4=b1(blue1), 5=b2(blue2), 6=y1(yel1), 7=y2(yel2)
+Each piece has a placement index combining top-left position and orientation:
+  - Non-square pieces: H placements first (row × cols_avail + col), then V
+  - Square pieces: single orientation (row × cols_avail + col)
 
-The 58 values (3 bits each) are split into 4 groups:
-  Group 0: 15 cells → 45 bits → 7 base-92 chars (92⁷ > 2⁴⁵ ✓)
-  Group 1: 15 cells → 45 bits → 7 base-92 chars
-  Group 2: 15 cells → 45 bits → 7 base-92 chars
-  Group 3: 13 cells → 39 bits → 6 base-92 chars (92⁶ > 2³⁹ ✓)
-  Total: 7+7+7+6 = 27 chars
+Piece order and placement counts:
+  0: red1   (2×3) — H:42 + V:42 = 84 placements
+  1: red2   (1×4) — H:40 + V:40 = 80
+  2: white1 (1×5) — H:32 + V:32 = 64
+  3: white2 (2×2) — square:      49
+  4: blue1  (2×5) — H:28 + V:28 = 56
+  5: blue2  (3×4) — H:30 + V:30 = 60
+  6: yel1   (3×3) — square:      36
+  7: yel2   (2×4) — H:35 + V:35 = 70
 
-Each group encodes as little-endian mixed-radix:
-  n = val[0] + val[1]×8 + val[2]×64 + ... (big end first in loop)
-  chars: n%92, (n÷92)%92, ...
+H placements: cols_avail = 9 - piece_cols, index = row × cols_avail + col
+V placements: offset by hCount, cols_avail = 9 - piece_rows,
+              index = hCount + row × cols_avail + col
 
-Cells are visited in order 0–63, skipping grey cells.
+Combined as mixed-radix big integer (little-endian by piece order):
+  n = p0 + N0×(p1 + N1×(p2 + ... ))
+  → 8 base-92 chars (little-endian): n%92, (n÷92)%92, ...
+
+Total: 84×80×64×49×56×60×36×70 = 178,437,095,424,000 < 92⁸ = 5.13×10¹⁵ ✓
+All intermediate values < 2⁵³ (Number.MAX_SAFE_INTEGER) ✓
 
 Legacy Format (128 chars)
 -------------------------
@@ -94,7 +103,8 @@ P92_MAP = {c: i for i, c in enumerate(P92)}
 
 # Loaded lazily from puzzle_data.py to keep this file readable
 _PUZZLE_DATA: str | None = None
-PUZZLE_COUNT = 11378
+PUZZLE_COUNT = 11378  # base puzzles stored in puzzle data
+TOTAL_PUZZLE_COUNT = PUZZLE_COUNT * 8  # 91024 — with D4 symmetry transforms
 
 
 def _get_puzzle_data() -> str:
@@ -176,6 +186,64 @@ def decode_puzzle(index: int) -> list[int]:
     return [g1, g2a, g2b, g3a, g3b, g3c]
 
 
+# ---------------------------------------------------------------------------
+# D4 symmetry: 8 transforms (4 rotations × 2 mirrors) on 8×8 board
+# ---------------------------------------------------------------------------
+# Block layout (backward compatible):
+#   1..11378     → transform 0 (identity, original puzzles)
+#   11379..22756 → transform 1 (rotate 90° CW)
+#   22757..34134 → transform 2 (rotate 180°)
+#   34135..45512 → transform 3 (rotate 270° CW)
+#   45513..56890 → transform 4 (mirror horizontal)
+#   56891..68268 → transform 5 (mirror + rotate 90°)
+#   68269..79646 → transform 6 (mirror + rotate 180°)
+#   79647..91024 → transform 7 (mirror + rotate 270°)
+
+
+def _transform_cell(cell: int, transform: int) -> int:
+    """Apply D4 symmetry transform to a cell index on 8×8 board."""
+    r, c = divmod(cell, 8)
+    if transform == 1:
+        r, c = c, 7 - r
+    elif transform == 2:
+        r, c = 7 - r, 7 - c
+    elif transform == 3:
+        r, c = 7 - c, r
+    elif transform == 4:
+        r, c = r, 7 - c
+    elif transform == 5:
+        r, c = 7 - c, 7 - r
+    elif transform == 6:
+        r, c = 7 - r, c
+    elif transform == 7:
+        r, c = c, r
+    return r * 8 + c
+
+
+def _decompose_puzzle_number(puzzle_number: int) -> tuple[int, int]:
+    """Decompose extended puzzle number (1-based) into (base_0_index, transform).
+
+    Returns (base_index, transform) where base_index is 0-based and transform is 0-7.
+    """
+    idx = puzzle_number - 1
+    transform = idx // PUZZLE_COUNT  # 0-7
+    base = idx % PUZZLE_COUNT  # 0-based
+    return base, transform
+
+
+def decode_puzzle_extended(puzzle_number: int) -> list[int]:
+    """Decode puzzle by 1-based extended number, applying D4 transform.
+
+    For puzzle_number 1–11378, returns the original (identity) puzzle.
+    For 11379–91024, returns the base puzzle with rotation/mirror applied.
+    """
+    base, transform = _decompose_puzzle_number(puzzle_number)
+    cells = decode_puzzle(base)
+    if transform == 0:
+        return cells
+    return [_transform_cell(c, transform) for c in cells]
+
+
 def _cells_form_rectangle(
     cells: list[tuple[int, int]], valid_sizes: list[tuple[int, int]]
 ) -> bool:
@@ -194,51 +262,68 @@ def _cells_form_rectangle(
     return set(cells) == expected
 
 
-# Piece ID mappings for compact 27-char solution format
-_SOL_PIECES = ["r1", "r2", "w1", "w2", "b1", "b2", "y1", "y2"]
-_SOL_IDX = {pid: i for i, pid in enumerate(_SOL_PIECES)}
+# Piece encoding: 8-char base-92 mixed-radix (position+direction per piece)
+_PIECE_ENC = [
+    {"id": "r1", "r": 2, "c": 3, "sq": False},
+    {"id": "r2", "r": 1, "c": 4, "sq": False},
+    {"id": "w1", "r": 1, "c": 5, "sq": False},
+    {"id": "w2", "r": 2, "c": 2, "sq": True},
+    {"id": "b1", "r": 2, "c": 5, "sq": False},
+    {"id": "b2", "r": 3, "c": 4, "sq": False},
+    {"id": "y1", "r": 3, "c": 3, "sq": True},
+    {"id": "y2", "r": 2, "c": 4, "sq": False},
+]
+for _p in _PIECE_ENC:
+    _p["hN"] = (9 - _p["r"]) * (9 - _p["c"])
+    _p["N"] = _p["hN"] if _p["sq"] else _p["hN"] * 2
 
 
-def _decode_compact_solution(
-    solution_str: str, grey_cells: set[int]
-) -> list[str] | None:
-    """Decode a 27-char base-92 compact solution into a 64-cell board.
+def _decode_compact_solution(solution_str: str) -> list[str] | None:
+    """Decode an 8-char base-92 compact solution into a 64-cell board.
 
-    Encoding: 58 non-grey cells, each with piece index 0-7 (3 bits).
-    Grouped as 15+15+15+13 cells → 7+7+7+6 = 27 base-92 chars.
-    Cells are visited in order 0-63, skipping grey cells.
-
-    Returns list of 64 piece short-IDs (g1/g2/g3 for grey, r1/r2/w1/w2/b1/b2/y1/y2
-    for player pieces), or None on decode error.
+    Each of 8 non-grey pieces is encoded as a mixed-radix placement index
+    combining position (top-left cell) and orientation (H/V).
+    Returns list of 64 piece short-IDs, or None on decode error.
+    Non-piece cells are left as None.
     """
-    if len(solution_str) != 27:
+    if len(solution_str) != 8:
         return None
     for c in solution_str:
         if c not in P92_MAP:
             return None
 
-    groups = [15, 15, 15, 13]
-    char_counts = [7, 7, 7, 6]
+    # Decode base-92 → big integer
+    n = 0
+    for i in range(7, -1, -1):
+        n = n * 92 + P92_MAP[solution_str[i]]
+
     board: list[str | None] = [None] * 64
-    pos = 0  # position in solution string
-    ci = 0   # cell index 0-63
 
-    for g in range(4):
-        # Decode base-92 group → big integer
-        n = 0
-        for i in range(char_counts[g] - 1, -1, -1):
-            n = n * 92 + P92_MAP[solution_str[pos + i]]
-        pos += char_counts[g]
+    for p in _PIECE_ENC:
+        pi = n % p["N"]
+        n //= p["N"]
 
-        # Extract piece indices
-        for _ in range(groups[g]):
-            while ci < 64 and ci in grey_cells:
-                ci += 1
-            if ci >= 64:
-                return None
-            board[ci] = _SOL_PIECES[n % 8]
-            n //= 8
-            ci += 1
+        if p["sq"]:
+            cols_avail = 9 - p["c"]
+            row, col = divmod(pi, cols_avail)
+            h, w = p["r"], p["c"]
+        elif pi < p["hN"]:
+            cols_avail = 9 - p["c"]
+            row, col = divmod(pi, cols_avail)
+            h, w = p["r"], p["c"]
+        else:
+            adj = pi - p["hN"]
+            cols_avail = 9 - p["r"]
+            row, col = divmod(adj, cols_avail)
+            h, w = p["c"], p["r"]
+
+        if row + h > 8 or col + w > 8:
+            return None
+
+        pid = p["id"]
+        for dr in range(h):
+            for dc in range(w):
+                board[(row + dr) * 8 + (col + dc)] = pid
 
     return board  # type: ignore[return-value]
 
@@ -248,17 +333,17 @@ def verify_solution(puzzle_number: int, solution_str: str) -> tuple[bool, str | 
 
     Accepts two formats:
     - 128-char legacy: 64 × 2-char piece IDs (g1/g2/g3/r1/r2/w1/w2/b1/b2/y1/y2)
-    - 27-char compact: base-92 encoded non-grey cells only (see _decode_compact_solution)
+    - 8-char compact: base-92 mixed-radix placement encoding
     """
-    if not isinstance(solution_str, str) or len(solution_str) not in (27, 128):
-        return False, "solution must be 27 or 128 characters"
+    if not isinstance(solution_str, str) or len(solution_str) not in (8, 128):
+        return False, "solution must be 8 or 128 characters"
 
-    puzzle_cells = decode_puzzle(puzzle_number - 1)
+    puzzle_cells = decode_puzzle_extended(puzzle_number)
     grey_cell_set = set(puzzle_cells)
 
-    if len(solution_str) == 27:
-        # --- Compact format ---
-        board = _decode_compact_solution(solution_str, grey_cell_set)
+    if len(solution_str) == 8:
+        # --- Compact format (8-char placement-based) ---
+        board = _decode_compact_solution(solution_str)
         if board is None:
             return False, "failed to decode compact solution"
 
@@ -270,7 +355,6 @@ def verify_solution(puzzle_number: int, solution_str: str) -> tuple[bool, str | 
         board[puzzle_cells[4]] = "g3"
         board[puzzle_cells[5]] = "g3"
 
-        # Convert flat board to piece_cells for validation
         grid = board
     else:
         # --- Legacy 128-char format ---
@@ -619,10 +703,10 @@ async def submit_score(request: Request):
         )
 
     # --- Validation (Layer 2) ---
-    if not (1 <= body.puzzle_number <= PUZZLE_COUNT):
+    if not (1 <= body.puzzle_number <= TOTAL_PUZZLE_COUNT):
         return JSONResponse(
             status_code=400,
-            content={"detail": f"puzzle_number must be 1–{PUZZLE_COUNT}"},
+            content={"detail": f"puzzle_number must be 1–{TOTAL_PUZZLE_COUNT}"},
         )
 
     if body.resolve_time < 10:
@@ -778,3 +862,21 @@ def get_puzzles():
         ]
     finally:
         session.close()
+
+
+@octile_router.get("/puzzle/{number}")
+def get_puzzle(number: int):
+    """Get decoded puzzle cells by extended puzzle number (1-based, up to 91024)."""
+    if not (1 <= number <= TOTAL_PUZZLE_COUNT):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"puzzle_number must be 1–{TOTAL_PUZZLE_COUNT}"},
+        )
+    base, transform = _decompose_puzzle_number(number)
+    cells = decode_puzzle_extended(number)
+    return {
+        "puzzle_number": number,
+        "base_puzzle": base + 1,  # 1-based for display
+        "transform": transform,
+        "cells": cells,
+    }

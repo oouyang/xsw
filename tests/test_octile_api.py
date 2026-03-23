@@ -8,7 +8,20 @@ import pytest
 os.environ["OCTILE_DB_PATH"] = ":memory:"
 
 import octile_api
-from octile_api import OctileScore
+from octile_api import (
+    OctileScore,
+    P92,
+    P92_MAP,
+    _PIECE_ENC,
+    _decode_compact_solution,
+    _transform_cell,
+    _decompose_puzzle_number,
+    decode_puzzle,
+    decode_puzzle_extended,
+    verify_solution,
+    PUZZLE_COUNT,
+    TOTAL_PUZZLE_COUNT,
+)
 
 # Valid solution for puzzle #1 (cells [0,1,2,3,4,5] = row 0 cols 0-5)
 VALID_SOLUTION_P1 = (
@@ -21,6 +34,44 @@ VALID_SOLUTION_P1 = (
     "r2y1y1y1w2w2r1r1"
     "r2w1w1w1w1w1r1r1"
 )
+
+
+def _encode_compact(grid_128: str) -> str:
+    """Encode a 128-char legacy solution to 8-char compact format (test helper)."""
+    grid = [grid_128[i : i + 2] for i in range(0, 128, 2)]
+    bounds: dict[str, list[int]] = {}
+    for idx, pid in enumerate(grid):
+        if pid in ("g1", "g2", "g3"):
+            continue
+        r, c = divmod(idx, 8)
+        if pid not in bounds:
+            bounds[pid] = [r, c, r, c]
+        else:
+            b = bounds[pid]
+            if r < b[0]: b[0] = r
+            if c < b[1]: b[1] = c
+            if r > b[2]: b[2] = r
+            if c > b[3]: b[3] = c
+
+    n = 0
+    for i in range(7, -1, -1):
+        p = _PIECE_ENC[i]
+        b = bounds[p["id"]]
+        h = b[2] - b[0] + 1
+        if p["sq"] or h == p["r"]:
+            pi = b[0] * (9 - p["c"]) + b[1]
+        else:
+            pi = p["hN"] + b[0] * (9 - p["r"]) + b[1]
+        n = n * p["N"] + pi
+
+    s = ""
+    for _ in range(8):
+        s += P92[n % 92]
+        n //= 92
+    return s
+
+
+VALID_COMPACT_P1 = _encode_compact(VALID_SOLUTION_P1)
 
 
 def _make_score(puzzle=1, resolve_time=30.0, uuid="uuid-aaa", solution=VALID_SOLUTION_P1):
@@ -248,9 +299,9 @@ def test_accept_boundary_puzzle_1(client):
 
 
 def test_accept_boundary_puzzle_max(client):
-    """Puzzle 11378 (highest valid) is accepted — solution omitted for simplicity."""
+    """Puzzle 91024 (highest valid) is accepted — solution omitted for simplicity."""
     payload = {
-        "puzzle_number": 11378,
+        "puzzle_number": TOTAL_PUZZLE_COUNT,
         "resolve_time": 30.0,
         "browser_uuid": "uuid-pmax",
     }
@@ -284,7 +335,7 @@ def test_reject_invalid_solution_wrong_length(client):
         "/octile/score", json=_make_score(uuid="uuid-bad1", solution="g1g2")
     )
     assert resp.status_code == 400
-    assert "128 characters" in resp.json()["detail"]
+    assert "8 or 128" in resp.json()["detail"]
 
 
 def test_reject_invalid_solution_bad_piece_id(client):
@@ -411,9 +462,9 @@ def test_verify_solution_valid():
 
 
 def test_verify_solution_wrong_length():
-    ok, err = octile_api.verify_solution(1, "short")
+    ok, err = verify_solution(1, "short")
     assert ok is False
-    assert "128" in err
+    assert "8 or 128" in err
 
 
 def test_verify_solution_invalid_piece():
@@ -770,3 +821,367 @@ def test_puzzles_empty(client):
     resp = client.get("/octile/puzzles")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Base-92 alphabet
+# ---------------------------------------------------------------------------
+
+
+def test_p92_length():
+    assert len(P92) == 92
+
+
+def test_p92_excludes_quote_and_backslash():
+    assert "'" not in P92
+    assert "\\" not in P92
+
+
+def test_p92_all_printable():
+    for c in P92:
+        assert 33 <= ord(c) <= 126
+
+
+def test_p92_map_roundtrip():
+    for i, c in enumerate(P92):
+        assert P92_MAP[c] == i
+
+
+# ---------------------------------------------------------------------------
+# Puzzle decoding
+# ---------------------------------------------------------------------------
+
+
+def test_decode_puzzle_returns_6_cells():
+    cells = decode_puzzle(0)
+    assert len(cells) == 6
+
+
+def test_decode_puzzle_cells_in_range():
+    for idx in [0, 100, 5000, PUZZLE_COUNT - 1]:
+        cells = decode_puzzle(idx)
+        for c in cells:
+            assert 0 <= c <= 63
+
+
+def test_decode_puzzle_grey_cells_unique():
+    """Grey cells should generally not overlap (g1, g2a, g2b distinct positions)."""
+    cells = decode_puzzle(0)
+    # g1 is 1 cell, g2 is 2 cells, g3 is 3 cells — all distinct
+    assert len(set(cells)) == 6
+
+
+def test_decode_puzzle_g2_adjacent():
+    """Grey2 cells should be horizontally or vertically adjacent."""
+    for idx in [0, 42, 500, 11377]:
+        cells = decode_puzzle(idx)
+        g2a, g2b = cells[1], cells[2]
+        diff = abs(g2a - g2b)
+        assert diff in (1, 8), f"puzzle {idx}: g2 cells {g2a},{g2b} not adjacent"
+
+
+def test_decode_puzzle_g3_collinear():
+    """Grey3 cells should form a horizontal or vertical line of 3."""
+    for idx in [0, 42, 500, 11377]:
+        cells = decode_puzzle(idx)
+        g3 = sorted(cells[3:6])
+        d1, d2 = g3[1] - g3[0], g3[2] - g3[1]
+        assert d1 == d2
+        assert d1 in (1, 8), f"puzzle {idx}: g3 not collinear {g3}"
+
+
+# ---------------------------------------------------------------------------
+# D4 symmetry transforms
+# ---------------------------------------------------------------------------
+
+
+def test_transform_cell_identity():
+    for cell in range(64):
+        assert _transform_cell(cell, 0) == cell
+
+
+def test_transform_cell_rotation_cycle():
+    """Four 90° CW rotations return to the original cell."""
+    for cell in range(64):
+        c = cell
+        for _ in range(4):
+            c = _transform_cell(c, 1)
+        assert c == cell, f"cell {cell} didn't return after 4 rotations"
+
+
+def test_transform_cell_180_involution():
+    """180° applied twice returns to original."""
+    for cell in range(64):
+        assert _transform_cell(_transform_cell(cell, 2), 2) == cell
+
+
+def test_transform_cell_mirror_involution():
+    """Each mirror is its own inverse."""
+    for t in [4, 5, 6, 7]:
+        for cell in range(64):
+            assert _transform_cell(_transform_cell(cell, t), t) == cell
+
+
+def test_transform_cell_stays_in_range():
+    for t in range(8):
+        for cell in range(64):
+            result = _transform_cell(cell, t)
+            assert 0 <= result <= 63
+
+
+# ---------------------------------------------------------------------------
+# Puzzle decomposition and extended decoding
+# ---------------------------------------------------------------------------
+
+
+def test_decompose_puzzle_number_first():
+    base, transform = _decompose_puzzle_number(1)
+    assert base == 0
+    assert transform == 0
+
+
+def test_decompose_puzzle_number_last_base():
+    base, transform = _decompose_puzzle_number(PUZZLE_COUNT)
+    assert base == PUZZLE_COUNT - 1
+    assert transform == 0
+
+
+def test_decompose_puzzle_number_first_transform1():
+    base, transform = _decompose_puzzle_number(PUZZLE_COUNT + 1)
+    assert base == 0
+    assert transform == 1
+
+
+def test_decompose_puzzle_number_last():
+    base, transform = _decompose_puzzle_number(TOTAL_PUZZLE_COUNT)
+    assert base == PUZZLE_COUNT - 1
+    assert transform == 7
+
+
+def test_decode_puzzle_extended_identity():
+    """Puzzles 1–11378 should match decode_puzzle(0–11377)."""
+    for pnum in [1, 100, PUZZLE_COUNT]:
+        ext = decode_puzzle_extended(pnum)
+        base = decode_puzzle(pnum - 1)
+        assert ext == base
+
+
+def test_decode_puzzle_extended_transform():
+    """Transformed puzzle cells differ from base."""
+    base_cells = decode_puzzle_extended(1)
+    rot90_cells = decode_puzzle_extended(PUZZLE_COUNT + 1)
+    # Same base puzzle, different transform — cells should differ
+    # (unless the puzzle is symmetric, which is unlikely for puzzle 0)
+    assert base_cells != rot90_cells
+
+
+def test_decode_puzzle_extended_all_cells_valid():
+    for pnum in [1, PUZZLE_COUNT + 1, 2 * PUZZLE_COUNT + 1, TOTAL_PUZZLE_COUNT]:
+        cells = decode_puzzle_extended(pnum)
+        assert len(cells) == 6
+        for c in cells:
+            assert 0 <= c <= 63
+
+
+# ---------------------------------------------------------------------------
+# Compact solution encoding/decoding (8-char format)
+# ---------------------------------------------------------------------------
+
+
+def test_piece_enc_placement_counts():
+    """Verify computed placement counts match expected values."""
+    expected = {"r1": 84, "r2": 80, "w1": 64, "w2": 49, "b1": 56, "b2": 60, "y1": 36, "y2": 70}
+    for p in _PIECE_ENC:
+        assert p["N"] == expected[p["id"]], f"{p['id']}: {p['N']} != {expected[p['id']]}"
+
+
+def test_piece_enc_total_fits_in_8_base92():
+    total = 1
+    for p in _PIECE_ENC:
+        total *= p["N"]
+    assert total < 92**8
+
+
+def test_compact_solution_length():
+    assert len(VALID_COMPACT_P1) == 8
+
+
+def test_compact_solution_all_p92_chars():
+    for c in VALID_COMPACT_P1:
+        assert c in P92_MAP
+
+
+def test_decode_compact_solution_roundtrip():
+    """Encode legacy → compact, decode compact, verify pieces match."""
+    board = _decode_compact_solution(VALID_COMPACT_P1)
+    assert board is not None
+    # Parse legacy solution for comparison
+    legacy = [VALID_SOLUTION_P1[i : i + 2] for i in range(0, 128, 2)]
+    for i in range(64):
+        if legacy[i] in ("g1", "g2", "g3"):
+            continue
+        assert board[i] == legacy[i], f"cell {i}: {board[i]} != {legacy[i]}"
+
+
+def test_decode_compact_solution_none_for_grey():
+    """Grey cells should be None in decoded compact solution."""
+    board = _decode_compact_solution(VALID_COMPACT_P1)
+    grey_cells = set(decode_puzzle_extended(1))
+    for c in grey_cells:
+        assert board[c] is None
+
+
+def test_decode_compact_solution_invalid_length():
+    assert _decode_compact_solution("short") is None
+    assert _decode_compact_solution("toolongstring") is None
+
+
+def test_decode_compact_solution_invalid_chars():
+    assert _decode_compact_solution("abcdefg'") is None  # ' excluded from P92
+    assert _decode_compact_solution("abcdefg\\") is None  # \ excluded from P92
+
+
+def test_decode_compact_all_positions_filled():
+    """All 58 non-grey cells should have a piece ID after decoding."""
+    board = _decode_compact_solution(VALID_COMPACT_P1)
+    grey_cells = set(decode_puzzle_extended(1))
+    for i in range(64):
+        if i in grey_cells:
+            continue
+        assert board[i] is not None, f"cell {i} is None"
+
+
+def test_decode_compact_piece_cell_counts():
+    """Each piece should occupy the correct number of cells."""
+    board = _decode_compact_solution(VALID_COMPACT_P1)
+    from collections import Counter
+    counts = Counter(c for c in board if c is not None)
+    expected = {"r1": 6, "r2": 4, "w1": 5, "w2": 4, "b1": 10, "b2": 12, "y1": 9, "y2": 8}
+    for pid, exp in expected.items():
+        assert counts[pid] == exp, f"{pid}: {counts[pid]} != {exp}"
+
+
+# ---------------------------------------------------------------------------
+# verify_solution with compact format
+# ---------------------------------------------------------------------------
+
+
+def test_verify_compact_solution_valid():
+    ok, err = verify_solution(1, VALID_COMPACT_P1)
+    assert ok is True, f"Expected valid but got: {err}"
+    assert err is None
+
+
+def test_verify_compact_solution_wrong_puzzle():
+    ok, err = verify_solution(2, VALID_COMPACT_P1)
+    assert ok is False
+
+
+def test_verify_compact_solution_invalid_chars():
+    ok, err = verify_solution(1, "!!!!!!!'")  # ' not in P92
+    assert ok is False
+
+
+def test_verify_compact_and_legacy_agree():
+    """Both formats should produce the same validation result for puzzle 1."""
+    ok_legacy, _ = verify_solution(1, VALID_SOLUTION_P1)
+    ok_compact, _ = verify_solution(1, VALID_COMPACT_P1)
+    assert ok_legacy == ok_compact == True
+
+
+def test_verify_solution_rejects_invalid_lengths():
+    for length in [0, 5, 7, 9, 27, 50, 127, 129]:
+        ok, err = verify_solution(1, "!" * length)
+        assert ok is False
+        assert "8 or 128" in err
+
+
+# ---------------------------------------------------------------------------
+# Compact solution via POST /octile/score
+# ---------------------------------------------------------------------------
+
+
+def test_submit_compact_solution(client):
+    resp = client.post(
+        "/octile/score",
+        json=_make_score(uuid="uuid-compact", solution=VALID_COMPACT_P1),
+    )
+    assert resp.status_code == 201
+
+
+def test_submit_compact_solution_stored(client):
+    resp = client.post(
+        "/octile/score",
+        json=_make_score(uuid="uuid-compact-store", solution=VALID_COMPACT_P1),
+    )
+    assert resp.status_code == 201
+    session = octile_api.get_session()
+    try:
+        score = (
+            session.query(OctileScore)
+            .filter(OctileScore.browser_uuid == "uuid-compact-store")
+            .first()
+        )
+        assert score.solution == VALID_COMPACT_P1
+    finally:
+        session.close()
+
+
+def test_submit_compact_solution_wrong_puzzle(client):
+    resp = client.post(
+        "/octile/score",
+        json=_make_score(puzzle=2, uuid="uuid-compact-bad", solution=VALID_COMPACT_P1),
+    )
+    assert resp.status_code == 400
+    assert "invalid solution" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/puzzle/{number}
+# ---------------------------------------------------------------------------
+
+
+def test_get_puzzle_valid(client):
+    resp = client.get("/octile/puzzle/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["puzzle_number"] == 1
+    assert data["base_puzzle"] == 1
+    assert data["transform"] == 0
+    assert len(data["cells"]) == 6
+    assert all(0 <= c <= 63 for c in data["cells"])
+
+
+def test_get_puzzle_transformed(client):
+    resp = client.get(f"/octile/puzzle/{PUZZLE_COUNT + 1}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["puzzle_number"] == PUZZLE_COUNT + 1
+    assert data["base_puzzle"] == 1
+    assert data["transform"] == 1
+
+
+def test_get_puzzle_last(client):
+    resp = client.get(f"/octile/puzzle/{TOTAL_PUZZLE_COUNT}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["puzzle_number"] == TOTAL_PUZZLE_COUNT
+    assert data["transform"] == 7
+
+
+def test_get_puzzle_invalid_zero(client):
+    resp = client.get("/octile/puzzle/0")
+    assert resp.status_code == 400
+
+
+def test_get_puzzle_invalid_too_high(client):
+    resp = client.get(f"/octile/puzzle/{TOTAL_PUZZLE_COUNT + 1}")
+    assert resp.status_code == 400
+
+
+def test_get_puzzle_cells_match_decode(client):
+    """API response cells should match decode_puzzle_extended."""
+    for pnum in [1, 42, PUZZLE_COUNT, PUZZLE_COUNT + 1, TOTAL_PUZZLE_COUNT]:
+        resp = client.get(f"/octile/puzzle/{pnum}")
+        assert resp.status_code == 200
+        assert resp.json()["cells"] == decode_puzzle_extended(pnum)
