@@ -116,26 +116,31 @@ def _get_puzzle_data() -> str:
 
 
 # Difficulty levels: 1=easy, 2=medium, 3=hard, 4=hell
-_DIFFICULTY_LEVELS: list[int] | None = None
+_DIFFICULTY_DATA: dict | None = None
 DIFFICULTY_LABELS = {1: "easy", 2: "medium", 3: "hard", 4: "hell"}
 
 
-def _get_difficulty_levels() -> list[int]:
-    global _DIFFICULTY_LEVELS
-    if _DIFFICULTY_LEVELS is None:
+def _get_difficulty_data() -> dict:
+    global _DIFFICULTY_DATA
+    if _DIFFICULTY_DATA is None:
         import json
 
         path = os.path.join(os.path.dirname(__file__), "difficulty_levels.json")
         with open(path) as f:
-            _DIFFICULTY_LEVELS = json.load(f)["levels"]
-    return _DIFFICULTY_LEVELS
+            _DIFFICULTY_DATA = json.load(f)
+    return _DIFFICULTY_DATA
 
 
 def get_puzzle_difficulty(puzzle_number: int) -> int:
     """Get difficulty level (1-4) for a 1-based puzzle number."""
     base, _ = _decompose_puzzle_number(puzzle_number)
-    levels = _get_difficulty_levels()
-    return levels[base]
+    return _get_difficulty_data()["levels"][base]
+
+
+def get_puzzle_attempts(puzzle_number: int) -> int:
+    """Get solver attempt count for a 1-based puzzle number."""
+    base, _ = _decompose_puzzle_number(puzzle_number)
+    return _get_difficulty_data()["attempts"][base]
 
 
 # Piece definitions: short_id -> (cell_count, valid_orientations as (rows, cols))

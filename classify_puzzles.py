@@ -239,6 +239,8 @@ def main():
         },
         # levels[i] = 1-4 for puzzle index i (0-based)
         "levels": [levels[i] for i in range(total)],
+        # attempts[i] = solver backtrack count for puzzle index i (0-based)
+        "attempts": [attempts_map[i] for i in range(total)],
     }
 
     with open("difficulty_levels.json", "w") as f:
