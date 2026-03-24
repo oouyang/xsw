@@ -19,6 +19,9 @@ from octile_api import (
     decode_puzzle,
     decode_puzzle_extended,
     verify_solution,
+    get_puzzle_difficulty,
+    get_level_total,
+    level_slot_to_puzzle,
     PUZZLE_COUNT,
     TOTAL_PUZZLE_COUNT,
 )
@@ -1190,3 +1193,187 @@ def test_get_puzzle_cells_match_decode(client):
         resp = client.get(f"/octile/puzzle/{pnum}")
         assert resp.status_code == 200
         assert resp.json()["cells"] == decode_puzzle_extended(pnum)
+
+
+def test_get_puzzle_includes_difficulty(client):
+    resp = client.get("/octile/puzzle/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "difficulty" in data
+    assert data["difficulty"] in (1, 2, 3, 4)
+    assert data["difficulty_label"] in ("easy", "medium", "hard", "hell")
+
+
+# ---------------------------------------------------------------------------
+# Difficulty classification unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_puzzle_difficulty_range():
+    for pnum in [1, 100, PUZZLE_COUNT, PUZZLE_COUNT + 1, TOTAL_PUZZLE_COUNT]:
+        level = get_puzzle_difficulty(pnum)
+        assert level in (1, 2, 3, 4)
+
+
+def test_difficulty_same_for_all_transforms():
+    """All 8 transforms of the same base puzzle have the same difficulty."""
+    for base in [0, 42, 500, PUZZLE_COUNT - 1]:
+        levels = set()
+        for t in range(8):
+            pnum = t * PUZZLE_COUNT + base + 1
+            levels.add(get_puzzle_difficulty(pnum))
+        assert len(levels) == 1, f"base {base}: got different levels {levels}"
+
+
+def test_get_level_total_positive():
+    for level_num in (1, 2, 3, 4):
+        total = get_level_total(level_num)
+        assert total > 0
+        assert total % 8 == 0  # must be multiple of 8 (base × 8 transforms)
+
+
+def test_get_level_total_sum():
+    """All levels should sum to total puzzle count."""
+    total = sum(get_level_total(n) for n in (1, 2, 3, 4))
+    assert total == TOTAL_PUZZLE_COUNT
+
+
+def test_level_slot_to_puzzle_first():
+    result = level_slot_to_puzzle(1, 1)
+    assert result is not None
+    pnum, base_idx = result
+    assert 1 <= pnum <= TOTAL_PUZZLE_COUNT
+    assert get_puzzle_difficulty(pnum) == 1  # should be easy
+
+
+def test_level_slot_to_puzzle_last():
+    total = get_level_total(1)
+    result = level_slot_to_puzzle(1, total)
+    assert result is not None
+    pnum, _ = result
+    assert get_puzzle_difficulty(pnum) == 1
+
+
+def test_level_slot_to_puzzle_out_of_range():
+    assert level_slot_to_puzzle(1, 0) is None
+    total = get_level_total(1)
+    assert level_slot_to_puzzle(1, total + 1) is None
+
+
+def test_level_slot_to_puzzle_invalid_level():
+    assert level_slot_to_puzzle(5, 1) is None
+    assert level_slot_to_puzzle(0, 1) is None
+
+
+def test_level_slot_transforms_cycle():
+    """Slots 1-8 should be 8 transforms of the same base puzzle."""
+    results = [level_slot_to_puzzle(1, s) for s in range(1, 9)]
+    assert all(r is not None for r in results)
+    base_indices = {r[1] for r in results}
+    assert len(base_indices) == 1  # all same base
+    pnums = [r[0] for r in results]
+    assert len(set(pnums)) == 8  # all different puzzle numbers
+
+
+def test_level_slot_ordering():
+    """Earlier slots should have easier puzzles (fewer attempts) within level."""
+    from octile_api import get_puzzle_attempts
+
+    # Compare slot 1 vs last slot of easy
+    first = level_slot_to_puzzle(1, 1)
+    total = get_level_total(1)
+    last = level_slot_to_puzzle(1, total)
+    assert first is not None and last is not None
+    assert get_puzzle_attempts(first[0]) <= get_puzzle_attempts(last[0])
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/levels
+# ---------------------------------------------------------------------------
+
+
+def test_get_levels(client):
+    resp = client.get("/octile/levels")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "easy" in data
+    assert "medium" in data
+    assert "hard" in data
+    assert "hell" in data
+    assert all(v > 0 for v in data.values())
+    assert sum(data.values()) == TOTAL_PUZZLE_COUNT
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/level/{name}/puzzle/{slot}
+# ---------------------------------------------------------------------------
+
+
+def test_get_level_puzzle_easy_first(client):
+    resp = client.get("/octile/level/easy/puzzle/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["level"] == "easy"
+    assert data["slot"] == 1
+    assert data["total"] > 0
+    assert len(data["cells"]) == 6
+    assert all(0 <= c <= 63 for c in data["cells"])
+    assert 1 <= data["puzzle_number"] <= TOTAL_PUZZLE_COUNT
+
+
+def test_get_level_puzzle_hell_first(client):
+    resp = client.get("/octile/level/hell/puzzle/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["level"] == "hell"
+    assert data["slot"] == 1
+
+
+def test_get_level_puzzle_last_slot(client):
+    levels_resp = client.get("/octile/levels")
+    easy_total = levels_resp.json()["easy"]
+    resp = client.get(f"/octile/level/easy/puzzle/{easy_total}")
+    assert resp.status_code == 200
+    assert resp.json()["slot"] == easy_total
+
+
+def test_get_level_puzzle_invalid_level(client):
+    resp = client.get("/octile/level/insane/puzzle/1")
+    assert resp.status_code == 400
+
+
+def test_get_level_puzzle_slot_zero(client):
+    resp = client.get("/octile/level/easy/puzzle/0")
+    assert resp.status_code == 400
+
+
+def test_get_level_puzzle_slot_too_high(client):
+    levels_resp = client.get("/octile/levels")
+    easy_total = levels_resp.json()["easy"]
+    resp = client.get(f"/octile/level/easy/puzzle/{easy_total + 1}")
+    assert resp.status_code == 400
+
+
+def test_get_level_puzzle_cells_valid(client):
+    """Cells from level endpoint should match decode_puzzle_extended."""
+    resp = client.get("/octile/level/medium/puzzle/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    expected_cells = decode_puzzle_extended(data["puzzle_number"])
+    assert data["cells"] == expected_cells
+
+
+def test_get_level_puzzle_sequential_order(client):
+    """First puzzle in each level should be easier than last."""
+    from octile_api import get_puzzle_attempts
+
+    for level_name in ("easy", "medium", "hard", "hell"):
+        resp1 = client.get(f"/octile/level/{level_name}/puzzle/1")
+        levels_resp = client.get("/octile/levels")
+        total = levels_resp.json()[level_name]
+        resp_last = client.get(f"/octile/level/{level_name}/puzzle/{total}")
+        assert resp1.status_code == 200
+        assert resp_last.status_code == 200
+        att_first = get_puzzle_attempts(resp1.json()["puzzle_number"])
+        att_last = get_puzzle_attempts(resp_last.json()["puzzle_number"])
+        assert att_first <= att_last, f"{level_name}: first {att_first} > last {att_last}"
