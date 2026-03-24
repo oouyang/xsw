@@ -115,6 +115,29 @@ def _get_puzzle_data() -> str:
     return _PUZZLE_DATA
 
 
+# Difficulty levels: 1=easy, 2=medium, 3=hard, 4=hell
+_DIFFICULTY_LEVELS: list[int] | None = None
+DIFFICULTY_LABELS = {1: "easy", 2: "medium", 3: "hard", 4: "hell"}
+
+
+def _get_difficulty_levels() -> list[int]:
+    global _DIFFICULTY_LEVELS
+    if _DIFFICULTY_LEVELS is None:
+        import json
+
+        path = os.path.join(os.path.dirname(__file__), "difficulty_levels.json")
+        with open(path) as f:
+            _DIFFICULTY_LEVELS = json.load(f)["levels"]
+    return _DIFFICULTY_LEVELS
+
+
+def get_puzzle_difficulty(puzzle_number: int) -> int:
+    """Get difficulty level (1-4) for a 1-based puzzle number."""
+    base, _ = _decompose_puzzle_number(puzzle_number)
+    levels = _get_difficulty_levels()
+    return levels[base]
+
+
 # Piece definitions: short_id -> (cell_count, valid_orientations as (rows, cols))
 PIECE_DEFS: dict[str, tuple[int, list[tuple[int, int]]]] = {
     "g1": (1, [(1, 1)]),
@@ -874,9 +897,12 @@ def get_puzzle(number: int):
         )
     base, transform = _decompose_puzzle_number(number)
     cells = decode_puzzle_extended(number)
+    level = get_puzzle_difficulty(number)
     return {
         "puzzle_number": number,
-        "base_puzzle": base + 1,  # 1-based for display
+        "base_puzzle": base + 1,
         "transform": transform,
         "cells": cells,
+        "difficulty": level,
+        "difficulty_label": DIFFICULTY_LABELS[level],
     }
