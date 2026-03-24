@@ -143,6 +143,64 @@ def get_puzzle_attempts(puzzle_number: int) -> int:
     return _get_difficulty_data()["attempts"][base]
 
 
+# Sorted base puzzle indices per level (sorted by ascending attempts)
+_LEVEL_BASES: dict[int, list[int]] | None = None
+
+
+def _get_level_bases() -> dict[int, list[int]]:
+    """Return {level: [base_indices sorted by attempts ascending]}."""
+    global _LEVEL_BASES
+    if _LEVEL_BASES is not None:
+        return _LEVEL_BASES
+
+    data = _get_difficulty_data()
+    levels_list = data["levels"]
+    attempts_list = data["attempts"]
+
+    by_level: dict[int, list[tuple[int, int]]] = {1: [], 2: [], 3: [], 4: []}
+    for base_idx, (level, att) in enumerate(zip(levels_list, attempts_list)):
+        by_level[level].append((att, base_idx))
+
+    _LEVEL_BASES = {}
+    for level, items in by_level.items():
+        items.sort()  # sort by attempts ascending
+        _LEVEL_BASES[level] = [base_idx for _, base_idx in items]
+
+    return _LEVEL_BASES
+
+
+def level_slot_to_puzzle(level: int, slot: int) -> tuple[int, int] | None:
+    """Map (level 1-4, slot 1-based) to (puzzle_number, base_index).
+
+    Within a level, each base puzzle expands to 8 transforms:
+      slot 1-8   → easiest base, transforms 0-7
+      slot 9-16  → 2nd easiest base, transforms 0-7
+      ...
+
+    Returns (puzzle_number_1based, base_0index) or None if slot out of range.
+    """
+    bases = _get_level_bases().get(level)
+    if bases is None:
+        return None
+
+    total = len(bases) * 8
+    if slot < 1 or slot > total:
+        return None
+
+    slot_0 = slot - 1
+    base_pos = slot_0 // 8
+    transform = slot_0 % 8
+    base_idx = bases[base_pos]
+    puzzle_number = transform * PUZZLE_COUNT + base_idx + 1
+    return puzzle_number, base_idx
+
+
+def get_level_total(level: int) -> int:
+    """Total puzzles in a level (bases × 8 transforms)."""
+    bases = _get_level_bases().get(level)
+    return len(bases) * 8 if bases else 0
+
+
 # Piece definitions: short_id -> (cell_count, valid_orientations as (rows, cols))
 PIECE_DEFS: dict[str, tuple[int, list[tuple[int, int]]]] = {
     "g1": (1, [(1, 1)]),
@@ -910,4 +968,49 @@ def get_puzzle(number: int):
         "cells": cells,
         "difficulty": level,
         "difficulty_label": DIFFICULTY_LABELS[level],
+    }
+
+
+@octile_router.get("/levels")
+def get_levels():
+    """Return puzzle counts per difficulty level."""
+    return {
+        level_name: get_level_total(level_num)
+        for level_num, level_name in DIFFICULTY_LABELS.items()
+    }
+
+
+@octile_router.get("/level/{level}/puzzle/{slot}")
+def get_level_puzzle(level: str, slot: int):
+    """Get puzzle by difficulty level and slot (1-based, sequential by difficulty).
+
+    Level: easy, medium, hard, hell
+    Slot: 1 to level_total (8 transforms per base, ordered easiest first)
+    """
+    level_num = next((k for k, v in DIFFICULTY_LABELS.items() if v == level), None)
+    if level_num is None:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "level must be easy, medium, hard, or hell"},
+        )
+
+    total = get_level_total(level_num)
+    if slot < 1 or slot > total:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"slot must be 1–{total}"},
+        )
+
+    result = level_slot_to_puzzle(level_num, slot)
+    if result is None:
+        return JSONResponse(status_code=400, content={"detail": "invalid slot"})
+
+    puzzle_number, base_idx = result
+    cells = decode_puzzle_extended(puzzle_number)
+    return {
+        "puzzle_number": puzzle_number,
+        "level": level,
+        "slot": slot,
+        "total": total,
+        "cells": cells,
     }
