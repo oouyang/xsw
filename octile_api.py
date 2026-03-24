@@ -172,9 +172,12 @@ def _get_level_bases() -> dict[int, list[int]]:
 def level_slot_to_puzzle(level: int, slot: int) -> tuple[int, int] | None:
     """Map (level 1-4, slot 1-based) to (puzzle_number, base_index).
 
-    Within a level, each base puzzle expands to 8 transforms:
-      slot 1-8   → easiest base, transforms 0-7
-      slot 9-16  → 2nd easiest base, transforms 0-7
+    Interleaved ordering — consecutive slots use different base puzzles:
+      slot 1:   base1_transform0
+      slot 2:   base2_transform0
+      ...
+      slot N:   baseN_transform0
+      slot N+1: base1_transform1
       ...
 
     Returns (puzzle_number_1based, base_0index) or None if slot out of range.
@@ -183,13 +186,14 @@ def level_slot_to_puzzle(level: int, slot: int) -> tuple[int, int] | None:
     if bases is None:
         return None
 
-    total = len(bases) * 8
+    num_bases = len(bases)
+    total = num_bases * 8
     if slot < 1 or slot > total:
         return None
 
     slot_0 = slot - 1
-    base_pos = slot_0 // 8
-    transform = slot_0 % 8
+    base_pos = slot_0 % num_bases
+    transform = slot_0 // num_bases
     base_idx = bases[base_pos]
     puzzle_number = transform * PUZZLE_COUNT + base_idx + 1
     return puzzle_number, base_idx

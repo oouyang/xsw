@@ -1265,12 +1265,12 @@ def test_level_slot_to_puzzle_invalid_level():
     assert level_slot_to_puzzle(0, 1) is None
 
 
-def test_level_slot_transforms_cycle():
-    """Slots 1-8 should be 8 transforms of the same base puzzle."""
+def test_level_slot_interleaved():
+    """Consecutive slots should use different base puzzles (interleaved ordering)."""
     results = [level_slot_to_puzzle(1, s) for s in range(1, 9)]
     assert all(r is not None for r in results)
-    base_indices = {r[1] for r in results}
-    assert len(base_indices) == 1  # all same base
+    base_indices = [r[1] for r in results]
+    assert len(set(base_indices)) == 8  # all different bases
     pnums = [r[0] for r in results]
     assert len(set(pnums)) == 8  # all different puzzle numbers
 
