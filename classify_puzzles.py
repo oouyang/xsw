@@ -182,7 +182,7 @@ def main():
 
     # Analyze distribution
     all_attempts = sorted(attempts_map.values())
-    print(f"\nAttempt distribution:")
+    print("\nAttempt distribution:")
     print(f"  Min: {all_attempts[0]}")
     print(f"  25th percentile: {all_attempts[len(all_attempts) // 4]}")
     print(f"  Median: {all_attempts[len(all_attempts) // 2]}")
@@ -210,7 +210,7 @@ def main():
         levels[idx] = level
         level_counts[level - 1] += 1
 
-    print(f"\nLevel distribution:")
+    print("\nLevel distribution:")
     print(f"  Easy (1):   {level_counts[0]} ({level_counts[0]*100/total:.1f}%)")
     print(f"  Medium (2): {level_counts[1]} ({level_counts[1]*100/total:.1f}%)")
     print(f"  Hard (3):   {level_counts[2]} ({level_counts[2]*100/total:.1f}%)")
@@ -245,7 +245,7 @@ def main():
 
     with open("difficulty_levels.json", "w") as f:
         json.dump(output, f)
-    print(f"\nSaved to difficulty_levels.json")
+    print("\nSaved to difficulty_levels.json")
 
 
 if __name__ == "__main__":
