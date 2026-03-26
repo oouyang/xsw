@@ -115,9 +115,30 @@ def _get_puzzle_data() -> str:
     return _PUZZLE_DATA
 
 
-# Difficulty levels: 1=easy, 2=medium, 3=hard, 4=hell
+# Difficulty levels: 1=easy, 2=medium, 3=hard, 4=hell (nightmare in UI)
 _DIFFICULTY_DATA: dict | None = None
 DIFFICULTY_LABELS = {1: "easy", 2: "medium", 3: "hard", 4: "hell"}
+
+# Coin rewards per difficulty level (base coins before speed multiplier)
+LEVEL_COIN_BASE = {1: 10, 2: 20, 3: 40, 4: 80}
+
+
+def calc_puzzle_coins(difficulty: int, resolve_time: float) -> int:
+    """Calculate coins earned for a puzzle solve (server-authoritative).
+
+    Base coins: easy=10, medium=20, hard=40, nightmare=80
+    Speed multiplier: <=15s → ×3, <=30s → ×2, <=60s → ×1.5, >60s → ×1
+    """
+    base = LEVEL_COIN_BASE.get(difficulty, 10)
+    if resolve_time <= 15:
+        mult = 3.0
+    elif resolve_time <= 30:
+        mult = 2.0
+    elif resolve_time <= 60:
+        mult = 1.5
+    else:
+        mult = 1.0
+    return round(base * mult)
 
 
 def _get_difficulty_data() -> dict:
@@ -522,6 +543,9 @@ class OctileScore(OctileBase):
     solution = Column(String, nullable=True)  # 27-char compact or 128-char legacy
     flagged = Column(Integer, default=0)  # 0=normal, 1=flagged for review
 
+    # Server-calculated coins (authoritative, not client-provided)
+    coins = Column(Integer, default=0)
+
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
@@ -582,6 +606,7 @@ def _migrate_db():
     migrations = [
         "ALTER TABLE octile_scores ADD COLUMN solution TEXT",
         "ALTER TABLE octile_scores ADD COLUMN flagged INTEGER DEFAULT 0",
+        "ALTER TABLE octile_scores ADD COLUMN coins INTEGER DEFAULT 0",
     ]
     with _engine.connect() as conn:
         for sql in migrations:
@@ -590,6 +615,55 @@ def _migrate_db():
             except Exception:
                 pass  # Column already exists
         conn.commit()
+
+    # Backfill coins for existing scores (idempotent — only updates rows with 0)
+    _backfill_coins()
+
+
+def _backfill_coins():
+    """Calculate coins for historical scores that have coins=0.
+
+    Runs once at startup. Safe to re-run — only touches rows where coins=0.
+    Uses batch processing to avoid loading all rows into memory.
+    """
+    session = _SessionLocal()
+    try:
+        count = session.query(func.count(OctileScore.id)).filter(
+            OctileScore.coins == 0
+        ).scalar()
+        if count == 0:
+            return
+
+        print(f"[Octile] Backfilling coins for {count} historical scores...")
+        batch_size = 500
+        updated = 0
+        while True:
+            rows = (
+                session.query(OctileScore)
+                .filter(OctileScore.coins == 0)
+                .limit(batch_size)
+                .all()
+            )
+            if not rows:
+                break
+            for score in rows:
+                try:
+                    difficulty = get_puzzle_difficulty(score.puzzle_number)
+                    coins = calc_puzzle_coins(difficulty, score.resolve_time)
+                    if score.flagged:
+                        coins = 0
+                    score.coins = coins
+                except Exception:
+                    score.coins = 0  # fallback for invalid puzzle numbers
+            session.commit()
+            updated += len(rows)
+
+        print(f"[Octile] Backfill complete: {updated} scores updated with coins")
+    except Exception as e:
+        session.rollback()
+        print(f"[Octile] Backfill failed: {e}")
+    finally:
+        session.close()
 
 
 def get_session() -> Session:
@@ -623,6 +697,7 @@ class ScoreResponse(BaseModel):
     created_at: str
     timestamp_utc: str = ""  # legacy alias for created_at (old clients read this)
     flagged: int = 0
+    coins: int = 0
 
 
 class ScoreboardResponse(BaseModel):
@@ -651,6 +726,7 @@ def _score_to_response(score: OctileScore) -> ScoreResponse:
         created_at=created,
         timestamp_utc=created,  # legacy alias so old clients can sort by this
         flagged=score.flagged or 0,
+        coins=score.coins or 0,
     )
 
 
@@ -841,6 +917,12 @@ async def submit_score(request: Request):
             except (ValueError, TypeError):
                 pass
 
+        # Server-authoritative coin calculation
+        difficulty = get_puzzle_difficulty(body.puzzle_number)
+        coins = calc_puzzle_coins(difficulty, body.resolve_time)
+        if flagged:
+            coins = 0  # flagged submissions earn no coins
+
         score = OctileScore(
             puzzle_number=body.puzzle_number,
             resolve_time=body.resolve_time,
@@ -850,6 +932,7 @@ async def submit_score(request: Request):
             browser=body.browser,
             solution=body.solution,
             flagged=flagged,
+            coins=coins,
             **client_info,
         )
         session.add(score)
@@ -918,6 +1001,45 @@ def get_scoreboard(
             total=total,
             scores=[_score_to_response(s) for s in scores],
         )
+    finally:
+        session.close()
+
+
+@octile_router.get("/leaderboard")
+def get_leaderboard(limit: int = 50):
+    """Coins-based leaderboard. Returns players ranked by total server-verified coins.
+
+    Only counts non-flagged scores. This is the authoritative ranking
+    since coins are calculated server-side from difficulty + solve time.
+    """
+    limit = min(max(limit, 1), 200)
+    session = get_session()
+    try:
+        rows = (
+            session.query(
+                OctileScore.browser_uuid,
+                func.sum(OctileScore.coins).label("total_coins"),
+                func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles"),
+                func.avg(OctileScore.resolve_time).label("avg_time"),
+            )
+            .filter(OctileScore.flagged == 0)
+            .group_by(OctileScore.browser_uuid)
+            .order_by(func.sum(OctileScore.coins).desc())
+            .limit(limit)
+            .all()
+        )
+        return {
+            "total_players": len(rows),
+            "leaderboard": [
+                {
+                    "browser_uuid": r.browser_uuid,
+                    "total_coins": r.total_coins or 0,
+                    "puzzles": r.puzzles,
+                    "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                }
+                for r in rows
+            ],
+        }
     finally:
         session.close()
 

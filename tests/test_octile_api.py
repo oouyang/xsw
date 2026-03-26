@@ -1377,3 +1377,66 @@ def test_get_level_puzzle_sequential_order(client):
         att_first = get_puzzle_attempts(resp1.json()["puzzle_number"])
         att_last = get_puzzle_attempts(resp_last.json()["puzzle_number"])
         assert att_first <= att_last, f"{level_name}: first {att_first} > last {att_last}"
+
+
+# ---------------------------------------------------------------------------
+# Coins system tests
+# ---------------------------------------------------------------------------
+
+def test_calc_puzzle_coins_easy_slow():
+    from octile_api import calc_puzzle_coins
+    assert calc_puzzle_coins(1, 120) == 10  # easy, >60s → base ×1
+
+def test_calc_puzzle_coins_easy_fast():
+    from octile_api import calc_puzzle_coins
+    assert calc_puzzle_coins(1, 15) == 30  # easy, ≤15s → base ×3
+
+def test_calc_puzzle_coins_nightmare_medium_speed():
+    from octile_api import calc_puzzle_coins
+    assert calc_puzzle_coins(4, 45) == 120  # nightmare base=80, ≤60s → ×1.5
+
+def test_calc_puzzle_coins_speed_tiers():
+    from octile_api import calc_puzzle_coins
+    assert calc_puzzle_coins(2, 10) == 60   # medium ×3
+    assert calc_puzzle_coins(2, 25) == 40   # medium ×2
+    assert calc_puzzle_coins(2, 50) == 30   # medium ×1.5
+    assert calc_puzzle_coins(2, 90) == 20   # medium ×1
+
+def test_submit_score_returns_coins(client):
+    resp = client.post("/octile/score", json={
+        "puzzle_number": 1,
+        "resolve_time": 30.0,
+        "browser_uuid": "coins-test-uuid",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert "coins" in data
+    assert data["coins"] > 0  # easy puzzle, 30s → base 10 × 2 = 20
+
+def test_leaderboard_empty(client):
+    resp = client.get("/octile/leaderboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_players"] == 0
+    assert data["leaderboard"] == []
+
+def test_leaderboard_ranks_by_coins(client):
+    # Submit scores for two players
+    client.post("/octile/score", json={
+        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": "player-a",
+    })
+    import time; time.sleep(0.1)
+    # Player B solves a harder puzzle (nightmare)
+    # Use puzzle 45513 which is transform 4 of base 0 (still easy though)
+    # Let's just use different puzzle numbers
+    client.post("/octile/score", json={
+        "puzzle_number": 2, "resolve_time": 15.0, "browser_uuid": "player-b",
+    })
+    resp = client.get("/octile/leaderboard?limit=10")
+    assert resp.status_code == 200
+    data = resp.json()
+    board = data["leaderboard"]
+    assert len(board) >= 2
+    # Verify sorted by total_coins descending
+    for i in range(len(board) - 1):
+        assert board[i]["total_coins"] >= board[i + 1]["total_coins"]
