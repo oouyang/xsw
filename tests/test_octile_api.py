@@ -1458,3 +1458,170 @@ def test_leaderboard_ranks_by_exp(client):
     # Legacy total_coins field still present
     assert "total_coins" in board[0]
     assert "total_diamonds" in board[0]
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_auth_register(client):
+    resp = client.post("/octile/auth/register", json={
+        "email": "test@example.com",
+        "password": "secret123",
+        "display_name": "Tester",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+
+def test_auth_register_short_password(client):
+    resp = client.post("/octile/auth/register", json={
+        "email": "bad@example.com",
+        "password": "short",
+        "display_name": "Tester",
+    })
+    assert resp.status_code == 400
+
+
+def test_auth_register_invalid_email(client):
+    resp = client.post("/octile/auth/register", json={
+        "email": "not-an-email",
+        "password": "secret123",
+        "display_name": "Tester",
+    })
+    assert resp.status_code == 400
+
+
+def test_auth_verify_and_login(client):
+    """Full flow: register → read OTP from DB → verify → login."""
+    email = "flow@example.com"
+    # Register
+    resp = client.post("/octile/auth/register", json={
+        "email": email,
+        "password": "mypassword",
+        "display_name": "Flow Tester",
+        "browser_uuid": "uuid-flow",
+    })
+    assert resp.status_code == 200
+
+    # Read OTP directly from DB
+    from octile_api import get_session, OctileUser
+    session = get_session()
+    user = session.query(OctileUser).filter(OctileUser.email == email).first()
+    otp = user.otp_code
+    session.close()
+    assert otp is not None
+
+    # Verify with correct OTP
+    resp = client.post("/octile/auth/verify", json={"email": email, "otp_code": otp})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "access_token" in data
+    assert data["user"]["display_name"] == "Flow Tester"
+    assert data["user"]["email"] == email
+    token = data["access_token"]
+
+    # Login with password
+    resp = client.post("/octile/auth/login", json={"email": email, "password": "mypassword"})
+    assert resp.status_code == 200
+    assert "access_token" in resp.json()
+
+    # Login with wrong password
+    resp = client.post("/octile/auth/login", json={"email": email, "password": "wrong"})
+    assert resp.status_code == 401
+
+    # GET /auth/me with token
+    resp = client.get("/octile/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.json()["email"] == email
+
+    # GET /auth/me without token
+    resp = client.get("/octile/auth/me")
+    assert resp.status_code == 401
+
+
+def test_auth_verify_wrong_otp(client):
+    email = "wrong-otp@example.com"
+    client.post("/octile/auth/register", json={
+        "email": email, "password": "secret123", "display_name": "Bad OTP",
+    })
+    resp = client.post("/octile/auth/verify", json={"email": email, "otp_code": "000000"})
+    assert resp.status_code == 400
+
+
+def test_auth_verify_nonexistent(client):
+    resp = client.post("/octile/auth/verify", json={"email": "nope@example.com", "otp_code": "123456"})
+    assert resp.status_code == 404
+
+
+def test_auth_duplicate_register(client):
+    """Registering same email twice before verify should update OTP."""
+    email = "dup@example.com"
+    client.post("/octile/auth/register", json={
+        "email": email, "password": "password1", "display_name": "First",
+    })
+    # Re-register should succeed (updates pending account)
+    resp = client.post("/octile/auth/register", json={
+        "email": email, "password": "password2", "display_name": "Second",
+    })
+    assert resp.status_code == 200
+
+    # Verify, then try to register again — should get 409
+    from octile_api import get_session, OctileUser
+    session = get_session()
+    user = session.query(OctileUser).filter(OctileUser.email == email).first()
+    otp = user.otp_code
+    session.close()
+
+    client.post("/octile/auth/verify", json={"email": email, "otp_code": otp})
+    resp = client.post("/octile/auth/register", json={
+        "email": email, "password": "password3", "display_name": "Third",
+    })
+    assert resp.status_code == 409
+
+
+def test_auth_forgot_and_reset_password(client):
+    """Register → verify → forgot password → reset with OTP."""
+    email = "reset@example.com"
+    # Register + verify
+    client.post("/octile/auth/register", json={
+        "email": email, "password": "oldpass", "display_name": "Resetter",
+    })
+    from octile_api import get_session, OctileUser
+    session = get_session()
+    user = session.query(OctileUser).filter(OctileUser.email == email).first()
+    otp = user.otp_code
+    session.close()
+    client.post("/octile/auth/verify", json={"email": email, "otp_code": otp})
+
+    # Forgot password
+    resp = client.post("/octile/auth/forgot-password", json={"email": email})
+    assert resp.status_code == 200
+
+    # Read new OTP
+    session = get_session()
+    user = session.query(OctileUser).filter(OctileUser.email == email).first()
+    reset_otp = user.otp_code
+    session.close()
+    assert reset_otp is not None
+
+    # Reset with new password
+    resp = client.post("/octile/auth/reset-password", json={
+        "email": email, "otp_code": reset_otp, "new_password": "newpass123",
+    })
+    assert resp.status_code == 200
+
+    # Login with new password
+    resp = client.post("/octile/auth/login", json={"email": email, "password": "newpass123"})
+    assert resp.status_code == 200
+
+    # Old password no longer works
+    resp = client.post("/octile/auth/login", json={"email": email, "password": "oldpass"})
+    assert resp.status_code == 401
+
+
+def test_auth_forgot_nonexistent_email(client):
+    """Forgot password for non-existent email should not reveal existence."""
+    resp = client.post("/octile/auth/forgot-password", json={"email": "nobody@example.com"})
+    assert resp.status_code == 200  # Always 200, don't leak info

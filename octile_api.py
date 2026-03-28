@@ -70,13 +70,18 @@ Still accepted for backward compatibility.
 import hashlib
 import hmac
 import os
+import secrets
 import time as _time
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+import jwt
+from passlib.hash import pbkdf2_sha256 as _pw_hasher
+
 from sqlalchemy import (
     create_engine,
+    Boolean,
     Column,
     Integer,
     Float,
@@ -90,8 +95,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import text as sql_text
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -586,6 +592,110 @@ class OctileScore(OctileBase):
             f"<OctileScore(puzzle={self.puzzle_number}, "
             f"time={self.resolve_time}, uuid='{self.browser_uuid}')>"
         )
+
+
+class OctileUser(OctileBase):
+    """Octile player account for auth and progress sync."""
+
+    __tablename__ = "octile_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    display_name = Column(String, nullable=False)
+    browser_uuid = Column(String, nullable=True, index=True)
+    is_verified = Column(Boolean, default=False)
+    otp_code = Column(String, nullable=True)
+    otp_expires_at = Column(DateTime, nullable=True)
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    last_login_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<OctileUser(id={self.id}, email='{self.email}')>"
+
+
+# ---------------------------------------------------------------------------
+# Auth configuration
+# ---------------------------------------------------------------------------
+OCTILE_JWT_SECRET = os.getenv("OCTILE_JWT_SECRET", "octile-change-me-in-production")
+OCTILE_JWT_EXPIRY_DAYS = 30
+_octile_email_sender = None
+
+
+def _get_email_sender():
+    """Lazy-init email sender for Octile OTP emails."""
+    global _octile_email_sender
+    if _octile_email_sender is not None:
+        return _octile_email_sender
+    smtp_host = os.getenv("OCTILE_SMTP_HOST", os.getenv("SMTP_HOST", ""))
+    smtp_user = os.getenv("OCTILE_SMTP_USER", "")
+    if not smtp_host or not smtp_user:
+        return None
+    from email_sender import EmailSender
+    _octile_email_sender = EmailSender(
+        smtp_host=smtp_host,
+        smtp_port=int(os.getenv("OCTILE_SMTP_PORT", os.getenv("SMTP_PORT", "587"))),
+        smtp_user=smtp_user,
+        smtp_password=os.getenv("OCTILE_SMTP_PASSWORD", os.getenv("SMTP_PASSWORD", "")),
+        from_email=os.getenv("OCTILE_FROM_EMAIL", smtp_user),
+        from_name="Octile",
+    )
+    return _octile_email_sender
+
+
+def _create_octile_jwt(user_id: int, display_name: str, email: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "name": display_name,
+        "email": email,
+        "iat": now,
+        "exp": now + timedelta(days=OCTILE_JWT_EXPIRY_DAYS),
+    }
+    return jwt.encode(payload, OCTILE_JWT_SECRET, algorithm="HS256")
+
+
+def _decode_octile_jwt(token: str) -> dict:
+    return jwt.decode(token, OCTILE_JWT_SECRET, algorithms=["HS256"])
+
+
+_octile_bearer = HTTPBearer(auto_error=False)
+
+
+async def require_octile_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_octile_bearer),
+) -> dict:
+    if not credentials:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    try:
+        return _decode_octile_jwt(credentials.credentials)
+    except jwt.ExpiredSignatureError:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+    except jwt.InvalidTokenError as e:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
+
+# OTP rate limiting: track attempts per email
+_otp_attempts: dict[str, list[float]] = defaultdict(list)
+OTP_MAX_ATTEMPTS = 5
+OTP_WINDOW_SECONDS = 900  # 15 minutes
+
+
+def _check_otp_rate_limit(email: str) -> bool:
+    """Return True if rate-limited."""
+    now = _time.time()
+    attempts = _otp_attempts[email]
+    # Prune old attempts
+    _otp_attempts[email] = [t for t in attempts if now - t < OTP_WINDOW_SECONDS]
+    if len(_otp_attempts[email]) >= OTP_MAX_ATTEMPTS:
+        return True
+    _otp_attempts[email].append(now)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1189,4 +1299,217 @@ def get_level_puzzle(level: str, slot: int):
         "slot": slot,
         "total": total,
         "cells": cells,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str
+    browser_uuid: Optional[str] = None
+
+
+class VerifyRequest(BaseModel):
+    email: str
+    otp_code: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp_code: str
+    new_password: str
+
+
+def _send_otp_email(email: str, otp: str, purpose: str = "verify") -> bool:
+    sender = _get_email_sender()
+    if not sender:
+        print(f"[Octile Auth] Email not configured, OTP for {email}: {otp}")
+        return True  # Don't block registration in dev
+    subject = "Octile verification code" if purpose == "verify" else "Octile password reset"
+    body = (
+        f"<div style='font-family:sans-serif;max-width:400px;margin:0 auto;padding:20px'>"
+        f"<h2 style='color:#1a1a2e'>Octile</h2>"
+        f"<p>Your verification code is:</p>"
+        f"<div style='font-size:32px;font-weight:bold;letter-spacing:8px;"
+        f"color:#2ecc71;padding:16px;text-align:center'>{otp}</div>"
+        f"<p style='color:#888;font-size:13px'>This code expires in 10 minutes.</p>"
+        f"</div>"
+    )
+    result = sender.send_email(email, subject, body, is_html=True)
+    return result.get("status") == "success"
+
+
+@octile_router.post("/auth/register")
+def auth_register(req: RegisterRequest):
+    """Register a new account. Sends OTP to email for verification."""
+    email = req.email.strip().lower()
+    if not email or "@" not in email or len(req.password) < 6:
+        return JSONResponse(status_code=400, content={"detail": "Invalid email or password (min 6 chars)"})
+
+    if _check_otp_rate_limit(email):
+        return JSONResponse(status_code=429, content={"detail": "Too many attempts, try again later"})
+
+    session = get_session()
+    try:
+        existing = session.query(OctileUser).filter(OctileUser.email == email).first()
+        if existing and existing.is_verified:
+            return JSONResponse(status_code=409, content={"detail": "Email already registered"})
+
+        otp = f"{secrets.randbelow(1000000):06d}"
+        otp_expires = datetime.utcnow() + timedelta(minutes=10)
+        pw_hash = _pw_hasher.hash(req.password)
+
+        if existing and not existing.is_verified:
+            # Re-register: update pending account
+            existing.password_hash = pw_hash
+            existing.display_name = req.display_name.strip() or email.split("@")[0]
+            existing.browser_uuid = req.browser_uuid
+            existing.otp_code = otp
+            existing.otp_expires_at = otp_expires
+        else:
+            user = OctileUser(
+                email=email,
+                password_hash=pw_hash,
+                display_name=req.display_name.strip() or email.split("@")[0],
+                browser_uuid=req.browser_uuid,
+                otp_code=otp,
+                otp_expires_at=otp_expires,
+            )
+            session.add(user)
+
+        session.commit()
+        _send_otp_email(email, otp, purpose="verify")
+        return {"status": "pending", "message": "Verification code sent to your email"}
+    finally:
+        session.close()
+
+
+@octile_router.post("/auth/verify")
+def auth_verify(req: VerifyRequest):
+    """Verify email with OTP code. Returns JWT on success."""
+    email = req.email.strip().lower()
+    session = get_session()
+    try:
+        user = session.query(OctileUser).filter(OctileUser.email == email).first()
+        if not user:
+            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+        if user.is_verified:
+            return JSONResponse(status_code=400, content={"detail": "Already verified, please login"})
+        if not user.otp_code or user.otp_code != req.otp_code.strip():
+            return JSONResponse(status_code=400, content={"detail": "Invalid verification code"})
+        if user.otp_expires_at and user.otp_expires_at < datetime.utcnow():
+            return JSONResponse(status_code=400, content={"detail": "Code expired, please register again"})
+
+        user.is_verified = True
+        user.otp_code = None
+        user.otp_expires_at = None
+        user.last_login_at = datetime.now(timezone.utc)
+        session.commit()
+
+        token = _create_octile_jwt(user.id, user.display_name, user.email)
+        return {
+            "access_token": token,
+            "user": {"id": user.id, "display_name": user.display_name, "email": user.email},
+        }
+    finally:
+        session.close()
+
+
+@octile_router.post("/auth/login")
+def auth_login(req: LoginRequest):
+    """Login with email and password. Returns JWT."""
+    email = req.email.strip().lower()
+    session = get_session()
+    try:
+        user = session.query(OctileUser).filter(OctileUser.email == email).first()
+        if not user or not user.is_verified:
+            return JSONResponse(status_code=401, content={"detail": "Invalid email or password"})
+        if not _pw_hasher.verify(req.password, user.password_hash):
+            return JSONResponse(status_code=401, content={"detail": "Invalid email or password"})
+
+        user.last_login_at = datetime.now(timezone.utc)
+        session.commit()
+
+        token = _create_octile_jwt(user.id, user.display_name, user.email)
+        return {
+            "access_token": token,
+            "user": {"id": user.id, "display_name": user.display_name, "email": user.email},
+        }
+    finally:
+        session.close()
+
+
+@octile_router.post("/auth/forgot-password")
+def auth_forgot_password(req: ForgotPasswordRequest):
+    """Send a password reset OTP to the email."""
+    email = req.email.strip().lower()
+
+    if _check_otp_rate_limit(email):
+        return JSONResponse(status_code=429, content={"detail": "Too many attempts, try again later"})
+
+    session = get_session()
+    try:
+        user = session.query(OctileUser).filter(OctileUser.email == email).first()
+        if not user or not user.is_verified:
+            # Don't reveal whether email exists
+            return {"status": "sent", "message": "If the email is registered, a reset code was sent"}
+
+        otp = f"{secrets.randbelow(1000000):06d}"
+        user.otp_code = otp
+        user.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+        session.commit()
+
+        _send_otp_email(email, otp, purpose="reset")
+        return {"status": "sent", "message": "If the email is registered, a reset code was sent"}
+    finally:
+        session.close()
+
+
+@octile_router.post("/auth/reset-password")
+def auth_reset_password(req: ResetPasswordRequest):
+    """Reset password with OTP code."""
+    email = req.email.strip().lower()
+    if len(req.new_password) < 6:
+        return JSONResponse(status_code=400, content={"detail": "Password must be at least 6 characters"})
+
+    session = get_session()
+    try:
+        user = session.query(OctileUser).filter(OctileUser.email == email).first()
+        if not user or not user.is_verified:
+            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+        if not user.otp_code or user.otp_code != req.otp_code.strip():
+            return JSONResponse(status_code=400, content={"detail": "Invalid reset code"})
+        if user.otp_expires_at and user.otp_expires_at < datetime.utcnow():
+            return JSONResponse(status_code=400, content={"detail": "Code expired, request a new one"})
+
+        user.password_hash = _pw_hasher.hash(req.new_password)
+        user.otp_code = None
+        user.otp_expires_at = None
+        session.commit()
+
+        return {"status": "ok", "message": "Password reset successfully"}
+    finally:
+        session.close()
+
+
+@octile_router.get("/auth/me")
+def auth_me(user: dict = Depends(require_octile_auth)):
+    """Get current authenticated user info."""
+    return {
+        "id": int(user["sub"]),
+        "display_name": user["name"],
+        "email": user["email"],
     }
