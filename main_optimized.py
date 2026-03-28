@@ -385,22 +385,18 @@ def _backfill_public_ids():
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_books_public_id ON books (public_id)"
                 )
             )
-            conn.commit()
             print("[Migration] Added public_id column to books table")
 
         if "description" not in book_cols:
             conn.execute(sa_text("ALTER TABLE books ADD COLUMN description TEXT"))
-            conn.commit()
             print("[Migration] Added description column to books table")
 
         if "bookmark_count" not in book_cols:
             conn.execute(sa_text("ALTER TABLE books ADD COLUMN bookmark_count INTEGER"))
-            conn.commit()
             print("[Migration] Added bookmark_count column to books table")
 
         if "view_count" not in book_cols:
             conn.execute(sa_text("ALTER TABLE books ADD COLUMN view_count INTEGER"))
-            conn.commit()
             print("[Migration] Added view_count column to books table")
 
         ch_cols = {c["name"] for c in inspector.get_columns("chapters")}
@@ -411,7 +407,6 @@ def _backfill_public_ids():
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_chapters_public_id ON chapters (public_id)"
                 )
             )
-            conn.commit()
             print("[Migration] Added public_id column to chapters table")
 
     # Use raw SQL for fast bulk backfill — Python-level ORM is too slow for 1M+ rows
@@ -423,7 +418,6 @@ def _backfill_public_ids():
             )
         )
         if result.rowcount:
-            conn.commit()
             print(f"[Backfill] Assigned public_id to {result.rowcount} books")
 
         # Backfill chapters
@@ -433,7 +427,6 @@ def _backfill_public_ids():
             )
         )
         if result.rowcount:
-            conn.commit()
             print(f"[Backfill] Assigned public_id to {result.rowcount} chapters")
 
 

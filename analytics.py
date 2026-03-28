@@ -89,7 +89,6 @@ def init_db(db_url: str = None):
         with _engine.connect() as conn:
             conn.execute(sql_text("PRAGMA journal_mode=WAL"))
             conn.execute(sql_text("PRAGMA synchronous=NORMAL"))
-            conn.commit()
 
     print(f"[Analytics] Database initialized: {db_url}")
 

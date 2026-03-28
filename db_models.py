@@ -356,7 +356,6 @@ class DatabaseManager:
             conn.execute(sql_text("PRAGMA journal_mode=WAL"))
             conn.execute(sql_text("PRAGMA synchronous=NORMAL"))
             conn.execute(sql_text("PRAGMA cache_size=-64000"))  # 64MB cache
-            conn.commit()
             print("[DB] WAL mode enabled")
 
 

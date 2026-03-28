@@ -119,26 +119,49 @@ def _get_puzzle_data() -> str:
 _DIFFICULTY_DATA: dict | None = None
 DIFFICULTY_LABELS = {1: "easy", 2: "medium", 3: "hard", 4: "hell"}
 
-# Coin rewards per difficulty level (base coins before speed multiplier)
-LEVEL_COIN_BASE = {1: 10, 2: 20, 3: 40, 4: 80}
+# EXP rewards per difficulty level (aligned with client EXP_BASE)
+EXP_BASE = {1: 100, 2: 250, 3: 750, 4: 2000}
+# Par times per difficulty (seconds) — aligned with client PAR_TIMES
+PAR_TIMES = {1: 60, 2: 90, 3: 120, 4: 180}
 
 
-def calc_puzzle_coins(difficulty: int, resolve_time: float) -> int:
-    """Calculate coins earned for a puzzle solve (server-authoritative).
+def calc_skill_grade(difficulty: int, resolve_time: float) -> str:
+    """Calculate skill grade: S (<=par), A (<=2x par), B (normal).
 
-    Base coins: easy=10, medium=20, hard=40, nightmare=80
-    Speed multiplier: <=15s → ×3, <=30s → ×2, <=60s → ×1.5, >60s → ×1
+    Note: server cannot know hint usage, so hint-based A grade
+    is only applied client-side. Server grades purely on time.
     """
-    base = LEVEL_COIN_BASE.get(difficulty, 10)
-    if resolve_time <= 15:
-        mult = 3.0
-    elif resolve_time <= 30:
-        mult = 2.0
-    elif resolve_time <= 60:
-        mult = 1.5
-    else:
-        mult = 1.0
-    return round(base * mult)
+    par = PAR_TIMES.get(difficulty, 90)
+    if resolve_time <= par:
+        return "S"
+    if resolve_time <= par * 2:
+        return "A"
+    return "B"
+
+
+def grade_multiplier(grade: str) -> float:
+    if grade == "S":
+        return 2.0
+    if grade == "A":
+        return 1.5
+    return 1.0
+
+
+def calc_exp(difficulty: int, resolve_time: float) -> int:
+    """Calculate EXP earned for a puzzle solve (server-authoritative).
+
+    EXP_BASE: easy=100, medium=250, hard=750, nightmare=2000
+    Grade multiplier: S=×2.0, A=×1.5, B=×1.0
+    """
+    base = EXP_BASE.get(difficulty, 100)
+    grade = calc_skill_grade(difficulty, resolve_time)
+    return round(base * grade_multiplier(grade))
+
+
+# Legacy alias for backward compatibility with old backfill data
+def calc_puzzle_coins(difficulty: int, resolve_time: float) -> int:
+    """Deprecated — use calc_exp(). Kept for backfill compatibility."""
+    return calc_exp(difficulty, resolve_time)
 
 
 def _get_difficulty_data() -> dict:
@@ -543,8 +566,10 @@ class OctileScore(OctileBase):
     solution = Column(String, nullable=True)  # 27-char compact or 128-char legacy
     flagged = Column(Integer, default=0)  # 0=normal, 1=flagged for review
 
-    # Server-calculated coins (authoritative, not client-provided)
-    coins = Column(Integer, default=0)
+    # Server-calculated rewards (authoritative, not client-provided)
+    coins = Column(Integer, default=0)  # legacy, kept for backward compat
+    exp = Column(Integer, default=0)
+    diamonds = Column(Integer, default=0)
 
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
@@ -596,7 +621,6 @@ def init_db(db_url: str = None):
         with _engine.connect() as conn:
             conn.execute(sql_text("PRAGMA journal_mode=WAL"))
             conn.execute(sql_text("PRAGMA synchronous=NORMAL"))
-            conn.commit()
 
     print(f"[Octile] Database initialized: {db_url}")
 
@@ -607,6 +631,8 @@ def _migrate_db():
         "ALTER TABLE octile_scores ADD COLUMN solution TEXT",
         "ALTER TABLE octile_scores ADD COLUMN flagged INTEGER DEFAULT 0",
         "ALTER TABLE octile_scores ADD COLUMN coins INTEGER DEFAULT 0",
+        "ALTER TABLE octile_scores ADD COLUMN exp INTEGER DEFAULT 0",
+        "ALTER TABLE octile_scores ADD COLUMN diamonds INTEGER DEFAULT 0",
     ]
     with _engine.connect() as conn:
         for sql in migrations:
@@ -614,33 +640,33 @@ def _migrate_db():
                 conn.execute(sql_text(sql))
             except Exception:
                 pass  # Column already exists
-        conn.commit()
 
-    # Backfill coins for existing scores (idempotent — only updates rows with 0)
-    _backfill_coins()
+    # Backfill EXP/diamonds for existing scores (idempotent — only updates rows with 0)
+    _backfill_rewards()
 
 
-def _backfill_coins():
-    """Calculate coins for historical scores that have coins=0.
+def _backfill_rewards():
+    """Calculate EXP and diamonds for historical scores that have exp=0.
 
-    Runs once at startup. Safe to re-run — only touches rows where coins=0.
+    Runs once at startup. Safe to re-run — only touches rows where exp=0.
+    Also backfills coins=0 rows for legacy compatibility.
     Uses batch processing to avoid loading all rows into memory.
     """
     session = _SessionLocal()
     try:
         count = session.query(func.count(OctileScore.id)).filter(
-            OctileScore.coins == 0
+            OctileScore.exp == 0
         ).scalar()
         if count == 0:
             return
 
-        print(f"[Octile] Backfilling coins for {count} historical scores...")
+        print(f"[Octile] Backfilling EXP/diamonds for {count} historical scores...")
         batch_size = 500
         updated = 0
         while True:
             rows = (
                 session.query(OctileScore)
-                .filter(OctileScore.coins == 0)
+                .filter(OctileScore.exp == 0)
                 .limit(batch_size)
                 .all()
             )
@@ -649,16 +675,23 @@ def _backfill_coins():
             for score in rows:
                 try:
                     difficulty = get_puzzle_difficulty(score.puzzle_number)
-                    coins = calc_puzzle_coins(difficulty, score.resolve_time)
+                    exp = calc_exp(difficulty, score.resolve_time)
                     if score.flagged:
-                        coins = 0
-                    score.coins = coins
+                        exp = 0
+                    score.exp = exp
+                    score.diamonds = 0 if score.flagged else 1
+                    # Also backfill coins if still 0
+                    if not score.coins:
+                        score.coins = exp  # align legacy coins with EXP
                 except Exception:
-                    score.coins = 0  # fallback for invalid puzzle numbers
+                    score.exp = 0
+                    score.diamonds = 0
+                    if not score.coins:
+                        score.coins = 0
             session.commit()
             updated += len(rows)
 
-        print(f"[Octile] Backfill complete: {updated} scores updated with coins")
+        print(f"[Octile] Backfill complete: {updated} scores updated with EXP/diamonds")
     except Exception as e:
         session.rollback()
         print(f"[Octile] Backfill failed: {e}")
@@ -697,7 +730,10 @@ class ScoreResponse(BaseModel):
     created_at: str
     timestamp_utc: str = ""  # legacy alias for created_at (old clients read this)
     flagged: int = 0
-    coins: int = 0
+    coins: int = 0  # legacy, kept for backward compat
+    exp: int = 0
+    diamonds: int = 0
+    grade: str = "B"
 
 
 class ScoreboardResponse(BaseModel):
@@ -718,6 +754,11 @@ class PuzzleStats(BaseModel):
 # ---------------------------------------------------------------------------
 def _score_to_response(score: OctileScore) -> ScoreResponse:
     created = score.created_at.isoformat() if score.created_at else ""
+    try:
+        difficulty = get_puzzle_difficulty(score.puzzle_number)
+        grade = calc_skill_grade(difficulty, score.resolve_time)
+    except Exception:
+        grade = "B"
     return ScoreResponse(
         id=score.id,
         puzzle_number=score.puzzle_number,
@@ -727,6 +768,9 @@ def _score_to_response(score: OctileScore) -> ScoreResponse:
         timestamp_utc=created,  # legacy alias so old clients can sort by this
         flagged=score.flagged or 0,
         coins=score.coins or 0,
+        exp=score.exp or 0,
+        diamonds=score.diamonds or 0,
+        grade=grade,
     )
 
 
@@ -917,11 +961,13 @@ async def submit_score(request: Request):
             except (ValueError, TypeError):
                 pass
 
-        # Server-authoritative coin calculation
+        # Server-authoritative reward calculation
         difficulty = get_puzzle_difficulty(body.puzzle_number)
-        coins = calc_puzzle_coins(difficulty, body.resolve_time)
+        exp = calc_exp(difficulty, body.resolve_time)
+        diamonds = 1  # 1 diamond per puzzle solved
         if flagged:
-            coins = 0  # flagged submissions earn no coins
+            exp = 0
+            diamonds = 0
 
         score = OctileScore(
             puzzle_number=body.puzzle_number,
@@ -932,7 +978,9 @@ async def submit_score(request: Request):
             browser=body.browser,
             solution=body.solution,
             flagged=flagged,
-            coins=coins,
+            coins=exp,  # legacy coins = exp for backward compat
+            exp=exp,
+            diamonds=diamonds,
             **client_info,
         )
         session.add(score)
@@ -1007,10 +1055,10 @@ def get_scoreboard(
 
 @octile_router.get("/leaderboard")
 def get_leaderboard(limit: int = 50):
-    """Coins-based leaderboard. Returns players ranked by total server-verified coins.
+    """EXP-based leaderboard. Returns players ranked by total server-verified EXP.
 
     Only counts non-flagged scores. This is the authoritative ranking
-    since coins are calculated server-side from difficulty + solve time.
+    since EXP is calculated server-side from difficulty + solve time.
     """
     limit = min(max(limit, 1), 200)
     session = get_session()
@@ -1018,13 +1066,14 @@ def get_leaderboard(limit: int = 50):
         rows = (
             session.query(
                 OctileScore.browser_uuid,
-                func.sum(OctileScore.coins).label("total_coins"),
+                func.sum(OctileScore.exp).label("total_exp"),
+                func.sum(OctileScore.diamonds).label("total_diamonds"),
                 func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles"),
                 func.avg(OctileScore.resolve_time).label("avg_time"),
             )
             .filter(OctileScore.flagged == 0)
             .group_by(OctileScore.browser_uuid)
-            .order_by(func.sum(OctileScore.coins).desc())
+            .order_by(func.sum(OctileScore.exp).desc())
             .limit(limit)
             .all()
         )
@@ -1033,7 +1082,9 @@ def get_leaderboard(limit: int = 50):
             "leaderboard": [
                 {
                     "browser_uuid": r.browser_uuid,
-                    "total_coins": r.total_coins or 0,
+                    "total_exp": r.total_exp or 0,
+                    "total_diamonds": r.total_diamonds or 0,
+                    "total_coins": r.total_exp or 0,  # legacy alias
                     "puzzles": r.puzzles,
                     "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
                 }

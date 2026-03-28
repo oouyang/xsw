@@ -1380,38 +1380,56 @@ def test_get_level_puzzle_sequential_order(client):
 
 
 # ---------------------------------------------------------------------------
-# Coins system tests
+# EXP + Diamond system tests (replaces old coins tests)
 # ---------------------------------------------------------------------------
 
-def test_calc_puzzle_coins_easy_slow():
-    from octile_api import calc_puzzle_coins
-    assert calc_puzzle_coins(1, 120) == 10  # easy, >60s → base ×1
+def test_calc_exp_easy_slow():
+    from octile_api import calc_exp
+    assert calc_exp(1, 121) == 100  # easy, >120s (>2×par) → grade B, base 100 ×1.0
 
-def test_calc_puzzle_coins_easy_fast():
-    from octile_api import calc_puzzle_coins
-    assert calc_puzzle_coins(1, 15) == 30  # easy, ≤15s → base ×3
+def test_calc_exp_easy_fast():
+    from octile_api import calc_exp
+    assert calc_exp(1, 15) == 200  # easy, ≤60s (≤par) → grade S, base 100 ×2.0
 
-def test_calc_puzzle_coins_nightmare_medium_speed():
-    from octile_api import calc_puzzle_coins
-    assert calc_puzzle_coins(4, 45) == 120  # nightmare base=80, ≤60s → ×1.5
+def test_calc_exp_nightmare_medium_speed():
+    from octile_api import calc_exp
+    assert calc_exp(4, 361) == 2000  # nightmare, >360s (>2×par) → grade B, base 2000 ×1.0
 
-def test_calc_puzzle_coins_speed_tiers():
-    from octile_api import calc_puzzle_coins
-    assert calc_puzzle_coins(2, 10) == 60   # medium ×3
-    assert calc_puzzle_coins(2, 25) == 40   # medium ×2
-    assert calc_puzzle_coins(2, 50) == 30   # medium ×1.5
-    assert calc_puzzle_coins(2, 90) == 20   # medium ×1
+def test_calc_exp_grade_tiers():
+    from octile_api import calc_exp
+    # Medium: par=90s, 2×par=180s
+    assert calc_exp(2, 60) == 500   # ≤90s → S ×2.0 (250×2)
+    assert calc_exp(2, 90) == 500   # =90s → S ×2.0
+    assert calc_exp(2, 120) == 375  # ≤180s → A ×1.5 (250×1.5)
+    assert calc_exp(2, 180) == 375  # =180s → A ×1.5
+    assert calc_exp(2, 200) == 250  # >180s → B ×1.0
 
-def test_submit_score_returns_coins(client):
+def test_calc_skill_grade():
+    from octile_api import calc_skill_grade
+    # Easy: par=60s
+    assert calc_skill_grade(1, 30) == "S"   # ≤par
+    assert calc_skill_grade(1, 60) == "S"   # =par
+    assert calc_skill_grade(1, 90) == "A"   # ≤2×par
+    assert calc_skill_grade(1, 120) == "A"  # =2×par
+    assert calc_skill_grade(1, 121) == "B"  # >2×par
+
+def test_submit_score_returns_exp(client):
     resp = client.post("/octile/score", json={
         "puzzle_number": 1,
         "resolve_time": 30.0,
-        "browser_uuid": "coins-test-uuid",
+        "browser_uuid": "exp-test-uuid",
     })
     assert resp.status_code == 201
     data = resp.json()
+    assert "exp" in data
+    assert data["exp"] == 200  # easy, 30s ≤ par 60s → S grade, 100 × 2.0
+    assert "diamonds" in data
+    assert data["diamonds"] == 1
+    assert "grade" in data
+    assert data["grade"] == "S"
+    # Legacy coins field still present and equals exp
     assert "coins" in data
-    assert data["coins"] > 0  # easy puzzle, 30s → base 10 × 2 = 20
+    assert data["coins"] == data["exp"]
 
 def test_leaderboard_empty(client):
     resp = client.get("/octile/leaderboard")
@@ -1420,15 +1438,12 @@ def test_leaderboard_empty(client):
     assert data["total_players"] == 0
     assert data["leaderboard"] == []
 
-def test_leaderboard_ranks_by_coins(client):
+def test_leaderboard_ranks_by_exp(client):
     # Submit scores for two players
     client.post("/octile/score", json={
         "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": "player-a",
     })
     import time; time.sleep(0.1)
-    # Player B solves a harder puzzle (nightmare)
-    # Use puzzle 45513 which is transform 4 of base 0 (still easy though)
-    # Let's just use different puzzle numbers
     client.post("/octile/score", json={
         "puzzle_number": 2, "resolve_time": 15.0, "browser_uuid": "player-b",
     })
@@ -1437,6 +1452,9 @@ def test_leaderboard_ranks_by_coins(client):
     data = resp.json()
     board = data["leaderboard"]
     assert len(board) >= 2
-    # Verify sorted by total_coins descending
+    # Verify sorted by total_exp descending
     for i in range(len(board) - 1):
-        assert board[i]["total_coins"] >= board[i + 1]["total_coins"]
+        assert board[i]["total_exp"] >= board[i + 1]["total_exp"]
+    # Legacy total_coins field still present
+    assert "total_coins" in board[0]
+    assert "total_diamonds" in board[0]
