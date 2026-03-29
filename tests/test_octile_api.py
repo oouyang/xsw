@@ -1443,7 +1443,8 @@ def test_leaderboard_ranks_by_exp(client):
     client.post("/octile/score", json={
         "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": "player-a",
     })
-    import time; time.sleep(0.1)
+    import time
+    time.sleep(0.1)
     client.post("/octile/score", json={
         "puzzle_number": 2, "resolve_time": 15.0, "browser_uuid": "player-b",
     })
@@ -1737,3 +1738,40 @@ def test_sync_requires_auth(client):
     assert resp.status_code == 401
     resp = client.get("/octile/sync/pull")
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth
+# ---------------------------------------------------------------------------
+
+
+def test_google_auth_not_configured(client):
+    """Google OAuth returns 501 when client ID/secret not set."""
+    resp = client.get("/octile/auth/google", follow_redirects=False)
+    assert resp.status_code == 501
+
+
+def test_google_auth_redirect(client):
+    """With credentials configured, should redirect to Google."""
+    import octile_api
+    orig_id = octile_api.OCTILE_GOOGLE_CLIENT_ID
+    orig_secret = octile_api.OCTILE_GOOGLE_CLIENT_SECRET
+    octile_api.OCTILE_GOOGLE_CLIENT_ID = "test-client-id"
+    octile_api.OCTILE_GOOGLE_CLIENT_SECRET = "test-secret"
+    try:
+        resp = client.get("/octile/auth/google?source=android", follow_redirects=False)
+        assert resp.status_code == 307
+        location = resp.headers["location"]
+        assert "accounts.google.com" in location
+        assert "test-client-id" in location
+        assert "state=" in location
+    finally:
+        octile_api.OCTILE_GOOGLE_CLIENT_ID = orig_id
+        octile_api.OCTILE_GOOGLE_CLIENT_SECRET = orig_secret
+
+
+def test_google_callback_invalid_state(client):
+    """Callback with invalid state should redirect with error."""
+    resp = client.get("/octile/auth/google/callback?code=abc&state=invalid", follow_redirects=False)
+    assert resp.status_code == 307
+    assert "auth_error=invalid_state" in resp.headers["location"]

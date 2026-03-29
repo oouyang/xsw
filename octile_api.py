@@ -97,7 +97,7 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import text as sql_text
 
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -650,6 +650,16 @@ class OctileProgress(OctileBase):
 # ---------------------------------------------------------------------------
 OCTILE_JWT_SECRET = os.getenv("OCTILE_JWT_SECRET", "octile-change-me-in-production")
 OCTILE_JWT_EXPIRY_DAYS = 30
+
+# Google OAuth (server-side redirect flow)
+OCTILE_GOOGLE_CLIENT_ID = os.getenv("OCTILE_GOOGLE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID", ""))
+OCTILE_GOOGLE_CLIENT_SECRET = os.getenv("OCTILE_GOOGLE_CLIENT_SECRET", "")
+OCTILE_GOOGLE_REDIRECT_URI = os.getenv("OCTILE_GOOGLE_REDIRECT_URI", "")
+# Where to send the user after successful Google login
+# Android: octile://auth?token=...&name=...
+# Web: https://mtaleon.github.io/octile/?auth_token=...&auth_name=...
+OCTILE_SITE_URL = os.getenv("OCTILE_SITE_URL", "https://mtaleon.github.io/octile/")
+
 _octile_email_sender = None
 
 
@@ -1544,6 +1554,161 @@ def auth_me(user: dict = Depends(require_octile_auth)):
     }
 
 
+# --- Google OAuth (server-side redirect flow) ---
+
+# In-memory state tokens (short-lived, prevent CSRF)
+_google_states: dict[str, float] = {}
+
+
+@octile_router.get("/auth/google")
+def auth_google_redirect(request: Request):
+    """Redirect user to Google OAuth consent screen."""
+    if not OCTILE_GOOGLE_CLIENT_ID or not OCTILE_GOOGLE_CLIENT_SECRET:
+        return JSONResponse(status_code=501, content={"detail": "Google OAuth not configured"})
+
+    # Determine redirect URI from config or from request
+    redirect_uri = OCTILE_GOOGLE_REDIRECT_URI
+    if not redirect_uri:
+        # Auto-detect: same origin + /octile/auth/google/callback
+        redirect_uri = str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
+
+    # Detect source platform from query param (android or web)
+    source = request.query_params.get("source", "web")
+
+    # Generate state token
+    state = secrets.token_urlsafe(32)
+    _google_states[state] = _time.time()
+    # Encode source in state
+    state_with_source = state + ":" + source
+
+    # Clean old states (> 10 min)
+    now = _time.time()
+    expired = [k for k, v in _google_states.items() if now - v > 600]
+    for k in expired:
+        del _google_states[k]
+
+    params = {
+        "client_id": OCTILE_GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "state": state_with_source,
+        "prompt": "select_account",
+    }
+    import urllib.parse
+    google_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url=google_url)
+
+
+@octile_router.get("/auth/google/callback")
+def auth_google_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    """Handle Google OAuth callback: exchange code, create/find user, redirect with JWT."""
+    import urllib.parse
+
+    if error:
+        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=" + urllib.parse.quote(error))
+
+    if not code or not state:
+        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=missing_params")
+
+    # Parse state
+    parts = state.split(":", 1)
+    state_token = parts[0]
+    source = parts[1] if len(parts) > 1 else "web"
+
+    # Verify state token
+    if state_token not in _google_states:
+        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=invalid_state")
+    del _google_states[state_token]
+
+    # Determine redirect URI (must match the one used in /auth/google)
+    redirect_uri = OCTILE_GOOGLE_REDIRECT_URI
+    if not redirect_uri:
+        redirect_uri = str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
+
+    # Exchange authorization code for tokens
+    import requests as http_requests
+    try:
+        token_resp = http_requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": OCTILE_GOOGLE_CLIENT_ID,
+                "client_secret": OCTILE_GOOGLE_CLIENT_SECRET,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=10,
+        )
+        if token_resp.status_code != 200:
+            return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=token_exchange_failed")
+        tokens = token_resp.json()
+    except Exception:
+        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=token_exchange_failed")
+
+    # Verify the ID token
+    id_token_str = tokens.get("id_token", "")
+    if not id_token_str:
+        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=no_id_token")
+
+    try:
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as google_requests
+        idinfo = google_id_token.verify_oauth2_token(
+            id_token_str, google_requests.Request(), OCTILE_GOOGLE_CLIENT_ID
+        )
+    except Exception:
+        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=invalid_id_token")
+
+    google_email = idinfo.get("email", "")
+    google_name = idinfo.get("name", google_email.split("@")[0])
+
+    if not google_email:
+        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=no_email")
+
+    # Find or create OctileUser by email
+    session = get_session()
+    try:
+        user = session.query(OctileUser).filter(OctileUser.email == google_email).first()
+        if not user:
+            # Auto-create verified account (Google already verified email)
+            user = OctileUser(
+                email=google_email,
+                password_hash=_pw_hasher.hash(secrets.token_urlsafe(32)),  # random password
+                display_name=google_name,
+                is_verified=True,
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+        elif not user.is_verified:
+            # Verify pending account via Google
+            user.is_verified = True
+            user.display_name = google_name
+            session.commit()
+
+        user.last_login_at = datetime.now(timezone.utc)
+        session.commit()
+
+        jwt_token = _create_octile_jwt(user.id, user.display_name, user.email)
+    finally:
+        session.close()
+
+    # Redirect based on source
+    encoded_name = urllib.parse.quote(google_name)
+    if source == "android":
+        # Deep link back to Android app
+        return RedirectResponse(
+            url=f"octile://auth?token={jwt_token}&name={encoded_name}"
+        )
+    else:
+        # Web: redirect to site with token in query params
+        return RedirectResponse(
+            url=f"{OCTILE_SITE_URL}?auth_token={jwt_token}&auth_name={encoded_name}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Progress sync endpoints
 # ---------------------------------------------------------------------------
@@ -1582,7 +1747,6 @@ def _merge_json_lists(server_json: str, client_list: list) -> str:
 @octile_router.post("/sync/push")
 def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
     """Push local progress to server. Merges with MAX strategy."""
-    import json
     user_id = int(user["sub"])
     session = get_session()
     try:
