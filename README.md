@@ -433,6 +433,10 @@ docker compose -f compose.yml -f docker/build.yml build
 
 # Run with production config
 docker compose --env-file .env.production up -d
+
+# or build
+docker buildx build -f docker/Dockerfile --target xsw -t oouyang/xsw:latest .
+docker buildx build -f docker/Dockerfile --target web -t oouyang/xsw:latest-web .
 ```
 
 ### Reverse Proxy (nginx)
