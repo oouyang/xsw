@@ -1625,3 +1625,115 @@ def test_auth_forgot_nonexistent_email(client):
     """Forgot password for non-existent email should not reveal existence."""
     resp = client.post("/octile/auth/forgot-password", json={"email": "nobody@example.com"})
     assert resp.status_code == 200  # Always 200, don't leak info
+
+
+# ---------------------------------------------------------------------------
+# Sync endpoints
+# ---------------------------------------------------------------------------
+
+
+def _get_auth_token(client, email="sync@example.com", password="syncpass123", name="Syncer"):
+    """Helper: register + verify + return JWT token."""
+    client.post("/octile/auth/register", json={
+        "email": email, "password": password, "display_name": name,
+    })
+    from octile_api import get_session, OctileUser
+    session = get_session()
+    user = session.query(OctileUser).filter(OctileUser.email == email).first()
+    otp = user.otp_code
+    session.close()
+    resp = client.post("/octile/auth/verify", json={"email": email, "otp_code": otp})
+    return resp.json()["access_token"]
+
+
+def test_sync_pull_empty(client):
+    token = _get_auth_token(client, email="pull-empty@example.com")
+    resp = client.get("/octile/sync/pull", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "empty"
+
+
+def test_sync_push_and_pull(client):
+    token = _get_auth_token(client, email="pushpull@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Push progress
+    resp = client.post("/octile/sync/push", headers=headers, json={
+        "browser_uuid": "uuid-sync",
+        "level_easy": 100,
+        "level_medium": 50,
+        "exp": 5000,
+        "diamonds": 200,
+        "chapters_completed": 3,
+        "achievements": ["speed_30", "streak_3"],
+        "streak_count": 7,
+        "streak_last_date": "2026-03-29",
+        "months": [1, 3],
+        "total_solved": 150,
+        "total_time": 4500.0,
+        "grades_s": 50,
+        "grades_a": 80,
+        "grades_b": 20,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    # Pull it back
+    resp = client.get("/octile/sync/pull", headers=headers)
+    assert resp.status_code == 200
+    p = resp.json()["progress"]
+    assert p["level_easy"] == 100
+    assert p["level_medium"] == 50
+    assert p["exp"] == 5000
+    assert p["diamonds"] == 200
+    assert p["achievements"] == ["speed_30", "streak_3"]
+    assert p["streak_count"] == 7
+    assert p["months"] == [1, 3]
+    assert p["grades_s"] == 50
+
+
+def test_sync_merge_max(client):
+    """Second push should keep MAX of each field."""
+    token = _get_auth_token(client, email="merge@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # First push
+    client.post("/octile/sync/push", headers=headers, json={
+        "level_easy": 200, "level_medium": 100, "exp": 8000, "diamonds": 500,
+        "achievements": ["speed_30"], "months": [1, 2],
+        "streak_count": 10, "streak_last_date": "2026-03-28",
+        "total_solved": 300, "grades_s": 100,
+    })
+
+    # Second push with some lower, some higher values
+    client.post("/octile/sync/push", headers=headers, json={
+        "level_easy": 150,   # lower — should keep 200
+        "level_medium": 200, # higher — should update to 200
+        "exp": 6000,         # lower — should keep 8000
+        "diamonds": 700,     # higher — should update to 700
+        "achievements": ["streak_7"],  # new — should union
+        "months": [2, 3],    # new month 3 — should union
+        "streak_count": 12,  # higher
+        "streak_last_date": "2026-03-29",
+        "total_solved": 250, # lower — should keep 300
+        "grades_s": 80,      # lower — should keep 100
+    })
+
+    resp = client.get("/octile/sync/pull", headers=headers)
+    p = resp.json()["progress"]
+    assert p["level_easy"] == 200       # kept higher
+    assert p["level_medium"] == 200     # updated
+    assert p["exp"] == 8000             # kept higher
+    assert p["diamonds"] == 700         # updated
+    assert sorted(p["achievements"]) == ["speed_30", "streak_7"]  # union
+    assert sorted(p["months"]) == [1, 2, 3]  # union
+    assert p["streak_count"] == 12      # updated
+    assert p["total_solved"] == 300     # kept higher
+    assert p["grades_s"] == 100         # kept higher
+
+
+def test_sync_requires_auth(client):
+    resp = client.post("/octile/sync/push", json={"level_easy": 100})
+    assert resp.status_code == 401
+    resp = client.get("/octile/sync/pull")
+    assert resp.status_code == 401

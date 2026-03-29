@@ -86,6 +86,7 @@ from sqlalchemy import (
     Integer,
     Float,
     String,
+    Text,
     DateTime,
     Index,
     and_,
@@ -614,6 +615,34 @@ class OctileUser(OctileBase):
 
     def __repr__(self):
         return f"<OctileUser(id={self.id}, email='{self.email}')>"
+
+
+class OctileProgress(OctileBase):
+    """Server-side progress for authenticated players."""
+
+    __tablename__ = "octile_progress"
+
+    user_id = Column(Integer, primary_key=True)
+    browser_uuid = Column(String, nullable=True, index=True)
+    level_easy = Column(Integer, default=0)
+    level_medium = Column(Integer, default=0)
+    level_hard = Column(Integer, default=0)
+    level_hell = Column(Integer, default=0)
+    exp = Column(Integer, default=0)
+    diamonds = Column(Integer, default=0)
+    chapters_completed = Column(Integer, default=0)
+    achievements = Column(Text, default="[]")
+    streak_count = Column(Integer, default=0)
+    streak_last_date = Column(String, nullable=True)
+    months = Column(Text, default="[]")
+    total_solved = Column(Integer, default=0)
+    total_time = Column(Float, default=0)
+    grades_s = Column(Integer, default=0)
+    grades_a = Column(Integer, default=0)
+    grades_b = Column(Integer, default=0)
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1513,3 +1542,124 @@ def auth_me(user: dict = Depends(require_octile_auth)):
         "display_name": user["name"],
         "email": user["email"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Progress sync endpoints
+# ---------------------------------------------------------------------------
+
+class SyncPushRequest(BaseModel):
+    browser_uuid: Optional[str] = None
+    level_easy: int = 0
+    level_medium: int = 0
+    level_hard: int = 0
+    level_hell: int = 0
+    exp: int = 0
+    diamonds: int = 0
+    chapters_completed: int = 0
+    achievements: list = []
+    streak_count: int = 0
+    streak_last_date: Optional[str] = None
+    months: list = []
+    total_solved: int = 0
+    total_time: float = 0
+    grades_s: int = 0
+    grades_a: int = 0
+    grades_b: int = 0
+
+
+def _merge_json_lists(server_json: str, client_list: list) -> str:
+    """Union two JSON-encoded lists, return as JSON string."""
+    import json
+    try:
+        server_list = json.loads(server_json or "[]")
+    except (json.JSONDecodeError, TypeError):
+        server_list = []
+    merged = sorted(set(server_list) | set(client_list))
+    return json.dumps(merged)
+
+
+@octile_router.post("/sync/push")
+def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
+    """Push local progress to server. Merges with MAX strategy."""
+    import json
+    user_id = int(user["sub"])
+    session = get_session()
+    try:
+        prog = session.query(OctileProgress).filter(OctileProgress.user_id == user_id).first()
+        if not prog:
+            prog = OctileProgress(user_id=user_id)
+            session.add(prog)
+
+        # Link browser_uuid if provided
+        if req.browser_uuid:
+            prog.browser_uuid = req.browser_uuid
+
+        # MAX for numeric fields
+        prog.level_easy = max(prog.level_easy or 0, req.level_easy)
+        prog.level_medium = max(prog.level_medium or 0, req.level_medium)
+        prog.level_hard = max(prog.level_hard or 0, req.level_hard)
+        prog.level_hell = max(prog.level_hell or 0, req.level_hell)
+        prog.exp = max(prog.exp or 0, req.exp)
+        prog.diamonds = max(prog.diamonds or 0, req.diamonds)
+        prog.chapters_completed = max(prog.chapters_completed or 0, req.chapters_completed)
+        prog.total_solved = max(prog.total_solved or 0, req.total_solved)
+        prog.total_time = max(prog.total_time or 0, req.total_time)
+        prog.grades_s = max(prog.grades_s or 0, req.grades_s)
+        prog.grades_a = max(prog.grades_a or 0, req.grades_a)
+        prog.grades_b = max(prog.grades_b or 0, req.grades_b)
+
+        # Union for list fields
+        prog.achievements = _merge_json_lists(prog.achievements, req.achievements)
+        prog.months = _merge_json_lists(prog.months, req.months)
+
+        # Streak: keep higher count or more recent date
+        if req.streak_count > (prog.streak_count or 0) or (
+            req.streak_count == (prog.streak_count or 0)
+            and (req.streak_last_date or "") >= (prog.streak_last_date or "")
+        ):
+            prog.streak_count = req.streak_count
+            prog.streak_last_date = req.streak_last_date
+
+        prog.updated_at = datetime.now(timezone.utc)
+        session.commit()
+
+        return {"status": "ok"}
+    finally:
+        session.close()
+
+
+@octile_router.get("/sync/pull")
+def sync_pull(user: dict = Depends(require_octile_auth)):
+    """Pull server progress to client."""
+    import json
+    user_id = int(user["sub"])
+    session = get_session()
+    try:
+        prog = session.query(OctileProgress).filter(OctileProgress.user_id == user_id).first()
+        if not prog:
+            return {"status": "empty"}
+
+        return {
+            "status": "ok",
+            "progress": {
+                "level_easy": prog.level_easy or 0,
+                "level_medium": prog.level_medium or 0,
+                "level_hard": prog.level_hard or 0,
+                "level_hell": prog.level_hell or 0,
+                "exp": prog.exp or 0,
+                "diamonds": prog.diamonds or 0,
+                "chapters_completed": prog.chapters_completed or 0,
+                "achievements": json.loads(prog.achievements or "[]"),
+                "streak_count": prog.streak_count or 0,
+                "streak_last_date": prog.streak_last_date,
+                "months": json.loads(prog.months or "[]"),
+                "total_solved": prog.total_solved or 0,
+                "total_time": prog.total_time or 0,
+                "grades_s": prog.grades_s or 0,
+                "grades_a": prog.grades_a or 0,
+                "grades_b": prog.grades_b or 0,
+            },
+        }
+    finally:
+        session.close()
