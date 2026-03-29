@@ -118,6 +118,7 @@ def _get_puzzle_data() -> str:
     global _PUZZLE_DATA
     if _PUZZLE_DATA is None:
         from octile_puzzle_data import PUZZLE_DATA
+
         _PUZZLE_DATA = PUZZLE_DATA
     return _PUZZLE_DATA
 
@@ -608,9 +609,7 @@ class OctileUser(OctileBase):
     is_verified = Column(Boolean, default=False)
     otp_code = Column(String, nullable=True)
     otp_expires_at = Column(DateTime, nullable=True)
-    created_at = Column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
-    )
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login_at = Column(DateTime, nullable=True)
 
     def __repr__(self):
@@ -640,9 +639,7 @@ class OctileProgress(OctileBase):
     grades_s = Column(Integer, default=0)
     grades_a = Column(Integer, default=0)
     grades_b = Column(Integer, default=0)
-    updated_at = Column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
-    )
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -652,7 +649,9 @@ OCTILE_JWT_SECRET = os.getenv("OCTILE_JWT_SECRET", "octile-change-me-in-producti
 OCTILE_JWT_EXPIRY_DAYS = 30
 
 # Google OAuth (server-side redirect flow)
-OCTILE_GOOGLE_CLIENT_ID = os.getenv("OCTILE_GOOGLE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID", ""))
+OCTILE_GOOGLE_CLIENT_ID = os.getenv(
+    "OCTILE_GOOGLE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID", "")
+)
 OCTILE_GOOGLE_CLIENT_SECRET = os.getenv("OCTILE_GOOGLE_CLIENT_SECRET", "")
 OCTILE_GOOGLE_REDIRECT_URI = os.getenv("OCTILE_GOOGLE_REDIRECT_URI", "")
 # Where to send the user after successful Google login
@@ -673,6 +672,7 @@ def _get_email_sender():
     if not smtp_host or not smtp_user:
         return None
     from email_sender import EmailSender
+
     _octile_email_sender = EmailSender(
         smtp_host=smtp_host,
         smtp_port=int(os.getenv("OCTILE_SMTP_PORT", os.getenv("SMTP_PORT", "587"))),
@@ -708,14 +708,21 @@ async def require_octile_auth(
 ) -> dict:
     if not credentials:
         from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token"
+        )
     try:
         return _decode_octile_jwt(credentials.credentials)
     except jwt.ExpiredSignatureError:
         from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
+        )
     except jwt.InvalidTokenError as e:
         from fastapi import HTTPException, status
+
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
 
@@ -803,9 +810,11 @@ def _backfill_rewards():
     """
     session = _SessionLocal()
     try:
-        count = session.query(func.count(OctileScore.id)).filter(
-            OctileScore.exp == 0
-        ).scalar()
+        count = (
+            session.query(func.count(OctileScore.id))
+            .filter(OctileScore.exp == 0)
+            .scalar()
+        )
         if count == 0:
             return
 
@@ -1345,6 +1354,7 @@ def get_level_puzzle(level: str, slot: int):
 # Auth endpoints
 # ---------------------------------------------------------------------------
 
+
 class RegisterRequest(BaseModel):
     email: str
     password: str
@@ -1377,7 +1387,9 @@ def _send_otp_email(email: str, otp: str, purpose: str = "verify") -> bool:
     if not sender:
         print(f"[Octile Auth] Email not configured, OTP for {email}: {otp}")
         return True  # Don't block registration in dev
-    subject = "Octile verification code" if purpose == "verify" else "Octile password reset"
+    subject = (
+        "Octile verification code" if purpose == "verify" else "Octile password reset"
+    )
     body = (
         f"<div style='font-family:sans-serif;max-width:400px;margin:0 auto;padding:20px'>"
         f"<h2 style='color:#1a1a2e'>Octile</h2>"
@@ -1396,16 +1408,23 @@ def auth_register(req: RegisterRequest):
     """Register a new account. Sends OTP to email for verification."""
     email = req.email.strip().lower()
     if not email or "@" not in email or len(req.password) < 6:
-        return JSONResponse(status_code=400, content={"detail": "Invalid email or password (min 6 chars)"})
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Invalid email or password (min 6 chars)"},
+        )
 
     if _check_otp_rate_limit(email):
-        return JSONResponse(status_code=429, content={"detail": "Too many attempts, try again later"})
+        return JSONResponse(
+            status_code=429, content={"detail": "Too many attempts, try again later"}
+        )
 
     session = get_session()
     try:
         existing = session.query(OctileUser).filter(OctileUser.email == email).first()
         if existing and existing.is_verified:
-            return JSONResponse(status_code=409, content={"detail": "Email already registered"})
+            return JSONResponse(
+                status_code=409, content={"detail": "Email already registered"}
+            )
 
         otp = f"{secrets.randbelow(1000000):06d}"
         otp_expires = datetime.utcnow() + timedelta(minutes=10)
@@ -1444,13 +1463,22 @@ def auth_verify(req: VerifyRequest):
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
         if not user:
-            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+            return JSONResponse(
+                status_code=404, content={"detail": "Account not found"}
+            )
         if user.is_verified:
-            return JSONResponse(status_code=400, content={"detail": "Already verified, please login"})
+            return JSONResponse(
+                status_code=400, content={"detail": "Already verified, please login"}
+            )
         if not user.otp_code or user.otp_code != req.otp_code.strip():
-            return JSONResponse(status_code=400, content={"detail": "Invalid verification code"})
+            return JSONResponse(
+                status_code=400, content={"detail": "Invalid verification code"}
+            )
         if user.otp_expires_at and user.otp_expires_at < datetime.utcnow():
-            return JSONResponse(status_code=400, content={"detail": "Code expired, please register again"})
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Code expired, please register again"},
+            )
 
         user.is_verified = True
         user.otp_code = None
@@ -1461,7 +1489,11 @@ def auth_verify(req: VerifyRequest):
         token = _create_octile_jwt(user.id, user.display_name, user.email)
         return {
             "access_token": token,
-            "user": {"id": user.id, "display_name": user.display_name, "email": user.email},
+            "user": {
+                "id": user.id,
+                "display_name": user.display_name,
+                "email": user.email,
+            },
         }
     finally:
         session.close()
@@ -1475,9 +1507,13 @@ def auth_login(req: LoginRequest):
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
         if not user or not user.is_verified:
-            return JSONResponse(status_code=401, content={"detail": "Invalid email or password"})
+            return JSONResponse(
+                status_code=401, content={"detail": "Invalid email or password"}
+            )
         if not _pw_hasher.verify(req.password, user.password_hash):
-            return JSONResponse(status_code=401, content={"detail": "Invalid email or password"})
+            return JSONResponse(
+                status_code=401, content={"detail": "Invalid email or password"}
+            )
 
         user.last_login_at = datetime.now(timezone.utc)
         session.commit()
@@ -1485,7 +1521,11 @@ def auth_login(req: LoginRequest):
         token = _create_octile_jwt(user.id, user.display_name, user.email)
         return {
             "access_token": token,
-            "user": {"id": user.id, "display_name": user.display_name, "email": user.email},
+            "user": {
+                "id": user.id,
+                "display_name": user.display_name,
+                "email": user.email,
+            },
         }
     finally:
         session.close()
@@ -1497,14 +1537,19 @@ def auth_forgot_password(req: ForgotPasswordRequest):
     email = req.email.strip().lower()
 
     if _check_otp_rate_limit(email):
-        return JSONResponse(status_code=429, content={"detail": "Too many attempts, try again later"})
+        return JSONResponse(
+            status_code=429, content={"detail": "Too many attempts, try again later"}
+        )
 
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
         if not user or not user.is_verified:
             # Don't reveal whether email exists
-            return {"status": "sent", "message": "If the email is registered, a reset code was sent"}
+            return {
+                "status": "sent",
+                "message": "If the email is registered, a reset code was sent",
+            }
 
         otp = f"{secrets.randbelow(1000000):06d}"
         user.otp_code = otp
@@ -1512,7 +1557,10 @@ def auth_forgot_password(req: ForgotPasswordRequest):
         session.commit()
 
         _send_otp_email(email, otp, purpose="reset")
-        return {"status": "sent", "message": "If the email is registered, a reset code was sent"}
+        return {
+            "status": "sent",
+            "message": "If the email is registered, a reset code was sent",
+        }
     finally:
         session.close()
 
@@ -1522,17 +1570,26 @@ def auth_reset_password(req: ResetPasswordRequest):
     """Reset password with OTP code."""
     email = req.email.strip().lower()
     if len(req.new_password) < 6:
-        return JSONResponse(status_code=400, content={"detail": "Password must be at least 6 characters"})
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Password must be at least 6 characters"},
+        )
 
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
         if not user or not user.is_verified:
-            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+            return JSONResponse(
+                status_code=404, content={"detail": "Account not found"}
+            )
         if not user.otp_code or user.otp_code != req.otp_code.strip():
-            return JSONResponse(status_code=400, content={"detail": "Invalid reset code"})
+            return JSONResponse(
+                status_code=400, content={"detail": "Invalid reset code"}
+            )
         if user.otp_expires_at and user.otp_expires_at < datetime.utcnow():
-            return JSONResponse(status_code=400, content={"detail": "Code expired, request a new one"})
+            return JSONResponse(
+                status_code=400, content={"detail": "Code expired, request a new one"}
+            )
 
         user.password_hash = _pw_hasher.hash(req.new_password)
         user.otp_code = None
@@ -1564,13 +1621,17 @@ _google_states: dict[str, float] = {}
 def auth_google_redirect(request: Request):
     """Redirect user to Google OAuth consent screen."""
     if not OCTILE_GOOGLE_CLIENT_ID or not OCTILE_GOOGLE_CLIENT_SECRET:
-        return JSONResponse(status_code=501, content={"detail": "Google OAuth not configured"})
+        return JSONResponse(
+            status_code=501, content={"detail": "Google OAuth not configured"}
+        )
 
     # Determine redirect URI from config or from request
     redirect_uri = OCTILE_GOOGLE_REDIRECT_URI
     if not redirect_uri:
         # Auto-detect: same origin + /octile/auth/google/callback
-        redirect_uri = str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
+        redirect_uri = (
+            str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
+        )
 
     # Detect source platform from query param (android or web)
     source = request.query_params.get("source", "web")
@@ -1597,17 +1658,24 @@ def auth_google_redirect(request: Request):
         "prompt": "select_account",
     }
     import urllib.parse
-    google_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+
+    google_url = (
+        "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    )
     return RedirectResponse(url=google_url)
 
 
 @octile_router.get("/auth/google/callback")
-def auth_google_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+def auth_google_callback(
+    request: Request, code: str = "", state: str = "", error: str = ""
+):
     """Handle Google OAuth callback: exchange code, create/find user, redirect with JWT."""
     import urllib.parse
 
     if error:
-        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=" + urllib.parse.quote(error))
+        return RedirectResponse(
+            url=OCTILE_SITE_URL + "?auth_error=" + urllib.parse.quote(error)
+        )
 
     if not code or not state:
         return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=missing_params")
@@ -1625,10 +1693,13 @@ def auth_google_callback(request: Request, code: str = "", state: str = "", erro
     # Determine redirect URI (must match the one used in /auth/google)
     redirect_uri = OCTILE_GOOGLE_REDIRECT_URI
     if not redirect_uri:
-        redirect_uri = str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
+        redirect_uri = (
+            str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
+        )
 
     # Exchange authorization code for tokens
     import requests as http_requests
+
     try:
         token_resp = http_requests.post(
             "https://oauth2.googleapis.com/token",
@@ -1642,10 +1713,14 @@ def auth_google_callback(request: Request, code: str = "", state: str = "", erro
             timeout=10,
         )
         if token_resp.status_code != 200:
-            return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=token_exchange_failed")
+            return RedirectResponse(
+                url=OCTILE_SITE_URL + "?auth_error=token_exchange_failed"
+            )
         tokens = token_resp.json()
     except Exception:
-        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=token_exchange_failed")
+        return RedirectResponse(
+            url=OCTILE_SITE_URL + "?auth_error=token_exchange_failed"
+        )
 
     # Verify the ID token
     id_token_str = tokens.get("id_token", "")
@@ -1655,6 +1730,7 @@ def auth_google_callback(request: Request, code: str = "", state: str = "", erro
     try:
         from google.oauth2 import id_token as google_id_token
         from google.auth.transport import requests as google_requests
+
         idinfo = google_id_token.verify_oauth2_token(
             id_token_str, google_requests.Request(), OCTILE_GOOGLE_CLIENT_ID
         )
@@ -1670,12 +1746,16 @@ def auth_google_callback(request: Request, code: str = "", state: str = "", erro
     # Find or create OctileUser by email
     session = get_session()
     try:
-        user = session.query(OctileUser).filter(OctileUser.email == google_email).first()
+        user = (
+            session.query(OctileUser).filter(OctileUser.email == google_email).first()
+        )
         if not user:
             # Auto-create verified account (Google already verified email)
             user = OctileUser(
                 email=google_email,
-                password_hash=_pw_hasher.hash(secrets.token_urlsafe(32)),  # random password
+                password_hash=_pw_hasher.hash(
+                    secrets.token_urlsafe(32)
+                ),  # random password
                 display_name=google_name,
                 is_verified=True,
             )
@@ -1713,6 +1793,7 @@ def auth_google_callback(request: Request, code: str = "", state: str = "", erro
 # Progress sync endpoints
 # ---------------------------------------------------------------------------
 
+
 class SyncPushRequest(BaseModel):
     browser_uuid: Optional[str] = None
     level_easy: int = 0
@@ -1736,6 +1817,7 @@ class SyncPushRequest(BaseModel):
 def _merge_json_lists(server_json: str, client_list: list) -> str:
     """Union two JSON-encoded lists, return as JSON string."""
     import json
+
     try:
         server_list = json.loads(server_json or "[]")
     except (json.JSONDecodeError, TypeError):
@@ -1750,7 +1832,11 @@ def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
     user_id = int(user["sub"])
     session = get_session()
     try:
-        prog = session.query(OctileProgress).filter(OctileProgress.user_id == user_id).first()
+        prog = (
+            session.query(OctileProgress)
+            .filter(OctileProgress.user_id == user_id)
+            .first()
+        )
         if not prog:
             prog = OctileProgress(user_id=user_id)
             session.add(prog)
@@ -1766,7 +1852,9 @@ def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
         prog.level_hell = max(prog.level_hell or 0, req.level_hell)
         prog.exp = max(prog.exp or 0, req.exp)
         prog.diamonds = max(prog.diamonds or 0, req.diamonds)
-        prog.chapters_completed = max(prog.chapters_completed or 0, req.chapters_completed)
+        prog.chapters_completed = max(
+            prog.chapters_completed or 0, req.chapters_completed
+        )
         prog.total_solved = max(prog.total_solved or 0, req.total_solved)
         prog.total_time = max(prog.total_time or 0, req.total_time)
         prog.grades_s = max(prog.grades_s or 0, req.grades_s)
@@ -1797,10 +1885,15 @@ def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
 def sync_pull(user: dict = Depends(require_octile_auth)):
     """Pull server progress to client."""
     import json
+
     user_id = int(user["sub"])
     session = get_session()
     try:
-        prog = session.query(OctileProgress).filter(OctileProgress.user_id == user_id).first()
+        prog = (
+            session.query(OctileProgress)
+            .filter(OctileProgress.user_id == user_id)
+            .first()
+        )
         if not prog:
             return {"status": "empty"}
 

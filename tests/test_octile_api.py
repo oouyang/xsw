@@ -81,7 +81,9 @@ def _encode_compact(grid_128: str) -> str:
 VALID_COMPACT_P1 = _encode_compact(VALID_SOLUTION_P1)
 
 
-def _make_score(puzzle=1, resolve_time=30.0, uuid="uuid-aaa", solution=VALID_SOLUTION_P1):
+def _make_score(
+    puzzle=1, resolve_time=30.0, uuid="uuid-aaa", solution=VALID_SOLUTION_P1
+):
     """Build a valid score submission payload."""
     return {
         "puzzle_number": puzzle,
@@ -299,9 +301,7 @@ def test_accept_boundary_max_time(client):
 
 def test_accept_boundary_puzzle_1(client):
     """Puzzle 1 (lowest valid) is accepted."""
-    resp = client.post(
-        "/octile/score", json=_make_score(puzzle=1, uuid="uuid-p1")
-    )
+    resp = client.post("/octile/score", json=_make_score(puzzle=1, uuid="uuid-p1"))
     assert resp.status_code == 201
 
 
@@ -385,28 +385,20 @@ def test_reject_solution_for_wrong_puzzle(client):
 
 def test_rate_limit(client):
     # First submission should succeed
-    resp1 = client.post(
-        "/octile/score", json=_make_score(uuid="uuid-rate")
-    )
+    resp1 = client.post("/octile/score", json=_make_score(uuid="uuid-rate"))
     assert resp1.status_code == 201
 
     # Second submission within 30s should be rate limited
-    resp2 = client.post(
-        "/octile/score", json=_make_score(uuid="uuid-rate")
-    )
+    resp2 = client.post("/octile/score", json=_make_score(uuid="uuid-rate"))
     assert resp2.status_code == 429
     assert "30s" in resp2.json()["detail"]
 
 
 def test_rate_limit_different_uuid_ok(client):
-    resp1 = client.post(
-        "/octile/score", json=_make_score(uuid="uuid-rate-a")
-    )
+    resp1 = client.post("/octile/score", json=_make_score(uuid="uuid-rate-a"))
     assert resp1.status_code == 201
 
-    resp2 = client.post(
-        "/octile/score", json=_make_score(uuid="uuid-rate-b")
-    )
+    resp2 = client.post("/octile/score", json=_make_score(uuid="uuid-rate-b"))
     assert resp2.status_code == 201
 
 
@@ -435,9 +427,7 @@ def test_flagging_high_volume(client):
         session.close()
 
     # Next submission should be flagged
-    resp = client.post(
-        "/octile/score", json=_make_score(uuid="uuid-flagtest")
-    )
+    resp = client.post("/octile/score", json=_make_score(uuid="uuid-flagtest"))
     # It may be rate-limited since we just inserted one very recently,
     # so let's check DB directly
     session = octile_api.get_session()
@@ -997,9 +987,20 @@ def test_decode_puzzle_extended_all_cells_valid():
 
 def test_piece_enc_placement_counts():
     """Verify computed placement counts match expected values."""
-    expected = {"r1": 84, "r2": 80, "w1": 64, "w2": 49, "b1": 56, "b2": 60, "y1": 36, "y2": 70}
+    expected = {
+        "r1": 84,
+        "r2": 80,
+        "w1": 64,
+        "w2": 49,
+        "b1": 56,
+        "b2": 60,
+        "y1": 36,
+        "y2": 70,
+    }
     for p in _PIECE_ENC:
-        assert p["N"] == expected[p["id"]], f"{p['id']}: {p['N']} != {expected[p['id']]}"
+        assert p["N"] == expected[p["id"]], (
+            f"{p['id']}: {p['N']} != {expected[p['id']]}"
+        )
 
 
 def test_piece_enc_total_fits_in_8_base92():
@@ -1062,8 +1063,18 @@ def test_decode_compact_piece_cell_counts():
     """Each piece should occupy the correct number of cells."""
     board = _decode_compact_solution(VALID_COMPACT_P1)
     from collections import Counter
+
     counts = Counter(c for c in board if c is not None)
-    expected = {"r1": 6, "r2": 4, "w1": 5, "w2": 4, "b1": 10, "b2": 12, "y1": 9, "y2": 8}
+    expected = {
+        "r1": 6,
+        "r2": 4,
+        "w1": 5,
+        "w2": 4,
+        "b1": 10,
+        "b2": 12,
+        "y1": 9,
+        "y2": 8,
+    }
     for pid, exp in expected.items():
         assert counts[pid] == exp, f"{pid}: {counts[pid]} != {exp}"
 
@@ -1376,49 +1387,67 @@ def test_get_level_puzzle_sequential_order(client):
         assert resp_last.status_code == 200
         att_first = get_puzzle_attempts(resp1.json()["puzzle_number"])
         att_last = get_puzzle_attempts(resp_last.json()["puzzle_number"])
-        assert att_first <= att_last, f"{level_name}: first {att_first} > last {att_last}"
+        assert att_first <= att_last, (
+            f"{level_name}: first {att_first} > last {att_last}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # EXP + Diamond system tests (replaces old coins tests)
 # ---------------------------------------------------------------------------
 
+
 def test_calc_exp_easy_slow():
     from octile_api import calc_exp
+
     assert calc_exp(1, 121) == 100  # easy, >120s (>2×par) → grade B, base 100 ×1.0
+
 
 def test_calc_exp_easy_fast():
     from octile_api import calc_exp
+
     assert calc_exp(1, 15) == 200  # easy, ≤60s (≤par) → grade S, base 100 ×2.0
+
 
 def test_calc_exp_nightmare_medium_speed():
     from octile_api import calc_exp
-    assert calc_exp(4, 361) == 2000  # nightmare, >360s (>2×par) → grade B, base 2000 ×1.0
+
+    assert (
+        calc_exp(4, 361) == 2000
+    )  # nightmare, >360s (>2×par) → grade B, base 2000 ×1.0
+
 
 def test_calc_exp_grade_tiers():
     from octile_api import calc_exp
+
     # Medium: par=90s, 2×par=180s
-    assert calc_exp(2, 60) == 500   # ≤90s → S ×2.0 (250×2)
-    assert calc_exp(2, 90) == 500   # =90s → S ×2.0
+    assert calc_exp(2, 60) == 500  # ≤90s → S ×2.0 (250×2)
+    assert calc_exp(2, 90) == 500  # =90s → S ×2.0
     assert calc_exp(2, 120) == 375  # ≤180s → A ×1.5 (250×1.5)
     assert calc_exp(2, 180) == 375  # =180s → A ×1.5
     assert calc_exp(2, 200) == 250  # >180s → B ×1.0
 
+
 def test_calc_skill_grade():
     from octile_api import calc_skill_grade
+
     # Easy: par=60s
-    assert calc_skill_grade(1, 30) == "S"   # ≤par
-    assert calc_skill_grade(1, 60) == "S"   # =par
-    assert calc_skill_grade(1, 90) == "A"   # ≤2×par
+    assert calc_skill_grade(1, 30) == "S"  # ≤par
+    assert calc_skill_grade(1, 60) == "S"  # =par
+    assert calc_skill_grade(1, 90) == "A"  # ≤2×par
     assert calc_skill_grade(1, 120) == "A"  # =2×par
     assert calc_skill_grade(1, 121) == "B"  # >2×par
 
+
 def test_submit_score_returns_exp(client):
-    resp = client.post("/octile/score", json={
-        "puzzle_number": 1,
-        "resolve_time": 30.0,
-        "browser_uuid": "exp-test-uuid",
-    })
+    resp = client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 1,
+            "resolve_time": 30.0,
+            "browser_uuid": "exp-test-uuid",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert "exp" in data
@@ -1431,6 +1460,7 @@ def test_submit_score_returns_exp(client):
     assert "coins" in data
     assert data["coins"] == data["exp"]
 
+
 def test_leaderboard_empty(client):
     resp = client.get("/octile/leaderboard")
     assert resp.status_code == 200
@@ -1438,16 +1468,28 @@ def test_leaderboard_empty(client):
     assert data["total_players"] == 0
     assert data["leaderboard"] == []
 
+
 def test_leaderboard_ranks_by_exp(client):
     # Submit scores for two players
-    client.post("/octile/score", json={
-        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": "player-a",
-    })
+    client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 1,
+            "resolve_time": 30.0,
+            "browser_uuid": "player-a",
+        },
+    )
     import time
+
     time.sleep(0.1)
-    client.post("/octile/score", json={
-        "puzzle_number": 2, "resolve_time": 15.0, "browser_uuid": "player-b",
-    })
+    client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 2,
+            "resolve_time": 15.0,
+            "browser_uuid": "player-b",
+        },
+    )
     resp = client.get("/octile/leaderboard?limit=10")
     assert resp.status_code == 200
     data = resp.json()
@@ -1467,30 +1509,39 @@ def test_leaderboard_ranks_by_exp(client):
 
 
 def test_auth_register(client):
-    resp = client.post("/octile/auth/register", json={
-        "email": "test@example.com",
-        "password": "secret123",
-        "display_name": "Tester",
-    })
+    resp = client.post(
+        "/octile/auth/register",
+        json={
+            "email": "test@example.com",
+            "password": "secret123",
+            "display_name": "Tester",
+        },
+    )
     assert resp.status_code == 200
     assert resp.json()["status"] == "pending"
 
 
 def test_auth_register_short_password(client):
-    resp = client.post("/octile/auth/register", json={
-        "email": "bad@example.com",
-        "password": "short",
-        "display_name": "Tester",
-    })
+    resp = client.post(
+        "/octile/auth/register",
+        json={
+            "email": "bad@example.com",
+            "password": "short",
+            "display_name": "Tester",
+        },
+    )
     assert resp.status_code == 400
 
 
 def test_auth_register_invalid_email(client):
-    resp = client.post("/octile/auth/register", json={
-        "email": "not-an-email",
-        "password": "secret123",
-        "display_name": "Tester",
-    })
+    resp = client.post(
+        "/octile/auth/register",
+        json={
+            "email": "not-an-email",
+            "password": "secret123",
+            "display_name": "Tester",
+        },
+    )
     assert resp.status_code == 400
 
 
@@ -1498,16 +1549,20 @@ def test_auth_verify_and_login(client):
     """Full flow: register → read OTP from DB → verify → login."""
     email = "flow@example.com"
     # Register
-    resp = client.post("/octile/auth/register", json={
-        "email": email,
-        "password": "mypassword",
-        "display_name": "Flow Tester",
-        "browser_uuid": "uuid-flow",
-    })
+    resp = client.post(
+        "/octile/auth/register",
+        json={
+            "email": email,
+            "password": "mypassword",
+            "display_name": "Flow Tester",
+            "browser_uuid": "uuid-flow",
+        },
+    )
     assert resp.status_code == 200
 
     # Read OTP directly from DB
     from octile_api import get_session, OctileUser
+
     session = get_session()
     user = session.query(OctileUser).filter(OctileUser.email == email).first()
     otp = user.otp_code
@@ -1524,7 +1579,9 @@ def test_auth_verify_and_login(client):
     token = data["access_token"]
 
     # Login with password
-    resp = client.post("/octile/auth/login", json={"email": email, "password": "mypassword"})
+    resp = client.post(
+        "/octile/auth/login", json={"email": email, "password": "mypassword"}
+    )
     assert resp.status_code == 200
     assert "access_token" in resp.json()
 
@@ -1544,41 +1601,66 @@ def test_auth_verify_and_login(client):
 
 def test_auth_verify_wrong_otp(client):
     email = "wrong-otp@example.com"
-    client.post("/octile/auth/register", json={
-        "email": email, "password": "secret123", "display_name": "Bad OTP",
-    })
-    resp = client.post("/octile/auth/verify", json={"email": email, "otp_code": "000000"})
+    client.post(
+        "/octile/auth/register",
+        json={
+            "email": email,
+            "password": "secret123",
+            "display_name": "Bad OTP",
+        },
+    )
+    resp = client.post(
+        "/octile/auth/verify", json={"email": email, "otp_code": "000000"}
+    )
     assert resp.status_code == 400
 
 
 def test_auth_verify_nonexistent(client):
-    resp = client.post("/octile/auth/verify", json={"email": "nope@example.com", "otp_code": "123456"})
+    resp = client.post(
+        "/octile/auth/verify", json={"email": "nope@example.com", "otp_code": "123456"}
+    )
     assert resp.status_code == 404
 
 
 def test_auth_duplicate_register(client):
     """Registering same email twice before verify should update OTP."""
     email = "dup@example.com"
-    client.post("/octile/auth/register", json={
-        "email": email, "password": "password1", "display_name": "First",
-    })
+    client.post(
+        "/octile/auth/register",
+        json={
+            "email": email,
+            "password": "password1",
+            "display_name": "First",
+        },
+    )
     # Re-register should succeed (updates pending account)
-    resp = client.post("/octile/auth/register", json={
-        "email": email, "password": "password2", "display_name": "Second",
-    })
+    resp = client.post(
+        "/octile/auth/register",
+        json={
+            "email": email,
+            "password": "password2",
+            "display_name": "Second",
+        },
+    )
     assert resp.status_code == 200
 
     # Verify, then try to register again — should get 409
     from octile_api import get_session, OctileUser
+
     session = get_session()
     user = session.query(OctileUser).filter(OctileUser.email == email).first()
     otp = user.otp_code
     session.close()
 
     client.post("/octile/auth/verify", json={"email": email, "otp_code": otp})
-    resp = client.post("/octile/auth/register", json={
-        "email": email, "password": "password3", "display_name": "Third",
-    })
+    resp = client.post(
+        "/octile/auth/register",
+        json={
+            "email": email,
+            "password": "password3",
+            "display_name": "Third",
+        },
+    )
     assert resp.status_code == 409
 
 
@@ -1586,10 +1668,16 @@ def test_auth_forgot_and_reset_password(client):
     """Register → verify → forgot password → reset with OTP."""
     email = "reset@example.com"
     # Register + verify
-    client.post("/octile/auth/register", json={
-        "email": email, "password": "oldpass", "display_name": "Resetter",
-    })
+    client.post(
+        "/octile/auth/register",
+        json={
+            "email": email,
+            "password": "oldpass",
+            "display_name": "Resetter",
+        },
+    )
     from octile_api import get_session, OctileUser
+
     session = get_session()
     user = session.query(OctileUser).filter(OctileUser.email == email).first()
     otp = user.otp_code
@@ -1608,23 +1696,34 @@ def test_auth_forgot_and_reset_password(client):
     assert reset_otp is not None
 
     # Reset with new password
-    resp = client.post("/octile/auth/reset-password", json={
-        "email": email, "otp_code": reset_otp, "new_password": "newpass123",
-    })
+    resp = client.post(
+        "/octile/auth/reset-password",
+        json={
+            "email": email,
+            "otp_code": reset_otp,
+            "new_password": "newpass123",
+        },
+    )
     assert resp.status_code == 200
 
     # Login with new password
-    resp = client.post("/octile/auth/login", json={"email": email, "password": "newpass123"})
+    resp = client.post(
+        "/octile/auth/login", json={"email": email, "password": "newpass123"}
+    )
     assert resp.status_code == 200
 
     # Old password no longer works
-    resp = client.post("/octile/auth/login", json={"email": email, "password": "oldpass"})
+    resp = client.post(
+        "/octile/auth/login", json={"email": email, "password": "oldpass"}
+    )
     assert resp.status_code == 401
 
 
 def test_auth_forgot_nonexistent_email(client):
     """Forgot password for non-existent email should not reveal existence."""
-    resp = client.post("/octile/auth/forgot-password", json={"email": "nobody@example.com"})
+    resp = client.post(
+        "/octile/auth/forgot-password", json={"email": "nobody@example.com"}
+    )
     assert resp.status_code == 200  # Always 200, don't leak info
 
 
@@ -1633,12 +1732,20 @@ def test_auth_forgot_nonexistent_email(client):
 # ---------------------------------------------------------------------------
 
 
-def _get_auth_token(client, email="sync@example.com", password="syncpass123", name="Syncer"):
+def _get_auth_token(
+    client, email="sync@example.com", password="syncpass123", name="Syncer"
+):
     """Helper: register + verify + return JWT token."""
-    client.post("/octile/auth/register", json={
-        "email": email, "password": password, "display_name": name,
-    })
+    client.post(
+        "/octile/auth/register",
+        json={
+            "email": email,
+            "password": password,
+            "display_name": name,
+        },
+    )
     from octile_api import get_session, OctileUser
+
     session = get_session()
     user = session.query(OctileUser).filter(OctileUser.email == email).first()
     otp = user.otp_code
@@ -1659,23 +1766,27 @@ def test_sync_push_and_pull(client):
     headers = {"Authorization": f"Bearer {token}"}
 
     # Push progress
-    resp = client.post("/octile/sync/push", headers=headers, json={
-        "browser_uuid": "uuid-sync",
-        "level_easy": 100,
-        "level_medium": 50,
-        "exp": 5000,
-        "diamonds": 200,
-        "chapters_completed": 3,
-        "achievements": ["speed_30", "streak_3"],
-        "streak_count": 7,
-        "streak_last_date": "2026-03-29",
-        "months": [1, 3],
-        "total_solved": 150,
-        "total_time": 4500.0,
-        "grades_s": 50,
-        "grades_a": 80,
-        "grades_b": 20,
-    })
+    resp = client.post(
+        "/octile/sync/push",
+        headers=headers,
+        json={
+            "browser_uuid": "uuid-sync",
+            "level_easy": 100,
+            "level_medium": 50,
+            "exp": 5000,
+            "diamonds": 200,
+            "chapters_completed": 3,
+            "achievements": ["speed_30", "streak_3"],
+            "streak_count": 7,
+            "streak_last_date": "2026-03-29",
+            "months": [1, 3],
+            "total_solved": 150,
+            "total_time": 4500.0,
+            "grades_s": 50,
+            "grades_a": 80,
+            "grades_b": 20,
+        },
+    )
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
 
@@ -1699,38 +1810,52 @@ def test_sync_merge_max(client):
     headers = {"Authorization": f"Bearer {token}"}
 
     # First push
-    client.post("/octile/sync/push", headers=headers, json={
-        "level_easy": 200, "level_medium": 100, "exp": 8000, "diamonds": 500,
-        "achievements": ["speed_30"], "months": [1, 2],
-        "streak_count": 10, "streak_last_date": "2026-03-28",
-        "total_solved": 300, "grades_s": 100,
-    })
+    client.post(
+        "/octile/sync/push",
+        headers=headers,
+        json={
+            "level_easy": 200,
+            "level_medium": 100,
+            "exp": 8000,
+            "diamonds": 500,
+            "achievements": ["speed_30"],
+            "months": [1, 2],
+            "streak_count": 10,
+            "streak_last_date": "2026-03-28",
+            "total_solved": 300,
+            "grades_s": 100,
+        },
+    )
 
     # Second push with some lower, some higher values
-    client.post("/octile/sync/push", headers=headers, json={
-        "level_easy": 150,   # lower — should keep 200
-        "level_medium": 200, # higher — should update to 200
-        "exp": 6000,         # lower — should keep 8000
-        "diamonds": 700,     # higher — should update to 700
-        "achievements": ["streak_7"],  # new — should union
-        "months": [2, 3],    # new month 3 — should union
-        "streak_count": 12,  # higher
-        "streak_last_date": "2026-03-29",
-        "total_solved": 250, # lower — should keep 300
-        "grades_s": 80,      # lower — should keep 100
-    })
+    client.post(
+        "/octile/sync/push",
+        headers=headers,
+        json={
+            "level_easy": 150,  # lower — should keep 200
+            "level_medium": 200,  # higher — should update to 200
+            "exp": 6000,  # lower — should keep 8000
+            "diamonds": 700,  # higher — should update to 700
+            "achievements": ["streak_7"],  # new — should union
+            "months": [2, 3],  # new month 3 — should union
+            "streak_count": 12,  # higher
+            "streak_last_date": "2026-03-29",
+            "total_solved": 250,  # lower — should keep 300
+            "grades_s": 80,  # lower — should keep 100
+        },
+    )
 
     resp = client.get("/octile/sync/pull", headers=headers)
     p = resp.json()["progress"]
-    assert p["level_easy"] == 200       # kept higher
-    assert p["level_medium"] == 200     # updated
-    assert p["exp"] == 8000             # kept higher
-    assert p["diamonds"] == 700         # updated
+    assert p["level_easy"] == 200  # kept higher
+    assert p["level_medium"] == 200  # updated
+    assert p["exp"] == 8000  # kept higher
+    assert p["diamonds"] == 700  # updated
     assert sorted(p["achievements"]) == ["speed_30", "streak_7"]  # union
     assert sorted(p["months"]) == [1, 2, 3]  # union
-    assert p["streak_count"] == 12      # updated
-    assert p["total_solved"] == 300     # kept higher
-    assert p["grades_s"] == 100         # kept higher
+    assert p["streak_count"] == 12  # updated
+    assert p["total_solved"] == 300  # kept higher
+    assert p["grades_s"] == 100  # kept higher
 
 
 def test_sync_requires_auth(client):
@@ -1754,6 +1879,7 @@ def test_google_auth_not_configured(client):
 def test_google_auth_redirect(client):
     """With credentials configured, should redirect to Google."""
     import octile_api
+
     orig_id = octile_api.OCTILE_GOOGLE_CLIENT_ID
     orig_secret = octile_api.OCTILE_GOOGLE_CLIENT_SECRET
     octile_api.OCTILE_GOOGLE_CLIENT_ID = "test-client-id"
@@ -1772,6 +1898,8 @@ def test_google_auth_redirect(client):
 
 def test_google_callback_invalid_state(client):
     """Callback with invalid state should redirect with error."""
-    resp = client.get("/octile/auth/google/callback?code=abc&state=invalid", follow_redirects=False)
+    resp = client.get(
+        "/octile/auth/google/callback?code=abc&state=invalid", follow_redirects=False
+    )
     assert resp.status_code == 307
     assert "auth_error=invalid_state" in resp.headers["location"]

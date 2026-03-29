@@ -789,7 +789,7 @@ if os.path.exists(spa_dir):
         # Externally, APIs are /xsw/api/**, but internally Starlette still sees paths
         # without root_path. If you also mount/route with "/xsw/api" prefixes locally,
         # keep this guard; otherwise you can remove it.
-        if path.startswith("/xsw/api"):
+        if path.startswith("/xsw/api") or path.startswith("/octile"):
             return response
 
         # Heuristic: if the last segment has no dot => likely a client route, not a file.

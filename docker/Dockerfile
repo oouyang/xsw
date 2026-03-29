@@ -3,7 +3,7 @@
 # ============================================================
 FROM node:22-alpine AS spa-builder
 WORKDIR /web
-COPY package*.json .
+COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm config set strict-ssl false && npm ci --ignore-scripts
 COPY . .
 RUN --mount=type=cache,target=/root/.npm npm run build
@@ -34,7 +34,7 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
       pip config set global.index-url "${INDEX_URL}" && \
-      pip config set global.trusted-host "${TRUSTED_HOST}"; \
+      pip config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org ${TRUSTED_HOST}"; \
     else \
       echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
     fi && \
