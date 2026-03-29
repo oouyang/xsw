@@ -17,14 +17,14 @@ FULL = (1 << 64) - 1
 
 # Pieces sorted largest first (same order as the solver)
 PLAYER_PIECES = [
-    (3, 4),   # blue2: 12 cells
-    (2, 5),   # blue1: 10 cells
-    (3, 3),   # yel1:  9 cells
-    (2, 4),   # yel2:  8 cells
-    (2, 3),   # red1:  6 cells
-    (1, 5),   # white1: 5 cells
-    (1, 4),   # red2:  4 cells
-    (2, 2),   # white2: 4 cells
+    (3, 4),  # blue2: 12 cells
+    (2, 5),  # blue1: 10 cells
+    (3, 3),  # yel1:  9 cells
+    (2, 4),  # yel2:  8 cells
+    (2, 3),  # red1:  6 cells
+    (1, 5),  # white1: 5 cells
+    (1, 4),  # red2:  4 cells
+    (2, 2),  # white2: 4 cells
 ]
 
 
@@ -100,8 +100,10 @@ P92_MAP = {c: i for i, c in enumerate(P92)}
 def load_puzzle_data():
     """Load puzzle data from octile_puzzle_data.py in xsw repo."""
     import sys
-    sys.path.insert(0, '/Users/oouyang/ws/xsw')
+
+    sys.path.insert(0, "/Users/oouyang/ws/xsw")
     from octile_puzzle_data import PUZZLE_DATA
+
     return PUZZLE_DATA
 
 
@@ -162,8 +164,9 @@ def main():
     # Create batches
     batch_size = max(1, total // (cpu_count() * 4))
     all_indices = list(range(total))
-    batches = [(data, all_indices[i:i + batch_size])
-               for i in range(0, total, batch_size)]
+    batches = [
+        (data, all_indices[i : i + batch_size]) for i in range(0, total, batch_size)
+    ]
 
     # Process in parallel
     attempts_map = {}
@@ -175,7 +178,7 @@ def main():
             done += len(results)
             if done % 2000 < batch_size or done == total:
                 elapsed = time.time() - t0
-                print(f"  {done}/{total} ({done*100/total:.0f}%) — {elapsed:.0f}s")
+                print(f"  {done}/{total} ({done * 100 / total:.0f}%) — {elapsed:.0f}s")
 
     t1 = time.time()
     print(f"\nDone in {t1 - t0:.1f}s")
@@ -211,10 +214,10 @@ def main():
         level_counts[level - 1] += 1
 
     print("\nLevel distribution:")
-    print(f"  Easy (1):   {level_counts[0]} ({level_counts[0]*100/total:.1f}%)")
-    print(f"  Medium (2): {level_counts[1]} ({level_counts[1]*100/total:.1f}%)")
-    print(f"  Hard (3):   {level_counts[2]} ({level_counts[2]*100/total:.1f}%)")
-    print(f"  Hell (4):   {level_counts[3]} ({level_counts[3]*100/total:.1f}%)")
+    print(f"  Easy (1):   {level_counts[0]} ({level_counts[0] * 100 / total:.1f}%)")
+    print(f"  Medium (2): {level_counts[1]} ({level_counts[1] * 100 / total:.1f}%)")
+    print(f"  Hard (3):   {level_counts[2]} ({level_counts[2] * 100 / total:.1f}%)")
+    print(f"  Hell (4):   {level_counts[3]} ({level_counts[3] * 100 / total:.1f}%)")
     print(f"\nThresholds: easy ≤{p25}, medium ≤{p50}, hard ≤{p85}, hell >{p85}")
 
     # Save results

@@ -49,7 +49,9 @@ class Book(Base):
     source_url = Column(String, unique=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_scraped_at = Column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     # Relationships
@@ -77,7 +79,11 @@ class Chapter(Base):
     # Metadata
     word_count = Column(Integer)
     fetched_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Relationships
     book = relationship("Book", back_populates="chapters")
@@ -172,7 +178,11 @@ class SmtpSettings(Base):
 
     # Metadata
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
     last_test_at = Column(DateTime, nullable=True)
     last_test_status = Column(String, nullable=True)  # success, error
 
@@ -248,7 +258,11 @@ class ReadingProgress(Base):
     chapter_title = Column(String, nullable=True)
     chapter_id = Column(String, nullable=True)
     scroll_position = Column(Integer, default=0)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Relationships
     user = relationship("User", back_populates="reading_progress")
@@ -273,7 +287,11 @@ class Comment(Base):
     book_id = Column(String, nullable=False)  # public_id
     text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Relationships
     user = relationship("User")

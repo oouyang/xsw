@@ -49,7 +49,9 @@ class PageView(AnalyticsBase):
     ip_hash = Column(String(16), nullable=True)
     user_agent_hash = Column(String(16), nullable=True)
     referer = Column(String, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
 
     __table_args__ = (Index("idx_pv_book_created", "book_id", "created_at"),)
 
