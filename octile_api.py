@@ -97,7 +97,7 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import text as sql_text
 
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -2093,3 +2093,144 @@ def get_player_elo(uuid: str):
         return {"elo": elo, "solves": count}
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Analytics — user-agent parsing and distribution endpoint
+# ---------------------------------------------------------------------------
+import re as _re
+
+def _parse_ua(ua: str) -> dict:
+    """Parse a user-agent string into platform, os, and browser."""
+    if not ua:
+        return {"platform": "Unknown", "os": "Unknown", "browser": "Unknown"}
+
+    # OS detection
+    if "Android" in ua:
+        m = _re.search(r"Android\s*([\d.]+)", ua)
+        os_name = "Android " + m.group(1) if m else "Android"
+        platform = "Android"
+    elif "iPhone" in ua or "iPad" in ua:
+        m = _re.search(r"OS\s+([\d_]+)", ua)
+        ver = m.group(1).replace("_", ".") if m else ""
+        os_name = "iOS " + ver if ver else "iOS"
+        platform = "iOS"
+    elif "Windows" in ua:
+        m = _re.search(r"Windows NT\s*([\d.]+)", ua)
+        nt_map = {"10.0": "10/11", "6.3": "8.1", "6.2": "8", "6.1": "7"}
+        ver = nt_map.get(m.group(1), m.group(1)) if m else ""
+        os_name = "Windows " + ver if ver else "Windows"
+        platform = "Desktop"
+    elif "Macintosh" in ua or "Mac OS X" in ua:
+        m = _re.search(r"Mac OS X\s+([\d_.]+)", ua)
+        ver = m.group(1).replace("_", ".") if m else ""
+        os_name = "macOS " + ver if ver else "macOS"
+        platform = "Desktop"
+    elif "Linux" in ua:
+        os_name = "Linux"
+        platform = "Desktop"
+    elif "CrOS" in ua:
+        os_name = "ChromeOS"
+        platform = "Desktop"
+    else:
+        os_name = "Unknown"
+        platform = "Unknown"
+
+    # Browser detection (order matters)
+    if "OctileAndroid" in ua or "OctileApp" in ua:
+        browser = "Octile App"
+        platform = "Android"
+    elif "Edg/" in ua:
+        m = _re.search(r"Edg/([\d.]+)", ua)
+        browser = "Edge " + m.group(1).split(".")[0] if m else "Edge"
+    elif "OPR/" in ua or "Opera" in ua:
+        browser = "Opera"
+    elif "Firefox/" in ua:
+        m = _re.search(r"Firefox/([\d.]+)", ua)
+        browser = "Firefox " + m.group(1).split(".")[0] if m else "Firefox"
+    elif "CriOS/" in ua:
+        browser = "Chrome (iOS)"
+    elif "Chrome/" in ua:
+        m = _re.search(r"Chrome/([\d.]+)", ua)
+        browser = "Chrome " + m.group(1).split(".")[0] if m else "Chrome"
+    elif "Safari/" in ua and "Version/" in ua:
+        m = _re.search(r"Version/([\d.]+)", ua)
+        browser = "Safari " + m.group(1).split(".")[0] if m else "Safari"
+    elif "Safari/" in ua:
+        browser = "Safari"
+    else:
+        browser = "Other"
+
+    return {"platform": platform, "os": os_name, "browser": browser}
+
+
+@octile_router.get("/analytics")
+def get_analytics():
+    """Return user distribution by platform, OS, and browser."""
+    session = get_session()
+    try:
+        # Get distinct (browser_uuid, user_agent) pairs — latest UA per user
+        from sqlalchemy import desc
+        subq = (
+            session.query(
+                OctileScore.browser_uuid,
+                OctileScore.user_agent,
+                func.max(OctileScore.created_at).label("last_seen"),
+            )
+            .filter(OctileScore.user_agent.isnot(None), OctileScore.user_agent != "")
+            .group_by(OctileScore.browser_uuid)
+            .all()
+        )
+
+        platform_counts = {}
+        os_counts = {}
+        browser_counts = {}
+        players = []
+
+        for row in subq:
+            parsed = _parse_ua(row.user_agent)
+            p, o, b = parsed["platform"], parsed["os"], parsed["browser"]
+            platform_counts[p] = platform_counts.get(p, 0) + 1
+            os_counts[o] = os_counts.get(o, 0) + 1
+            browser_counts[b] = browser_counts.get(b, 0) + 1
+            players.append({
+                "uuid": row.browser_uuid[:8] + "…",
+                "platform": p,
+                "os": o,
+                "browser": b,
+                "last_seen": row.last_seen.isoformat() if row.last_seen else "",
+                "ua": row.user_agent[:120] if row.user_agent else "",
+            })
+
+        # Sort by count descending
+        def _sorted(d):
+            return sorted(d.items(), key=lambda x: -x[1])
+
+        # Total unique players (including those without UA)
+        total_players = (
+            session.query(func.count(func.distinct(OctileScore.browser_uuid)))
+            .scalar()
+        )
+        total_scores = session.query(func.count(OctileScore.id)).scalar()
+
+        return {
+            "total_players": total_players,
+            "total_scores": total_scores,
+            "players_with_ua": len(subq),
+            "platform": _sorted(platform_counts),
+            "os": _sorted(os_counts),
+            "browser": _sorted(browser_counts),
+            "players": sorted(players, key=lambda x: x["last_seen"], reverse=True),
+        }
+    finally:
+        session.close()
+
+
+@octile_router.get("/analytics/dashboard")
+def analytics_dashboard():
+    """Serve the analytics dashboard HTML."""
+    import pathlib
+    html_path = pathlib.Path(__file__).parent / "octile_analytics.html"
+    if not html_path.exists():
+        return HTMLResponse("<h1>Dashboard not found</h1>", status_code=404)
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
