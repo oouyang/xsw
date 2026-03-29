@@ -70,6 +70,7 @@ Still accepted for backward compatibility.
 import hashlib
 import hmac
 import os
+import re as _re
 import secrets
 import time as _time
 from collections import defaultdict
@@ -2098,7 +2099,7 @@ def get_player_elo(uuid: str):
 # ---------------------------------------------------------------------------
 # Analytics — user-agent parsing and distribution endpoint
 # ---------------------------------------------------------------------------
-import re as _re
+
 
 def _parse_ua(ua: str) -> dict:
     """Parse a user-agent string into platform, os, and browser."""
@@ -2170,7 +2171,6 @@ def get_analytics():
     session = get_session()
     try:
         # Get distinct (browser_uuid, user_agent) pairs — latest UA per user
-        from sqlalchemy import desc
         subq = (
             session.query(
                 OctileScore.browser_uuid,
