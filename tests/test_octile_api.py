@@ -1903,3 +1903,90 @@ def test_google_callback_invalid_state(client):
     )
     assert resp.status_code == 307
     assert "auth_error=invalid_state" in resp.headers["location"]
+
+
+# ---------------------------------------------------------------------------
+# Player stats + ELO
+# ---------------------------------------------------------------------------
+
+
+def test_player_stats_empty(client):
+    resp = client.get("/octile/player/nonexistent-uuid/stats")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "empty"
+
+
+def test_player_stats_with_scores(client):
+    """Submit scores then check stats. Uses two UUIDs to avoid rate limit."""
+    uuid1 = "stats-player-a"
+    uuid2 = "stats-player-b"
+    # Submit easy puzzle (fast = S grade)
+    client.post("/octile/score", json={
+        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": uuid1,
+    })
+    # Submit another with different uuid (slower = B grade)
+    client.post("/octile/score", json={
+        "puzzle_number": 2, "resolve_time": 200.0, "browser_uuid": uuid2,
+    })
+
+    # Check stats for first player (1 score)
+    resp = client.get(f"/octile/player/{uuid1}/stats")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["puzzles_solved"] == 1
+    assert data["total_exp"] > 0
+    assert "easy" in data["by_difficulty"]
+    assert data["grade_distribution"]["S"] >= 1
+    assert "elo" in data
+
+
+def test_player_elo_initial(client):
+    resp = client.get("/octile/player/no-scores-uuid/elo")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["elo"] == 1200  # ELO_INITIAL
+    assert data["solves"] == 0
+
+
+def test_player_elo_after_scores(client):
+    """ELO should change after solving puzzles."""
+    import time
+    uuid = "elo-test-player"
+    # Fast solve on easy puzzle = S grade → ELO should go up slightly
+    client.post("/octile/score", json={
+        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": uuid,
+    })
+    time.sleep(0.1)
+    resp = client.get(f"/octile/player/{uuid}/elo")
+    data = resp.json()
+    assert data["solves"] == 1
+    # S grade on easy (puzzle ELO 800) from 1200 player
+    # Expected ≈ 0.94, Actual = 1.0, change ≈ +2.4 → ELO ≈ 1202
+    assert data["elo"] > 1200  # should increase
+
+
+def test_elo_in_score_response(client):
+    """Score submission response should include ELO."""
+    resp = client.post("/octile/score", json={
+        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": "elo-resp-uuid",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert "elo" in data
+    assert data["elo"] is not None
+
+
+def test_calc_elo_change():
+    from octile_api import calc_elo_change
+    # High player on easy puzzle, S grade → tiny gain
+    change = calc_elo_change(2000, 1, "S", 200)
+    assert 0 < change < 1
+
+    # Low player on nightmare, S grade → big gain
+    change = calc_elo_change(1200, 4, "S", 5)
+    assert change > 30
+
+    # High player, B grade on hard → should lose ELO
+    change = calc_elo_change(2000, 3, "B", 200)
+    assert change < 0

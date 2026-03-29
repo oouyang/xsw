@@ -155,6 +155,63 @@ def grade_multiplier(grade: str) -> float:
     return 1.0
 
 
+# ---------------------------------------------------------------------------
+# ELO Rating System
+# ---------------------------------------------------------------------------
+ELO_INITIAL = 1200
+# Puzzle ELO based on difficulty (midpoint of designed ranges)
+PUZZLE_ELO = {1: 800, 2: 1250, 3: 1850, 4: 2600}
+# Grade to performance score
+GRADE_SCORE = {"S": 1.0, "A": 0.7, "B": 0.4}
+
+
+def calc_elo_change(player_elo: float, puzzle_difficulty: int, grade: str,
+                    solves_count: int) -> float:
+    """Calculate ELO change for a single solve.
+
+    K-factor decays with experience:
+      - First 30 solves: K=40 (volatile, fast calibration)
+      - 30-100 solves: K=20
+      - 100+ solves: K=10 (stable)
+    """
+    puzzle_elo = PUZZLE_ELO.get(puzzle_difficulty, 1250)
+    actual = GRADE_SCORE.get(grade, 0.4)
+
+    # Expected performance based on ELO gap
+    expected = 1.0 / (1.0 + 10.0 ** ((puzzle_elo - player_elo) / 400.0))
+
+    # K-factor
+    if solves_count < 30:
+        k = 40
+    elif solves_count < 100:
+        k = 20
+    else:
+        k = 10
+
+    return k * (actual - expected)
+
+
+def calc_elo_for_player(session, browser_uuid: str) -> float:
+    """Recalculate ELO from scratch by replaying all scores in order."""
+    scores = (
+        session.query(OctileScore.puzzle_number, OctileScore.resolve_time, OctileScore.flagged)
+        .filter(OctileScore.browser_uuid == browser_uuid)
+        .order_by(OctileScore.created_at.asc())
+        .all()
+    )
+    elo = float(ELO_INITIAL)
+    for i, (puzzle_num, resolve_time, flagged) in enumerate(scores):
+        if flagged:
+            continue
+        try:
+            difficulty = get_puzzle_difficulty(puzzle_num)
+        except Exception:
+            continue
+        grade = calc_skill_grade(difficulty, resolve_time)
+        elo += calc_elo_change(elo, difficulty, grade, i)
+    return round(elo, 1)
+
+
 def calc_exp(difficulty: int, resolve_time: float) -> int:
     """Calculate EXP earned for a puzzle solve (server-authoritative).
 
@@ -892,6 +949,7 @@ class ScoreResponse(BaseModel):
     exp: int = 0
     diamonds: int = 0
     grade: str = "B"
+    elo: Optional[float] = None
 
 
 class ScoreboardResponse(BaseModel):
@@ -1144,9 +1202,15 @@ async def submit_score(request: Request):
         session.add(score)
         session.commit()
         session.refresh(score)
+
+        # Calculate updated ELO for this player
+        resp = _score_to_response(score)
+        if not flagged:
+            resp.elo = calc_elo_for_player(session, body.browser_uuid)
+
         return JSONResponse(
             status_code=201,
-            content=_score_to_response(score).model_dump(),
+            content=resp.model_dump(),
         )
     finally:
         session.close()
@@ -1918,5 +1982,104 @@ def sync_pull(user: dict = Depends(require_octile_auth)):
                 "grades_b": prog.grades_b or 0,
             },
         }
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Player stats + ELO endpoints
+# ---------------------------------------------------------------------------
+
+
+@octile_router.get("/player/{uuid}/stats")
+def get_player_stats(uuid: str):
+    """Get aggregated stats for a player from server-side score data."""
+    session = get_session()
+    try:
+        # Overall stats
+        overall = (
+            session.query(
+                func.sum(OctileScore.exp).label("total_exp"),
+                func.sum(OctileScore.diamonds).label("total_diamonds"),
+                func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles_solved"),
+                func.avg(OctileScore.resolve_time).label("avg_time"),
+                func.count(OctileScore.id).label("total_solves"),
+            )
+            .filter(OctileScore.browser_uuid == uuid, OctileScore.flagged == 0)
+            .first()
+        )
+
+        if not overall or not overall.total_solves:
+            return {"status": "empty"}
+
+        # Per-difficulty breakdown
+        by_diff_rows = (
+            session.query(
+                OctileScore.puzzle_number,
+                OctileScore.resolve_time,
+                OctileScore.exp,
+            )
+            .filter(OctileScore.browser_uuid == uuid, OctileScore.flagged == 0)
+            .all()
+        )
+
+        by_difficulty = {}
+        for pn, rt, xp in by_diff_rows:
+            try:
+                d = get_puzzle_difficulty(pn)
+            except Exception:
+                continue
+            label = DIFFICULTY_LABELS.get(d, "unknown")
+            if label not in by_difficulty:
+                by_difficulty[label] = {"count": 0, "total_time": 0.0, "total_exp": 0}
+            by_difficulty[label]["count"] += 1
+            by_difficulty[label]["total_time"] += rt
+            by_difficulty[label]["total_exp"] += xp
+
+        for label, stats in by_difficulty.items():
+            stats["avg_time"] = round(stats["total_time"] / stats["count"], 1) if stats["count"] else 0
+            del stats["total_time"]
+
+        # Grade distribution (computed from scores)
+        grades = {"S": 0, "A": 0, "B": 0}
+        for pn, rt, _ in by_diff_rows:
+            try:
+                d = get_puzzle_difficulty(pn)
+            except Exception:
+                continue
+            g = calc_skill_grade(d, rt)
+            grades[g] += 1
+
+        # ELO
+        elo = calc_elo_for_player(session, uuid)
+
+        return {
+            "status": "ok",
+            "total_exp": overall.total_exp or 0,
+            "total_diamonds": overall.total_diamonds or 0,
+            "puzzles_solved": overall.puzzles_solved or 0,
+            "avg_time": round(overall.avg_time, 1) if overall.avg_time else 0,
+            "by_difficulty": by_difficulty,
+            "grade_distribution": grades,
+            "elo": elo,
+        }
+    finally:
+        session.close()
+
+
+@octile_router.get("/player/{uuid}/elo")
+def get_player_elo(uuid: str):
+    """Get ELO rating for a player."""
+    session = get_session()
+    try:
+        count = (
+            session.query(func.count(OctileScore.id))
+            .filter(OctileScore.browser_uuid == uuid, OctileScore.flagged == 0)
+            .scalar()
+        )
+        if not count:
+            return {"elo": ELO_INITIAL, "solves": 0}
+        elo = calc_elo_for_player(session, uuid)
+        return {"elo": elo, "solves": count}
     finally:
         session.close()
