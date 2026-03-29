@@ -1370,20 +1370,25 @@ def get_puzzle(number: int):
 
 
 @octile_router.get("/levels")
-def get_levels():
-    """Return puzzle counts per difficulty level."""
+def get_levels(transforms: int = 8):
+    """Return puzzle counts per difficulty level.
+
+    transforms: number of D4 transforms per base puzzle (1=base only, 8=full set).
+    """
+    t = max(1, min(8, transforms))
     return {
-        level_name: get_level_total(level_num)
+        level_name: len(_get_level_bases().get(level_num, [])) * t
         for level_num, level_name in DIFFICULTY_LABELS.items()
     }
 
 
 @octile_router.get("/level/{level}/puzzle/{slot}")
-def get_level_puzzle(level: str, slot: int):
+def get_level_puzzle(level: str, slot: int, transforms: int = 8):
     """Get puzzle by difficulty level and slot (1-based, sequential by difficulty).
 
     Level: easy, medium, hard, hell
-    Slot: 1 to level_total (8 transforms per base, ordered easiest first)
+    Slot: 1 to level_total
+    transforms: 1=base puzzles only, 8=full set with D4 transforms (default)
     """
     level_num = next((k for k, v in DIFFICULTY_LABELS.items() if v == level), None)
     if level_num is None:
@@ -1392,18 +1397,23 @@ def get_level_puzzle(level: str, slot: int):
             content={"detail": "level must be easy, medium, hard, or hell"},
         )
 
-    total = get_level_total(level_num)
+    t = max(1, min(8, transforms))
+    bases = _get_level_bases().get(level_num, [])
+    num_bases = len(bases)
+    total = num_bases * t
+
     if slot < 1 or slot > total:
         return JSONResponse(
             status_code=400,
             content={"detail": f"slot must be 1–{total}"},
         )
 
-    result = level_slot_to_puzzle(level_num, slot)
-    if result is None:
-        return JSONResponse(status_code=400, content={"detail": "invalid slot"})
-
-    puzzle_number, base_idx = result
+    # Interleaved ordering: slot → (base_pos, transform)
+    slot_0 = slot - 1
+    base_pos = slot_0 % num_bases
+    transform = slot_0 // num_bases
+    base_idx = bases[base_pos]
+    puzzle_number = transform * PUZZLE_COUNT + base_idx + 1
     cells = decode_puzzle_extended(puzzle_number)
     return {
         "puzzle_number": puzzle_number,

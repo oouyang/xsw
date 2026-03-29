@@ -1374,6 +1374,26 @@ def test_get_level_puzzle_cells_valid(client):
     assert data["cells"] == expected_cells
 
 
+def test_levels_transforms_1(client):
+    """With transforms=1, totals should be 1/8 of default."""
+    resp8 = client.get("/octile/levels")
+    resp1 = client.get("/octile/levels?transforms=1")
+    for level in ("easy", "medium", "hard", "hell"):
+        assert resp1.json()[level] == resp8.json()[level] // 8
+
+
+def test_level_puzzle_transforms_1(client):
+    """With transforms=1, slot 1 should return transform 0 (base puzzle)."""
+    resp = client.get("/octile/level/easy/puzzle/1?transforms=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    # puzzle_number should be in base range (1 to PUZZLE_COUNT)
+    assert 1 <= data["puzzle_number"] <= 11378
+    # Total should be 1/8 of full
+    resp_full = client.get("/octile/levels")
+    assert data["total"] == resp_full.json()["easy"] // 8
+
+
 def test_get_level_puzzle_sequential_order(client):
     """First puzzle in each level should be easier than last."""
     from octile_api import get_puzzle_attempts
