@@ -815,7 +815,7 @@ def init_db(db_url: str = None):
     global _engine, _SessionLocal
 
     if db_url is None:
-        db_path = os.getenv("OCTILE_DB_PATH", "octile.db")
+        db_path = os.getenv("OCTILE_DB_PATH", "data/octile.db")
         db_url = f"sqlite:///{db_path}"
 
     _engine = create_engine(
