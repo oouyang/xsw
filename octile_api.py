@@ -663,6 +663,7 @@ class OctileUser(OctileBase):
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     display_name = Column(String, nullable=False)
+    picture = Column(String, nullable=True)
     browser_uuid = Column(String, nullable=True, index=True)
     is_verified = Column(Boolean, default=False)
     otp_code = Column(String, nullable=True)
@@ -1300,6 +1301,14 @@ def get_leaderboard(limit: int = 50):
             .limit(limit)
             .all()
         )
+        # Look up display names and pictures for UUIDs with linked accounts
+        uuids = [r.browser_uuid for r in rows]
+        user_map = {}
+        if uuids:
+            users = session.query(OctileUser).filter(OctileUser.browser_uuid.in_(uuids)).all()
+            for u in users:
+                user_map[u.browser_uuid] = {"display_name": u.display_name, "picture": u.picture}
+
         return {
             "total_players": len(rows),
             "leaderboard": [
@@ -1310,6 +1319,8 @@ def get_leaderboard(limit: int = 50):
                     "total_coins": r.total_exp or 0,  # legacy alias
                     "puzzles": r.puzzles,
                     "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                    "display_name": user_map.get(r.browser_uuid, {}).get("display_name"),
+                    "picture": user_map.get(r.browser_uuid, {}).get("picture"),
                 }
                 for r in rows
             ],
@@ -1679,11 +1690,17 @@ def auth_reset_password(req: ResetPasswordRequest):
 @octile_router.get("/auth/me")
 def auth_me(user: dict = Depends(require_octile_auth)):
     """Get current authenticated user info."""
-    return {
-        "id": int(user["sub"]),
-        "display_name": user["name"],
-        "email": user["email"],
-    }
+    session = get_session()
+    try:
+        db_user = session.query(OctileUser).filter(OctileUser.id == int(user["sub"])).first()
+        return {
+            "id": int(user["sub"]),
+            "display_name": db_user.display_name if db_user else user["name"],
+            "email": user["email"],
+            "picture": db_user.picture if db_user else None,
+        }
+    finally:
+        session.close()
 
 
 # --- Google OAuth (server-side redirect flow) ---
@@ -1817,6 +1834,7 @@ def auth_google_callback(
 
     google_email = idinfo.get("email", "")
     google_name = idinfo.get("name", google_email.split("@")[0])
+    google_picture = idinfo.get("picture", "")
 
     if not google_email:
         return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=no_email")
@@ -1835,6 +1853,7 @@ def auth_google_callback(
                     secrets.token_urlsafe(32)
                 ),  # random password
                 display_name=google_name,
+                picture=google_picture,
                 is_verified=True,
             )
             session.add(user)
@@ -1846,6 +1865,9 @@ def auth_google_callback(
             user.display_name = google_name
             session.commit()
 
+        # Always update picture from Google (may change)
+        if google_picture:
+            user.picture = google_picture
         user.last_login_at = datetime.now(timezone.utc)
         session.commit()
 
