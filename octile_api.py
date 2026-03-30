@@ -1710,12 +1710,13 @@ def auth_google_redirect(request: Request):
 
     # Detect source platform from query param (android or web)
     source = request.query_params.get("source", "web")
+    return_url = request.query_params.get("return_url", "")
 
     # Generate state token
     state = secrets.token_urlsafe(32)
     _google_states[state] = _time.time()
-    # Encode source in state
-    state_with_source = state + ":" + source
+    # Encode source and return_url in state (state:source:return_url)
+    state_with_source = state + ":" + source + ":" + return_url
 
     # Clean old states (> 10 min)
     now = _time.time()
@@ -1755,14 +1756,16 @@ def auth_google_callback(
     if not code or not state:
         return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=missing_params")
 
-    # Parse state
-    parts = state.split(":", 1)
+    # Parse state (state_token:source:return_url)
+    parts = state.split(":", 2)
     state_token = parts[0]
     source = parts[1] if len(parts) > 1 else "web"
+    return_url = parts[2] if len(parts) > 2 else ""
 
     # Verify state token
     if state_token not in _google_states:
-        return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=invalid_state")
+        err_url = return_url if return_url else OCTILE_SITE_URL
+        return RedirectResponse(url=err_url + "?auth_error=invalid_state")
     del _google_states[state_token]
 
     # Determine redirect URI (must match the one used in /auth/google)
@@ -1858,9 +1861,10 @@ def auth_google_callback(
             url=f"octile://auth?token={jwt_token}&name={encoded_name}"
         )
     else:
-        # Web: redirect to site with token in query params
+        # Web: redirect to return_url if provided, otherwise default site URL
+        site_url = return_url if return_url else OCTILE_SITE_URL
         return RedirectResponse(
-            url=f"{OCTILE_SITE_URL}?auth_token={jwt_token}&auth_name={encoded_name}"
+            url=f"{site_url}?auth_token={jwt_token}&auth_name={encoded_name}"
         )
 
 
