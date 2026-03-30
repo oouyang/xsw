@@ -1703,6 +1703,71 @@ def auth_me(user: dict = Depends(require_octile_auth)):
         session.close()
 
 
+# --- Google OAuth: ID token verification (Android Credential Manager) ---
+
+
+class GoogleVerifyRequest(BaseModel):
+    id_token: str
+
+
+@octile_router.post("/auth/google/verify")
+def auth_google_verify(req: GoogleVerifyRequest):
+    """Verify a Google ID token (from Android Credential Manager) and return a JWT."""
+    if not OCTILE_GOOGLE_CLIENT_ID:
+        return JSONResponse(status_code=501, content={"detail": "Google OAuth not configured"})
+
+    try:
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as google_requests
+
+        idinfo = google_id_token.verify_oauth2_token(
+            req.id_token, google_requests.Request(), OCTILE_GOOGLE_CLIENT_ID
+        )
+    except Exception as e:
+        return JSONResponse(status_code=401, content={"detail": f"Invalid ID token: {e}"})
+
+    google_email = idinfo.get("email", "")
+    google_name = idinfo.get("name", google_email.split("@")[0])
+    google_picture = idinfo.get("picture", "")
+
+    if not google_email:
+        return JSONResponse(status_code=400, content={"detail": "No email in token"})
+
+    session = get_session()
+    try:
+        user = session.query(OctileUser).filter(OctileUser.email == google_email).first()
+        if not user:
+            user = OctileUser(
+                email=google_email,
+                password_hash=_pw_hasher.hash(secrets.token_urlsafe(32)),
+                display_name=google_name,
+                picture=google_picture,
+                is_verified=True,
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+        else:
+            if not user.is_verified:
+                user.is_verified = True
+                user.display_name = google_name
+            if google_picture:
+                user.picture = google_picture
+            user.last_login_at = datetime.now(timezone.utc)
+            session.commit()
+
+        jwt_token = _create_octile_jwt(user.id, user.display_name, user.email)
+    finally:
+        session.close()
+
+    return {
+        "access_token": jwt_token,
+        "display_name": google_name,
+        "email": google_email,
+        "picture": google_picture,
+    }
+
+
 # --- Google OAuth (server-side redirect flow) ---
 
 # In-memory state tokens (short-lived, prevent CSRF)
