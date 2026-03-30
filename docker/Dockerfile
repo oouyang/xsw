@@ -32,11 +32,9 @@ WORKDIR /app
 COPY requirements.txt .
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    if [ -n "${INDEX_URL}" ] && [ -n "${TRUSTED_HOST}" ]; then \
-      pip config set global.index-url "${INDEX_URL}" && \
-      pip config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org ${TRUSTED_HOST}"; \
-    else \
-      echo "Skipping pip config because INDEX_URL or TRUSTED_HOST is not set"; \
+    pip config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org ${TRUSTED_HOST}" && \
+    if [ -n "${INDEX_URL}" ]; then \
+      pip config set global.index-url "${INDEX_URL}"; \
     fi && \
     pip install -r requirements.txt && \
     pip install ruff
