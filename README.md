@@ -461,6 +461,32 @@ server {
 
 ---
 
+## 💾 Backup
+
+### Octile Database Backup
+
+Backup the Octile puzzle scoreboard database (scores, users, progress).
+
+```bash
+# In Docker — full backup (SQLite copy + JSON dump)
+docker exec xsw-xsw-1 python3 /app/scripts/backup_octile.py
+
+# SQLite copy only (fastest, WAL-safe)
+docker exec xsw-xsw-1 python3 /app/scripts/backup_octile.py --format sqlite
+
+# JSON export only
+docker exec xsw-xsw-1 python3 /app/scripts/backup_octile.py --format json
+
+# Custom paths
+python3 scripts/backup_octile.py --db octile.db --out ./backups
+```
+
+Output files are written to `/app/data/backups/` (configurable with `--out`):
+- `octile_backup_YYYYMMDD_HHMMSS.db` — compact SQLite copy
+- `octile_backup_YYYYMMDD_HHMMSS.json` — full JSON dump of all tables
+
+---
+
 ## 🐛 Troubleshooting
 
 ### Database Issues
