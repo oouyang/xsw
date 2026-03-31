@@ -166,8 +166,9 @@ PUZZLE_ELO = {1: 800, 2: 1250, 3: 1850, 4: 2600}
 GRADE_SCORE = {"S": 1.0, "A": 0.7, "B": 0.4}
 
 
-def calc_elo_change(player_elo: float, puzzle_difficulty: int, grade: str,
-                    solves_count: int) -> float:
+def calc_elo_change(
+    player_elo: float, puzzle_difficulty: int, grade: str, solves_count: int
+) -> float:
     """Calculate ELO change for a single solve.
 
     K-factor decays with experience:
@@ -195,7 +196,9 @@ def calc_elo_change(player_elo: float, puzzle_difficulty: int, grade: str,
 def calc_elo_for_player(session, browser_uuid: str) -> float:
     """Recalculate ELO from scratch by replaying all scores in order."""
     scores = (
-        session.query(OctileScore.puzzle_number, OctileScore.resolve_time, OctileScore.flagged)
+        session.query(
+            OctileScore.puzzle_number, OctileScore.resolve_time, OctileScore.flagged
+        )
         .filter(OctileScore.browser_uuid == browser_uuid)
         .order_by(OctileScore.created_at.asc())
         .all()
@@ -648,6 +651,7 @@ class OctileScore(OctileBase):
         Index("idx_octile_puzzle_time", "puzzle_number", "resolve_time"),
         Index("idx_octile_uuid_puzzle", "browser_uuid", "puzzle_number"),
         Index("idx_octile_uuid_created", "browser_uuid", "created_at"),
+        Index("idx_octile_uuid_userid", "browser_uuid", "user_id"),
     )
 
     def __repr__(self):
@@ -803,9 +807,42 @@ async def require_octile_auth(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
 
+def _normalize_email(email: str) -> str:
+    """Normalize email to prevent duplicates from aliases/variants.
+    - Lowercase
+    - Gmail: remove dots, strip +suffix, googlemail.com → gmail.com
+    """
+    email = email.strip().lower()
+    local, _, domain = email.partition("@")
+    if not domain:
+        return email
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.split("+")[0]  # strip +suffix
+        local = local.replace(".", "")  # remove dots
+        domain = "gmail.com"  # normalize googlemail
+    return local + "@" + domain
+
+
 def _backfill_scores_for_user(session, user_id: int, browser_uuid: str):
-    """Link anonymous scores (user_id=NULL) to the authenticated user by browser_uuid."""
+    """Link anonymous scores (user_id=NULL) to the authenticated user by browser_uuid.
+
+    Device takeover protection: skip if another user already claimed scores
+    on this browser_uuid (shared device scenario).
+    """
     if not browser_uuid:
+        return
+    # Check if any other user already has scores on this browser_uuid
+    other_user = (
+        session.query(OctileScore.user_id)
+        .filter(
+            OctileScore.browser_uuid == browser_uuid,
+            OctileScore.user_id.isnot(None),
+            OctileScore.user_id != user_id,
+        )
+        .first()
+    )
+    if other_user:
+        # Another user claimed this device — don't steal their scores
         return
     session.query(OctileScore).filter(
         OctileScore.browser_uuid == browser_uuid,
@@ -1311,13 +1348,25 @@ def get_scoreboard(
         user_by_id = {}
         user_by_uuid = {}
         if score_user_ids:
-            users = session.query(OctileUser).filter(OctileUser.id.in_(score_user_ids)).all()
+            users = (
+                session.query(OctileUser)
+                .filter(OctileUser.id.in_(score_user_ids))
+                .all()
+            )
             user_by_id = {u.id: u for u in users}
         if score_uuids:
-            users = session.query(OctileUser).filter(OctileUser.browser_uuid.in_(score_uuids)).all()
+            users = (
+                session.query(OctileUser)
+                .filter(OctileUser.browser_uuid.in_(score_uuids))
+                .all()
+            )
             user_by_uuid = {u.browser_uuid: u for u in users}
         for s, raw_score in zip(resp_scores, scores):
-            u = user_by_id.get(raw_score.user_id) if raw_score.user_id else user_by_uuid.get(s.browser_uuid)
+            u = (
+                user_by_id.get(raw_score.user_id)
+                if raw_score.user_id
+                else user_by_uuid.get(s.browser_uuid)
+            )
             if u:
                 s.display_name = u.display_name
                 s.picture = u.picture
@@ -1376,41 +1425,51 @@ def get_leaderboard(limit: int = 50):
         auth_user_ids = [r.user_id for r in auth_rows if r.user_id]
         user_by_id = {}
         if auth_user_ids:
-            users = session.query(OctileUser).filter(OctileUser.id.in_(auth_user_ids)).all()
+            users = (
+                session.query(OctileUser).filter(OctileUser.id.in_(auth_user_ids)).all()
+            )
             user_by_id = {u.id: u for u in users}
 
         for r in auth_rows:
             u = user_by_id.get(r.user_id)
-            entries.append({
-                "browser_uuid": r.browser_uuid,
-                "total_exp": r.total_exp or 0,
-                "total_diamonds": r.total_diamonds or 0,
-                "total_coins": r.total_exp or 0,  # legacy alias
-                "puzzles": r.puzzles,
-                "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
-                "display_name": u.display_name if u else None,
-                "picture": u.picture if u else None,
-            })
+            entries.append(
+                {
+                    "browser_uuid": r.browser_uuid,
+                    "total_exp": r.total_exp or 0,
+                    "total_diamonds": r.total_diamonds or 0,
+                    "total_coins": r.total_exp or 0,  # legacy alias
+                    "puzzles": r.puzzles,
+                    "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                    "display_name": u.display_name if u else None,
+                    "picture": u.picture if u else None,
+                }
+            )
 
         # Anonymous: look up by browser_uuid for any that happen to have an account
         anon_uuids = [r.browser_uuid for r in anon_rows]
         user_by_uuid = {}
         if anon_uuids:
-            users = session.query(OctileUser).filter(OctileUser.browser_uuid.in_(anon_uuids)).all()
+            users = (
+                session.query(OctileUser)
+                .filter(OctileUser.browser_uuid.in_(anon_uuids))
+                .all()
+            )
             user_by_uuid = {u.browser_uuid: u for u in users}
 
         for r in anon_rows:
             u = user_by_uuid.get(r.browser_uuid)
-            entries.append({
-                "browser_uuid": r.browser_uuid,
-                "total_exp": r.total_exp or 0,
-                "total_diamonds": r.total_diamonds or 0,
-                "total_coins": r.total_exp or 0,
-                "puzzles": r.puzzles,
-                "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
-                "display_name": u.display_name if u else None,
-                "picture": u.picture if u else None,
-            })
+            entries.append(
+                {
+                    "browser_uuid": r.browser_uuid,
+                    "total_exp": r.total_exp or 0,
+                    "total_diamonds": r.total_diamonds or 0,
+                    "total_coins": r.total_exp or 0,
+                    "puzzles": r.puzzles,
+                    "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                    "display_name": u.display_name if u else None,
+                    "picture": u.picture if u else None,
+                }
+            )
 
         # Sort by total_exp descending, limit
         entries.sort(key=lambda e: e["total_exp"], reverse=True)
@@ -1588,7 +1647,7 @@ def _send_otp_email(email: str, otp: str, purpose: str = "verify") -> bool:
 @octile_router.post("/auth/register")
 def auth_register(req: RegisterRequest):
     """Register a new account. Sends OTP to email for verification."""
-    email = req.email.strip().lower()
+    email = _normalize_email(req.email)
     if not email or "@" not in email or len(req.password) < 6:
         return JSONResponse(
             status_code=400,
@@ -1604,6 +1663,14 @@ def auth_register(req: RegisterRequest):
     try:
         existing = session.query(OctileUser).filter(OctileUser.email == email).first()
         if existing and existing.is_verified:
+            # Check if this was a Google-created account (has picture or random password)
+            if existing.picture:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "detail": "This email is linked to a Google account. Please use Google Sign-In, or login with Google first then set a password."
+                    },
+                )
             return JSONResponse(
                 status_code=409, content={"detail": "Email already registered"}
             )
@@ -1640,7 +1707,7 @@ def auth_register(req: RegisterRequest):
 @octile_router.post("/auth/verify")
 def auth_verify(req: VerifyRequest):
     """Verify email with OTP code. Returns JWT on success."""
-    email = req.email.strip().lower()
+    email = _normalize_email(req.email)
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
@@ -1686,7 +1753,7 @@ def auth_verify(req: VerifyRequest):
 @octile_router.post("/auth/login")
 def auth_login(req: LoginRequest):
     """Login with email and password. Returns JWT."""
-    email = req.email.strip().lower()
+    email = _normalize_email(req.email)
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
@@ -1728,7 +1795,7 @@ def auth_login(req: LoginRequest):
 @octile_router.post("/auth/forgot-password")
 def auth_forgot_password(req: ForgotPasswordRequest):
     """Send a password reset OTP to the email."""
-    email = req.email.strip().lower()
+    email = _normalize_email(req.email)
 
     if _check_otp_rate_limit(email):
         return JSONResponse(
@@ -1762,7 +1829,7 @@ def auth_forgot_password(req: ForgotPasswordRequest):
 @octile_router.post("/auth/reset-password")
 def auth_reset_password(req: ResetPasswordRequest):
     """Reset password with OTP code."""
-    email = req.email.strip().lower()
+    email = _normalize_email(req.email)
     if len(req.new_password) < 6:
         return JSONResponse(
             status_code=400,
@@ -1800,7 +1867,9 @@ def auth_me(user: dict = Depends(require_octile_auth)):
     """Get current authenticated user info."""
     session = get_session()
     try:
-        db_user = session.query(OctileUser).filter(OctileUser.id == int(user["sub"])).first()
+        db_user = (
+            session.query(OctileUser).filter(OctileUser.id == int(user["sub"])).first()
+        )
         return {
             "id": int(user["sub"]),
             "display_name": db_user.display_name if db_user else user["name"],
@@ -1823,7 +1892,9 @@ class GoogleVerifyRequest(BaseModel):
 def auth_google_verify(req: GoogleVerifyRequest):
     """Verify a Google ID token (from Android Credential Manager) and return a JWT."""
     if not OCTILE_GOOGLE_CLIENT_ID:
-        return JSONResponse(status_code=501, content={"detail": "Google OAuth not configured"})
+        return JSONResponse(
+            status_code=501, content={"detail": "Google OAuth not configured"}
+        )
 
     try:
         from google.oauth2 import id_token as google_id_token
@@ -1833,9 +1904,11 @@ def auth_google_verify(req: GoogleVerifyRequest):
             req.id_token, google_requests.Request(), OCTILE_GOOGLE_CLIENT_ID
         )
     except Exception as e:
-        return JSONResponse(status_code=401, content={"detail": f"Invalid ID token: {e}"})
+        return JSONResponse(
+            status_code=401, content={"detail": f"Invalid ID token: {e}"}
+        )
 
-    google_email = idinfo.get("email", "")
+    google_email = _normalize_email(idinfo.get("email", ""))
     google_name = idinfo.get("name", google_email.split("@")[0])
     google_picture = idinfo.get("picture", "")
 
@@ -1845,7 +1918,9 @@ def auth_google_verify(req: GoogleVerifyRequest):
     browser_uuid = req.browser_uuid or ""
     session = get_session()
     try:
-        user = session.query(OctileUser).filter(OctileUser.email == google_email).first()
+        user = (
+            session.query(OctileUser).filter(OctileUser.email == google_email).first()
+        )
         if not user:
             user = OctileUser(
                 email=google_email,
@@ -1860,7 +1935,10 @@ def auth_google_verify(req: GoogleVerifyRequest):
             session.refresh(user)
         else:
             if not user.is_verified:
+                # Pre-verification attack prevention: reset password so
+                # attacker who pre-registered can't use their password
                 user.is_verified = True
+                user.password_hash = _pw_hasher.hash(secrets.token_urlsafe(32))
                 user.display_name = google_name
             if browser_uuid and not user.browser_uuid:
                 user.browser_uuid = browser_uuid
@@ -1880,7 +1958,7 @@ def auth_google_verify(req: GoogleVerifyRequest):
 
     return {
         "access_token": jwt_token,
-        "display_name": google_name,
+        "display_name": user.display_name,
         "email": google_email,
         "picture": google_picture,
     }
@@ -2016,7 +2094,7 @@ def auth_google_callback(
     except Exception:
         return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=invalid_id_token")
 
-    google_email = idinfo.get("email", "")
+    google_email = _normalize_email(idinfo.get("email", ""))
     google_name = idinfo.get("name", google_email.split("@")[0])
     google_picture = idinfo.get("picture", "")
 
@@ -2046,7 +2124,9 @@ def auth_google_callback(
             session.refresh(user)
         else:
             if not user.is_verified:
+                # Pre-verification attack prevention: reset password
                 user.is_verified = True
+                user.password_hash = _pw_hasher.hash(secrets.token_urlsafe(32))
                 user.display_name = google_name
             # Link browser_uuid if not already set
             if browser_uuid and not user.browser_uuid:
@@ -2175,6 +2255,10 @@ def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
         prog.updated_at = datetime.now(timezone.utc)
         session.commit()
 
+        # Backfill anonymous scores from this device
+        if req.browser_uuid:
+            _backfill_scores_for_user(session, user_id, req.browser_uuid)
+
         return {"status": "ok"}
     finally:
         session.close()
@@ -2236,7 +2320,9 @@ def get_player_stats(uuid: str):
             session.query(
                 func.sum(OctileScore.exp).label("total_exp"),
                 func.sum(OctileScore.diamonds).label("total_diamonds"),
-                func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles_solved"),
+                func.count(func.distinct(OctileScore.puzzle_number)).label(
+                    "puzzles_solved"
+                ),
                 func.avg(OctileScore.resolve_time).label("avg_time"),
                 func.count(OctileScore.id).label("total_solves"),
             )
@@ -2272,7 +2358,9 @@ def get_player_stats(uuid: str):
             by_difficulty[label]["total_exp"] += xp
 
         for label, stats in by_difficulty.items():
-            stats["avg_time"] = round(stats["total_time"] / stats["count"], 1) if stats["count"] else 0
+            stats["avg_time"] = (
+                round(stats["total_time"] / stats["count"], 1) if stats["count"] else 0
+            )
             del stats["total_time"]
 
         # Grade distribution (computed from scores)
@@ -2417,24 +2505,25 @@ def get_analytics():
             platform_counts[p] = platform_counts.get(p, 0) + 1
             os_counts[o] = os_counts.get(o, 0) + 1
             browser_counts[b] = browser_counts.get(b, 0) + 1
-            players.append({
-                "uuid": row.browser_uuid[:8] + "…",
-                "platform": p,
-                "os": o,
-                "browser": b,
-                "last_seen": row.last_seen.isoformat() if row.last_seen else "",
-                "ua": row.user_agent[:120] if row.user_agent else "",
-            })
+            players.append(
+                {
+                    "uuid": row.browser_uuid[:8] + "…",
+                    "platform": p,
+                    "os": o,
+                    "browser": b,
+                    "last_seen": row.last_seen.isoformat() if row.last_seen else "",
+                    "ua": row.user_agent[:120] if row.user_agent else "",
+                }
+            )
 
         # Sort by count descending
         def _sorted(d):
             return sorted(d.items(), key=lambda x: -x[1])
 
         # Total unique players (including those without UA)
-        total_players = (
-            session.query(func.count(func.distinct(OctileScore.browser_uuid)))
-            .scalar()
-        )
+        total_players = session.query(
+            func.count(func.distinct(OctileScore.browser_uuid))
+        ).scalar()
         total_scores = session.query(func.count(OctileScore.id)).scalar()
 
         return {
@@ -2454,6 +2543,7 @@ def get_analytics():
 def analytics_dashboard():
     """Serve the analytics dashboard HTML."""
     import pathlib
+
     html_path = pathlib.Path(__file__).parent / "octile_analytics.html"
     if not html_path.exists():
         return HTMLResponse("<h1>Dashboard not found</h1>", status_code=404)
