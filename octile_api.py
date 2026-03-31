@@ -2579,6 +2579,8 @@ class FeedbackRequest(BaseModel):
     lang: Optional[str] = "en"
     version: Optional[str] = None
     platform: Optional[str] = None
+    display_name: Optional[str] = None
+    browser_uuid: Optional[str] = None
 
 
 @octile_router.post("/feedback")
@@ -2608,8 +2610,10 @@ def submit_feedback(req: FeedbackRequest, request: Request):
 
     body = f"""Type: {type_label}
 From: {req.email or "(anonymous)"}
+Name: {req.display_name or "(anonymous)"}
 Language: {req.lang or "en"}
 Version: {req.version or "unknown"}
+UUID: {req.browser_uuid or "unknown"}
 IP: {client_ip}
 Platform: {(req.platform or "unknown")[:200]}
 
