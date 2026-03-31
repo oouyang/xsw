@@ -1918,7 +1918,7 @@ def auth_google_redirect(request: Request):
     state = secrets.token_urlsafe(32)
     _google_states[state] = _time.time()
     # Encode source, return_url, and browser_uuid in state
-    state_with_source = state + ":" + source + ":" + return_url + ":" + browser_uuid
+    state_with_source = state + "|" + source + "|" + return_url + "|" + browser_uuid
 
     # Clean old states (> 10 min)
     now = _time.time()
@@ -1959,7 +1959,7 @@ def auth_google_callback(
         return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=missing_params")
 
     # Parse state (state_token:source:return_url:browser_uuid)
-    parts = state.split(":", 3)
+    parts = state.split("|", 3)
     state_token = parts[0]
     source = parts[1] if len(parts) > 1 else "web"
     return_url = parts[2] if len(parts) > 2 else ""
