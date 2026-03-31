@@ -1390,86 +1390,101 @@ def get_leaderboard(limit: int = 50):
     limit = min(max(limit, 1), 200)
     session = get_session()
     try:
-        # Phase 1: Authenticated players — group by user_id across all devices
-        auth_rows = (
-            session.query(
-                OctileScore.user_id,
-                func.sum(OctileScore.exp).label("total_exp"),
-                func.sum(OctileScore.diamonds).label("total_diamonds"),
-                func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles"),
-                func.avg(OctileScore.resolve_time).label("avg_time"),
-                # Pick one browser_uuid for avatar fallback
-                func.min(OctileScore.browser_uuid).label("browser_uuid"),
-            )
-            .filter(OctileScore.flagged == 0, OctileScore.user_id.isnot(None))
-            .group_by(OctileScore.user_id)
+        # Build a mapping from registered user -> all their browser_uuids
+        # so we can attribute ALL scores (including un-backfilled ones) to the user
+        all_users = session.query(OctileUser).all()
+        user_by_id = {u.id: u for u in all_users}
+
+        # Map: browser_uuid -> user_id (from user table + scores with user_id)
+        uuid_to_user_id: dict = {}
+        for u in all_users:
+            if u.browser_uuid:
+                uuid_to_user_id[u.browser_uuid] = u.id
+
+        # Also map from scores that have user_id set
+        linked_scores = (
+            session.query(OctileScore.browser_uuid, OctileScore.user_id)
+            .filter(OctileScore.user_id.isnot(None))
+            .distinct()
             .all()
         )
-        # Phase 2: Anonymous players — group by browser_uuid
-        anon_rows = (
+        for row in linked_scores:
+            if row.browser_uuid:
+                uuid_to_user_id[row.browser_uuid] = row.user_id
+
+        # Single query: all non-flagged scores grouped by browser_uuid
+        all_rows = (
             session.query(
+                OctileScore.browser_uuid,
                 func.sum(OctileScore.exp).label("total_exp"),
                 func.sum(OctileScore.diamonds).label("total_diamonds"),
                 func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles"),
                 func.avg(OctileScore.resolve_time).label("avg_time"),
-                OctileScore.browser_uuid,
             )
-            .filter(OctileScore.flagged == 0, OctileScore.user_id.is_(None))
+            .filter(OctileScore.flagged == 0)
             .group_by(OctileScore.browser_uuid)
             .all()
         )
 
-        # Build combined leaderboard entries
+        # Merge rows: authenticated users may have multiple browser_uuids
+        user_agg: dict = {}  # user_id -> aggregated stats
+        anon_entries = []
+
+        for r in all_rows:
+            uid = uuid_to_user_id.get(r.browser_uuid)
+            if uid:
+                if uid not in user_agg:
+                    user_agg[uid] = {
+                        "total_exp": 0,
+                        "total_diamonds": 0,
+                        "puzzles": 0,
+                        "avg_time_sum": 0,
+                        "avg_time_cnt": 0,
+                        "browser_uuid": r.browser_uuid,
+                    }
+                agg = user_agg[uid]
+                agg["total_exp"] += r.total_exp or 0
+                agg["total_diamonds"] += r.total_diamonds or 0
+                agg["puzzles"] += r.puzzles or 0
+                agg["avg_time_sum"] += (r.avg_time or 0) * (r.puzzles or 0)
+                agg["avg_time_cnt"] += r.puzzles or 0
+            else:
+                anon_entries.append(
+                    {
+                        "browser_uuid": r.browser_uuid,
+                        "total_exp": r.total_exp or 0,
+                        "total_diamonds": r.total_diamonds or 0,
+                        "total_coins": r.total_exp or 0,
+                        "puzzles": r.puzzles,
+                        "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                        "display_name": None,
+                        "picture": None,
+                    }
+                )
+
+        # Build authenticated entries
         entries = []
-        # Look up all authenticated users in one query
-        auth_user_ids = [r.user_id for r in auth_rows if r.user_id]
-        user_by_id = {}
-        if auth_user_ids:
-            users = (
-                session.query(OctileUser).filter(OctileUser.id.in_(auth_user_ids)).all()
+        for uid, agg in user_agg.items():
+            u = user_by_id.get(uid)
+            avg_t = (
+                round(agg["avg_time_sum"] / agg["avg_time_cnt"], 1)
+                if agg["avg_time_cnt"]
+                else 0
             )
-            user_by_id = {u.id: u for u in users}
-
-        for r in auth_rows:
-            u = user_by_id.get(r.user_id)
             entries.append(
                 {
-                    "browser_uuid": r.browser_uuid,
-                    "total_exp": r.total_exp or 0,
-                    "total_diamonds": r.total_diamonds or 0,
-                    "total_coins": r.total_exp or 0,  # legacy alias
-                    "puzzles": r.puzzles,
-                    "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                    "browser_uuid": agg["browser_uuid"],
+                    "total_exp": agg["total_exp"],
+                    "total_diamonds": agg["total_diamonds"],
+                    "total_coins": agg["total_exp"],
+                    "puzzles": agg["puzzles"],
+                    "avg_time": avg_t,
                     "display_name": u.display_name if u else None,
                     "picture": u.picture if u else None,
                 }
             )
 
-        # Anonymous: look up by browser_uuid for any that happen to have an account
-        anon_uuids = [r.browser_uuid for r in anon_rows]
-        user_by_uuid = {}
-        if anon_uuids:
-            users = (
-                session.query(OctileUser)
-                .filter(OctileUser.browser_uuid.in_(anon_uuids))
-                .all()
-            )
-            user_by_uuid = {u.browser_uuid: u for u in users}
-
-        for r in anon_rows:
-            u = user_by_uuid.get(r.browser_uuid)
-            entries.append(
-                {
-                    "browser_uuid": r.browser_uuid,
-                    "total_exp": r.total_exp or 0,
-                    "total_diamonds": r.total_diamonds or 0,
-                    "total_coins": r.total_exp or 0,
-                    "puzzles": r.puzzles,
-                    "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
-                    "display_name": u.display_name if u else None,
-                    "picture": u.picture if u else None,
-                }
-            )
+        entries.extend(anon_entries)
 
         # Sort by total_exp descending, limit
         entries.sort(key=lambda e: e["total_exp"], reverse=True)
