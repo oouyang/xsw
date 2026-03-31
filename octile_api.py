@@ -637,6 +637,9 @@ class OctileScore(OctileBase):
     exp = Column(Integer, default=0)
     diamonds = Column(Integer, default=0)
 
+    # Authenticated user link (nullable for anonymous scores)
+    user_id = Column(Integer, nullable=True, index=True)
+
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
@@ -713,6 +716,9 @@ OCTILE_GOOGLE_CLIENT_ID = os.getenv(
 )
 OCTILE_GOOGLE_CLIENT_SECRET = os.getenv("OCTILE_GOOGLE_CLIENT_SECRET", "")
 OCTILE_GOOGLE_REDIRECT_URI = os.getenv("OCTILE_GOOGLE_REDIRECT_URI", "")
+OCTILE_WORKER_URL = os.getenv(
+    "OCTILE_WORKER_URL", "https://octile.owen-ouyang.workers.dev"
+)
 # Where to send the user after successful Google login
 # Android: octile://auth?token=...&name=...
 # Web: https://mtaleon.github.io/octile/?auth_token=...&auth_name=...
@@ -759,6 +765,18 @@ def _decode_octile_jwt(token: str) -> dict:
     return jwt.decode(token, OCTILE_JWT_SECRET, algorithms=["HS256"])
 
 
+def _get_optional_user_id(request: Request) -> Optional[int]:
+    """Extract user_id from Authorization header if present. Returns None if anonymous."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        payload = _decode_octile_jwt(auth[7:])
+        return int(payload["sub"])
+    except Exception:
+        return None
+
+
 _octile_bearer = HTTPBearer(auto_error=False)
 
 
@@ -783,6 +801,17 @@ async def require_octile_auth(
         from fastapi import HTTPException, status
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
+
+def _backfill_scores_for_user(session, user_id: int, browser_uuid: str):
+    """Link anonymous scores (user_id=NULL) to the authenticated user by browser_uuid."""
+    if not browser_uuid:
+        return
+    session.query(OctileScore).filter(
+        OctileScore.browser_uuid == browser_uuid,
+        OctileScore.user_id.is_(None),
+    ).update({"user_id": user_id})
+    session.commit()
 
 
 # OTP rate limiting: track attempts per email
@@ -952,6 +981,8 @@ class ScoreResponse(BaseModel):
     diamonds: int = 0
     grade: str = "B"
     elo: Optional[float] = None
+    display_name: Optional[str] = None
+    picture: Optional[str] = None
 
 
 class ScoreboardResponse(BaseModel):
@@ -1187,6 +1218,9 @@ async def submit_score(request: Request):
             exp = 0
             diamonds = 0
 
+        # Link to authenticated user if JWT present
+        auth_user_id = _get_optional_user_id(request)
+
         score = OctileScore(
             puzzle_number=body.puzzle_number,
             resolve_time=body.resolve_time,
@@ -1199,6 +1233,7 @@ async def submit_score(request: Request):
             coins=exp,  # legacy coins = exp for backward compat
             exp=exp,
             diamonds=diamonds,
+            user_id=auth_user_id,
             **client_info,
         )
         session.add(score)
@@ -1268,10 +1303,29 @@ def get_scoreboard(
             .all()
         )
 
+        # Look up display names via user_id (multi-device) or browser_uuid (legacy)
+        resp_scores = [_score_to_response(s) for s in scores]
+        # Collect user_ids and browser_uuids from scores
+        score_user_ids = list({s.user_id for s in scores if s.user_id})
+        score_uuids = list({s.browser_uuid for s in scores})
+        user_by_id = {}
+        user_by_uuid = {}
+        if score_user_ids:
+            users = session.query(OctileUser).filter(OctileUser.id.in_(score_user_ids)).all()
+            user_by_id = {u.id: u for u in users}
+        if score_uuids:
+            users = session.query(OctileUser).filter(OctileUser.browser_uuid.in_(score_uuids)).all()
+            user_by_uuid = {u.browser_uuid: u for u in users}
+        for s, raw_score in zip(resp_scores, scores):
+            u = user_by_id.get(raw_score.user_id) if raw_score.user_id else user_by_uuid.get(s.browser_uuid)
+            if u:
+                s.display_name = u.display_name
+                s.picture = u.picture
+
         return ScoreboardResponse(
             puzzle_number=puzzle,
             total=total,
-            scores=[_score_to_response(s) for s in scores],
+            scores=resp_scores,
         )
     finally:
         session.close()
@@ -1287,43 +1341,84 @@ def get_leaderboard(limit: int = 50):
     limit = min(max(limit, 1), 200)
     session = get_session()
     try:
-        rows = (
+        # Phase 1: Authenticated players — group by user_id across all devices
+        auth_rows = (
             session.query(
-                OctileScore.browser_uuid,
+                OctileScore.user_id,
                 func.sum(OctileScore.exp).label("total_exp"),
                 func.sum(OctileScore.diamonds).label("total_diamonds"),
                 func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles"),
                 func.avg(OctileScore.resolve_time).label("avg_time"),
+                # Pick one browser_uuid for avatar fallback
+                func.min(OctileScore.browser_uuid).label("browser_uuid"),
             )
-            .filter(OctileScore.flagged == 0)
-            .group_by(OctileScore.browser_uuid)
-            .order_by(func.sum(OctileScore.exp).desc())
-            .limit(limit)
+            .filter(OctileScore.flagged == 0, OctileScore.user_id.isnot(None))
+            .group_by(OctileScore.user_id)
             .all()
         )
-        # Look up display names and pictures for UUIDs with linked accounts
-        uuids = [r.browser_uuid for r in rows]
-        user_map = {}
-        if uuids:
-            users = session.query(OctileUser).filter(OctileUser.browser_uuid.in_(uuids)).all()
-            for u in users:
-                user_map[u.browser_uuid] = {"display_name": u.display_name, "picture": u.picture}
+        # Phase 2: Anonymous players — group by browser_uuid
+        anon_rows = (
+            session.query(
+                func.sum(OctileScore.exp).label("total_exp"),
+                func.sum(OctileScore.diamonds).label("total_diamonds"),
+                func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles"),
+                func.avg(OctileScore.resolve_time).label("avg_time"),
+                OctileScore.browser_uuid,
+            )
+            .filter(OctileScore.flagged == 0, OctileScore.user_id.is_(None))
+            .group_by(OctileScore.browser_uuid)
+            .all()
+        )
+
+        # Build combined leaderboard entries
+        entries = []
+        # Look up all authenticated users in one query
+        auth_user_ids = [r.user_id for r in auth_rows if r.user_id]
+        user_by_id = {}
+        if auth_user_ids:
+            users = session.query(OctileUser).filter(OctileUser.id.in_(auth_user_ids)).all()
+            user_by_id = {u.id: u for u in users}
+
+        for r in auth_rows:
+            u = user_by_id.get(r.user_id)
+            entries.append({
+                "browser_uuid": r.browser_uuid,
+                "total_exp": r.total_exp or 0,
+                "total_diamonds": r.total_diamonds or 0,
+                "total_coins": r.total_exp or 0,  # legacy alias
+                "puzzles": r.puzzles,
+                "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                "display_name": u.display_name if u else None,
+                "picture": u.picture if u else None,
+            })
+
+        # Anonymous: look up by browser_uuid for any that happen to have an account
+        anon_uuids = [r.browser_uuid for r in anon_rows]
+        user_by_uuid = {}
+        if anon_uuids:
+            users = session.query(OctileUser).filter(OctileUser.browser_uuid.in_(anon_uuids)).all()
+            user_by_uuid = {u.browser_uuid: u for u in users}
+
+        for r in anon_rows:
+            u = user_by_uuid.get(r.browser_uuid)
+            entries.append({
+                "browser_uuid": r.browser_uuid,
+                "total_exp": r.total_exp or 0,
+                "total_diamonds": r.total_diamonds or 0,
+                "total_coins": r.total_exp or 0,
+                "puzzles": r.puzzles,
+                "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
+                "display_name": u.display_name if u else None,
+                "picture": u.picture if u else None,
+            })
+
+        # Sort by total_exp descending, limit
+        entries.sort(key=lambda e: e["total_exp"], reverse=True)
+        entries = entries[:limit]
 
         return {
-            "total_players": len(rows),
-            "leaderboard": [
-                {
-                    "browser_uuid": r.browser_uuid,
-                    "total_exp": r.total_exp or 0,
-                    "total_diamonds": r.total_diamonds or 0,
-                    "total_coins": r.total_exp or 0,  # legacy alias
-                    "puzzles": r.puzzles,
-                    "avg_time": round(r.avg_time, 1) if r.avg_time else 0,
-                    "display_name": user_map.get(r.browser_uuid, {}).get("display_name"),
-                    "picture": user_map.get(r.browser_uuid, {}).get("picture"),
-                }
-                for r in rows
-            ],
+            "total_players": len(entries),
+            "leaderboard": entries,
         }
     finally:
         session.close()
@@ -1456,6 +1551,7 @@ class VerifyRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    browser_uuid: Optional[str] = None
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -1572,6 +1668,8 @@ def auth_verify(req: VerifyRequest):
         user.last_login_at = datetime.now(timezone.utc)
         session.commit()
 
+        _backfill_scores_for_user(session, user.id, user.browser_uuid)
+
         token = _create_octile_jwt(user.id, user.display_name, user.email)
         return {
             "access_token": token,
@@ -1601,8 +1699,18 @@ def auth_login(req: LoginRequest):
                 status_code=401, content={"detail": "Invalid email or password"}
             )
 
+        # Link browser_uuid if not already set
+        browser_uuid = (req.browser_uuid or "").strip()
+        if browser_uuid and not user.browser_uuid:
+            user.browser_uuid = browser_uuid
+
         user.last_login_at = datetime.now(timezone.utc)
         session.commit()
+
+        # Backfill anonymous scores from this device AND the stored device
+        _backfill_scores_for_user(session, user.id, browser_uuid)
+        if user.browser_uuid and user.browser_uuid != browser_uuid:
+            _backfill_scores_for_user(session, user.id, user.browser_uuid)
 
         token = _create_octile_jwt(user.id, user.display_name, user.email)
         return {
@@ -1708,6 +1816,7 @@ def auth_me(user: dict = Depends(require_octile_auth)):
 
 class GoogleVerifyRequest(BaseModel):
     id_token: str
+    browser_uuid: Optional[str] = None
 
 
 @octile_router.post("/auth/google/verify")
@@ -1733,6 +1842,7 @@ def auth_google_verify(req: GoogleVerifyRequest):
     if not google_email:
         return JSONResponse(status_code=400, content={"detail": "No email in token"})
 
+    browser_uuid = req.browser_uuid or ""
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == google_email).first()
@@ -1742,6 +1852,7 @@ def auth_google_verify(req: GoogleVerifyRequest):
                 password_hash=_pw_hasher.hash(secrets.token_urlsafe(32)),
                 display_name=google_name,
                 picture=google_picture,
+                browser_uuid=browser_uuid or None,
                 is_verified=True,
             )
             session.add(user)
@@ -1751,10 +1862,17 @@ def auth_google_verify(req: GoogleVerifyRequest):
             if not user.is_verified:
                 user.is_verified = True
                 user.display_name = google_name
+            if browser_uuid and not user.browser_uuid:
+                user.browser_uuid = browser_uuid
             if google_picture:
                 user.picture = google_picture
             user.last_login_at = datetime.now(timezone.utc)
             session.commit()
+
+        # Backfill anonymous scores from this device AND the stored device
+        _backfill_scores_for_user(session, user.id, browser_uuid)
+        if user.browser_uuid and user.browser_uuid != browser_uuid:
+            _backfill_scores_for_user(session, user.id, user.browser_uuid)
 
         jwt_token = _create_octile_jwt(user.id, user.display_name, user.email)
     finally:
@@ -1782,10 +1900,11 @@ def auth_google_redirect(request: Request):
             status_code=501, content={"detail": "Google OAuth not configured"}
         )
 
-    # Determine redirect URI from config or from request
+    # Determine redirect URI: prefer env var, then worker URL, then auto-detect
     redirect_uri = OCTILE_GOOGLE_REDIRECT_URI
     if not redirect_uri:
-        # Auto-detect: same origin + /octile/auth/google/callback
+        redirect_uri = OCTILE_WORKER_URL.rstrip("/") + "/auth/google/callback"
+    if not redirect_uri or redirect_uri.endswith("/auth/google/callback") is False:
         redirect_uri = (
             str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
         )
@@ -1793,12 +1912,13 @@ def auth_google_redirect(request: Request):
     # Detect source platform from query param (android or web)
     source = request.query_params.get("source", "web")
     return_url = request.query_params.get("return_url", "")
+    browser_uuid = request.query_params.get("browser_uuid", "")
 
     # Generate state token
     state = secrets.token_urlsafe(32)
     _google_states[state] = _time.time()
-    # Encode source and return_url in state (state:source:return_url)
-    state_with_source = state + ":" + source + ":" + return_url
+    # Encode source, return_url, and browser_uuid in state
+    state_with_source = state + ":" + source + ":" + return_url + ":" + browser_uuid
 
     # Clean old states (> 10 min)
     now = _time.time()
@@ -1838,11 +1958,12 @@ def auth_google_callback(
     if not code or not state:
         return RedirectResponse(url=OCTILE_SITE_URL + "?auth_error=missing_params")
 
-    # Parse state (state_token:source:return_url)
-    parts = state.split(":", 2)
+    # Parse state (state_token:source:return_url:browser_uuid)
+    parts = state.split(":", 3)
     state_token = parts[0]
     source = parts[1] if len(parts) > 1 else "web"
     return_url = parts[2] if len(parts) > 2 else ""
+    browser_uuid = parts[3] if len(parts) > 3 else ""
 
     # Verify state token
     if state_token not in _google_states:
@@ -1853,9 +1974,7 @@ def auth_google_callback(
     # Determine redirect URI (must match the one used in /auth/google)
     redirect_uri = OCTILE_GOOGLE_REDIRECT_URI
     if not redirect_uri:
-        redirect_uri = (
-            str(request.base_url).rstrip("/") + "/octile/auth/google/callback"
-        )
+        redirect_uri = OCTILE_WORKER_URL.rstrip("/") + "/auth/google/callback"
 
     # Exchange authorization code for tokens
     import requests as http_requests
@@ -1919,22 +2038,30 @@ def auth_google_callback(
                 ),  # random password
                 display_name=google_name,
                 picture=google_picture,
+                browser_uuid=browser_uuid or None,
                 is_verified=True,
             )
             session.add(user)
             session.commit()
             session.refresh(user)
-        elif not user.is_verified:
-            # Verify pending account via Google
-            user.is_verified = True
-            user.display_name = google_name
-            session.commit()
+        else:
+            if not user.is_verified:
+                user.is_verified = True
+                user.display_name = google_name
+            # Link browser_uuid if not already set
+            if browser_uuid and not user.browser_uuid:
+                user.browser_uuid = browser_uuid
 
         # Always update picture from Google (may change)
         if google_picture:
             user.picture = google_picture
         user.last_login_at = datetime.now(timezone.utc)
         session.commit()
+
+        # Backfill anonymous scores from this device AND the stored device
+        _backfill_scores_for_user(session, user.id, browser_uuid)
+        if user.browser_uuid and user.browser_uuid != browser_uuid:
+            _backfill_scores_for_user(session, user.id, user.browser_uuid)
 
         jwt_token = _create_octile_jwt(user.id, user.display_name, user.email)
     finally:
@@ -1943,10 +2070,16 @@ def auth_google_callback(
     # Redirect based on source
     encoded_name = urllib.parse.quote(google_name)
     if source == "android":
-        # Deep link back to Android app
-        return RedirectResponse(
-            url=f"octile://auth?token={jwt_token}&name={encoded_name}"
-        )
+        # HTML+JS redirect: Chrome blocks server-side 307 to custom schemes
+        deep_link = f"octile://auth?token={jwt_token}&name={encoded_name}"
+        html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Signing in…</title>
+<style>body{{font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#fff;text-align:center}}
+a{{color:#3498db;font-size:18px}}</style></head><body>
+<div><p>Signing you in…</p><p><a href="{deep_link}">Tap here if the app doesn't open</a></p></div>
+<script>location.replace("{deep_link}");</script></body></html>"""
+        return HTMLResponse(content=html)
     else:
         # Web: redirect to return_url if provided, otherwise default site URL
         site_url = return_url if return_url else OCTILE_SITE_URL
