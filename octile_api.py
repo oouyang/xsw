@@ -2581,6 +2581,9 @@ class FeedbackRequest(BaseModel):
     platform: Optional[str] = None
     display_name: Optional[str] = None
     browser_uuid: Optional[str] = None
+    device: Optional[str] = None
+    screenshot: Optional[str] = None  # data:image/...;base64,...
+    screenshot_name: Optional[str] = None
 
 
 @octile_router.post("/feedback")
@@ -2614,6 +2617,7 @@ Name: {req.display_name or "(anonymous)"}
 Language: {req.lang or "en"}
 Version: {req.version or "unknown"}
 UUID: {req.browser_uuid or "unknown"}
+Device: {req.device or "unknown"}
 IP: {client_ip}
 Platform: {(req.platform or "unknown")[:200]}
 
@@ -2621,12 +2625,42 @@ Platform: {(req.platform or "unknown")[:200]}
 {msg}
 """
 
+    # Decode screenshot if provided, save to temp file for attachment
+    attachments = []
+    if req.screenshot and req.screenshot.startswith("data:image/"):
+        import base64
+        import tempfile
+
+        try:
+            # data:image/png;base64,iVBOR...
+            header, b64data = req.screenshot.split(",", 1)
+            ext = "png" if "png" in header else "jpg"
+            img_bytes = base64.b64decode(b64data)
+            if len(img_bytes) <= 5 * 1024 * 1024:  # 5 MB limit
+                suffix = f"_{req.screenshot_name}" if req.screenshot_name else f".{ext}"
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                tmp.write(img_bytes)
+                tmp.close()
+                attachments.append(tmp.name)
+        except Exception:
+            pass  # skip bad screenshot silently
+
     result = sender.send_email(
         to_email=OCTILE_FEEDBACK_EMAIL,
         subject=subject,
         body=body,
         is_html=False,
+        attachments=attachments if attachments else None,
     )
+
+    # Clean up temp files
+    for f in attachments:
+        try:
+            import os as _os
+
+            _os.unlink(f)
+        except Exception:
+            pass
 
     if result.get("status") == "success":
         return {"status": "ok"}
