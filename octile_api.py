@@ -2548,3 +2548,67 @@ def analytics_dashboard():
     if not html_path.exists():
         return HTMLResponse("<h1>Dashboard not found</h1>", status_code=404)
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# Feedback endpoint
+# ---------------------------------------------------------------------------
+
+OCTILE_FEEDBACK_EMAIL = "octileapp@googlegroups.com"
+
+
+class FeedbackRequest(BaseModel):
+    type: str  # bug, feature, general
+    email: Optional[str] = None
+    message: str
+    lang: Optional[str] = "en"
+    version: Optional[str] = None
+    platform: Optional[str] = None
+
+
+@octile_router.post("/feedback")
+def submit_feedback(req: FeedbackRequest, request: Request):
+    """Receive user feedback and email it to the team."""
+    msg = req.message.strip()
+    if not msg or len(msg) < 3:
+        return JSONResponse({"detail": "Message too short"}, status_code=400)
+    if len(msg) > 5000:
+        return JSONResponse({"detail": "Message too long"}, status_code=400)
+    if req.type not in ("bug", "feature", "general"):
+        return JSONResponse({"detail": "Invalid type"}, status_code=400)
+
+    sender = _get_email_sender()
+    if not sender:
+        return JSONResponse({"detail": "Feedback service unavailable"}, status_code=503)
+
+    client_ip = request.headers.get(
+        "X-Real-IP", request.client.host if request.client else "unknown"
+    )
+    type_label = {
+        "bug": "Bug Report",
+        "feature": "Feature Request",
+        "general": "General Feedback",
+    }.get(req.type, req.type)
+    subject = f"[Octile Feedback] {type_label}"
+
+    body = f"""Type: {type_label}
+From: {req.email or "(anonymous)"}
+Language: {req.lang or "en"}
+Version: {req.version or "unknown"}
+IP: {client_ip}
+Platform: {(req.platform or "unknown")[:200]}
+
+---
+{msg}
+"""
+
+    result = sender.send_email(
+        to_email=OCTILE_FEEDBACK_EMAIL,
+        subject=subject,
+        body=body,
+        is_html=False,
+    )
+
+    if result.get("status") == "success":
+        return {"status": "ok"}
+    return JSONResponse({"detail": "Failed to send feedback"}, status_code=500)
