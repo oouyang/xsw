@@ -712,6 +712,72 @@ class OctileProgress(OctileBase):
 
 
 # ---------------------------------------------------------------------------
+# Team League models
+# ---------------------------------------------------------------------------
+
+LEAGUE_TIERS = {
+    0: {"name_en": "Bronze", "name_zh": "青銅", "team_size": 10, "color": "#cd7f32"},
+    1: {"name_en": "Silver", "name_zh": "白銀", "team_size": 8, "color": "#c0c0c0"},
+    2: {"name_en": "Gold", "name_zh": "黃金", "team_size": 7, "color": "#ffd700"},
+    3: {"name_en": "Sapphire", "name_zh": "藍寶石", "team_size": 5, "color": "#0f52ba"},
+    4: {"name_en": "Ruby", "name_zh": "紅寶石", "team_size": 5, "color": "#e0115f"},
+    5: {"name_en": "Emerald", "name_zh": "祖母綠", "team_size": 5, "color": "#50c878"},
+    6: {"name_en": "Amethyst", "name_zh": "紫水晶", "team_size": 5, "color": "#9966cc"},
+    7: {"name_en": "Obsidian", "name_zh": "黑曜石", "team_size": 5, "color": "#1c1c1c"},
+}
+LEAGUE_PROMO_DAYS = 3
+LEAGUE_DEMOTE_DAYS = 3
+LEAGUE_PROMO_TOP_N = 2  # safety zone: top 2 for promotion
+LEAGUE_DAILY_EXP_CAP = 20000  # anti-cheat: max daily EXP before flagging
+
+
+class LeagueMember(OctileBase):
+    __tablename__ = "league_members"
+    user_id = Column(Integer, primary_key=True)
+    tier = Column(Integer, default=0, nullable=False)
+    team_id = Column(Integer, nullable=True, index=True)
+    today_exp = Column(Integer, default=0)
+    promo_streak = Column(Integer, default=0)
+    demote_streak = Column(Integer, default=0)
+    inactive_days = Column(Integer, default=0)
+    last_eval_date = Column(String, nullable=True)
+    joined_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class LeagueTeam(OctileBase):
+    __tablename__ = "league_teams"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tier = Column(Integer, nullable=False, index=True)
+    month = Column(String, nullable=False, index=True)
+    team_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class LeagueDailyExp(OctileBase):
+    __tablename__ = "league_daily_exp"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    team_id = Column(Integer, nullable=False, index=True)
+    date = Column(String, nullable=False)
+    exp = Column(Integer, default=0)
+    __table_args__ = (
+        Index("idx_league_daily_user_date", "user_id", "date", unique=True),
+        Index("idx_league_daily_team_date", "team_id", "date"),
+    )
+
+
+class LeagueHistory(OctileBase):
+    __tablename__ = "league_history"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    event = Column(String, nullable=False)
+    from_tier = Column(Integer, nullable=True)
+    to_tier = Column(Integer, nullable=True)
+    date = Column(String, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ---------------------------------------------------------------------------
 # Auth configuration
 # ---------------------------------------------------------------------------
 OCTILE_JWT_SECRET = os.getenv("OCTILE_JWT_SECRET", "octile-change-me-in-production")
@@ -1279,6 +1345,13 @@ async def submit_score(request: Request):
         session.add(score)
         session.commit()
         session.refresh(score)
+
+        # Atomic league EXP update
+        if auth_user_id and not flagged and exp > 0:
+            session.query(LeagueMember).filter(
+                LeagueMember.user_id == auth_user_id
+            ).update({LeagueMember.today_exp: LeagueMember.today_exp + exp})
+            session.commit()
 
         # Calculate updated ELO for this player
         resp = _score_to_response(score)
@@ -2585,6 +2658,456 @@ def analytics_dashboard():
     if not html_path.exists():
         return HTMLResponse("<h1>Dashboard not found</h1>", status_code=404)
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# League endpoints
+# ---------------------------------------------------------------------------
+
+_TEAM_NAME_GEMS = [
+    "Diamond",
+    "Topaz",
+    "Citrine",
+    "Garnet",
+    "Opal",
+    "Pearl",
+    "Jade",
+    "Onyx",
+    "Quartz",
+    "Agate",
+    "Zircon",
+    "Beryl",
+    "Coral",
+    "Jasper",
+    "Lapis",
+    "Pyrite",
+    "Malachite",
+    "Turquoise",
+    "Peridot",
+    "Tanzanite",
+]
+_TEAM_NAME_ANIMALS = [
+    "Wolves",
+    "Eagles",
+    "Panthers",
+    "Hawks",
+    "Foxes",
+    "Dragons",
+    "Tigers",
+    "Bears",
+    "Falcons",
+    "Lions",
+    "Owls",
+    "Phoenix",
+    "Cobras",
+    "Stags",
+    "Ravens",
+    "Vipers",
+    "Lynx",
+    "Sharks",
+]
+
+
+def _gen_team_name():
+    import random
+
+    return random.choice(_TEAM_NAME_GEMS) + " " + random.choice(_TEAM_NAME_ANIMALS)
+
+
+def _league_assign_team(session, user_id, tier):
+    """Assign user to a team for the current month. Creates a new team if needed."""
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    team_size = LEAGUE_TIERS.get(tier, LEAGUE_TIERS[0])["team_size"]
+
+    # Find a team with open slots
+    teams = (
+        session.query(LeagueTeam)
+        .filter(LeagueTeam.tier == tier, LeagueTeam.month == current_month)
+        .all()
+    )
+    for team in teams:
+        member_count = (
+            session.query(func.count(LeagueMember.user_id))
+            .filter(LeagueMember.team_id == team.id)
+            .scalar()
+        )
+        if member_count < team_size:
+            return team.id
+
+    # No open team — create new one
+    new_team = LeagueTeam(tier=tier, month=current_month, team_name=_gen_team_name())
+    session.add(new_team)
+    session.flush()
+    return new_team.id
+
+
+@octile_router.post("/league/join")
+def league_join(user: dict = Depends(require_octile_auth)):
+    user_id = int(user["sub"])
+    session = get_session()
+    try:
+        existing = (
+            session.query(LeagueMember).filter(LeagueMember.user_id == user_id).first()
+        )
+        if existing:
+            tier_info = LEAGUE_TIERS.get(existing.tier, LEAGUE_TIERS[0])
+            return {
+                "status": "already_joined",
+                "tier": existing.tier,
+                "tier_name": tier_info["name_en"],
+                "team_id": existing.team_id,
+            }
+
+        member = LeagueMember(user_id=user_id, tier=0)
+        session.add(member)
+        session.flush()
+        team_id = _league_assign_team(session, user_id, 0)
+        member.team_id = team_id
+        session.add(
+            LeagueHistory(
+                user_id=user_id,
+                event="join",
+                to_tier=0,
+                date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            )
+        )
+        session.commit()
+        return {
+            "status": "ok",
+            "tier": 0,
+            "tier_name": "Bronze",
+            "team_id": team_id,
+        }
+    finally:
+        session.close()
+
+
+@octile_router.get("/league/my-team")
+def league_my_team(user: dict = Depends(require_octile_auth)):
+    user_id = int(user["sub"])
+    session = get_session()
+    try:
+        member = (
+            session.query(LeagueMember).filter(LeagueMember.user_id == user_id).first()
+        )
+        if not member:
+            return {"status": "not_joined"}
+        if not member.team_id:
+            return {"status": "no_team"}
+
+        tier_info = LEAGUE_TIERS.get(member.tier, LEAGUE_TIERS[0])
+
+        # Get all team members
+        teammates = (
+            session.query(LeagueMember)
+            .filter(LeagueMember.team_id == member.team_id)
+            .all()
+        )
+
+        # Look up display names and pictures
+        user_ids = [m.user_id for m in teammates]
+        users = session.query(OctileUser).filter(OctileUser.id.in_(user_ids)).all()
+        user_map = {u.id: u for u in users}
+
+        # Build member list sorted by today_exp descending
+        members_data = []
+        for m in teammates:
+            u = user_map.get(m.user_id)
+            members_data.append(
+                {
+                    "user_id": m.user_id,
+                    "display_name": u.display_name if u else None,
+                    "picture": u.picture if u else None,
+                    "exp_today": m.today_exp or 0,
+                    "inactive_days": m.inactive_days or 0,
+                }
+            )
+        members_data.sort(key=lambda x: x["exp_today"], reverse=True)
+        for i, m in enumerate(members_data):
+            m["position"] = i + 1
+
+        # My position
+        my_pos = next(
+            (m["position"] for m in members_data if m["user_id"] == user_id), 0
+        )
+
+        # Team info
+        team = session.query(LeagueTeam).filter(LeagueTeam.id == member.team_id).first()
+
+        return {
+            "status": "ok",
+            "tier": member.tier,
+            "tier_name": tier_info["name_en"],
+            "tier_name_zh": tier_info["name_zh"],
+            "tier_color": tier_info["color"],
+            "team_id": member.team_id,
+            "team_name": team.team_name if team else "",
+            "month": team.month if team else "",
+            "my_position": my_pos,
+            "my_exp_today": member.today_exp or 0,
+            "promo_streak": member.promo_streak or 0,
+            "demote_streak": member.demote_streak or 0,
+            "members": members_data,
+        }
+    finally:
+        session.close()
+
+
+@octile_router.get("/league/history")
+def league_history(user: dict = Depends(require_octile_auth)):
+    user_id = int(user["sub"])
+    session = get_session()
+    try:
+        events = (
+            session.query(LeagueHistory)
+            .filter(LeagueHistory.user_id == user_id)
+            .order_by(LeagueHistory.created_at.desc())
+            .limit(30)
+            .all()
+        )
+        return {
+            "status": "ok",
+            "events": [
+                {
+                    "event": e.event,
+                    "from_tier": e.from_tier,
+                    "to_tier": e.to_tier,
+                    "from_name": LEAGUE_TIERS.get(e.from_tier, {}).get("name_en")
+                    if e.from_tier is not None
+                    else None,
+                    "to_name": LEAGUE_TIERS.get(e.to_tier, {}).get("name_en")
+                    if e.to_tier is not None
+                    else None,
+                    "date": e.date,
+                }
+                for e in events
+            ],
+        }
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# League daily scheduler
+# ---------------------------------------------------------------------------
+
+
+def league_daily_evaluation():
+    """Run daily at ~00:05 UTC: snapshot EXP, evaluate promotion/demotion, reset."""
+    session = get_session()
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        all_members = (
+            session.query(LeagueMember).filter(LeagueMember.team_id.isnot(None)).all()
+        )
+
+        # 1. Snapshot today_exp and track inactive
+        for m in all_members:
+            # Snapshot to history table
+            existing = (
+                session.query(LeagueDailyExp)
+                .filter(
+                    LeagueDailyExp.user_id == m.user_id, LeagueDailyExp.date == today
+                )
+                .first()
+            )
+            if not existing:
+                session.add(
+                    LeagueDailyExp(
+                        user_id=m.user_id,
+                        team_id=m.team_id,
+                        date=today,
+                        exp=m.today_exp or 0,
+                    )
+                )
+
+            # Inactive tracking
+            if (m.today_exp or 0) == 0:
+                m.inactive_days = (m.inactive_days or 0) + 1
+            else:
+                m.inactive_days = 0
+
+        # 2. Evaluate per team
+        members_by_team = defaultdict(list)
+        for m in all_members:
+            if m.team_id:
+                members_by_team[m.team_id].append(m)
+
+        for team_id, members in members_by_team.items():
+            # Filter active members for ranking
+            active = [m for m in members if (m.inactive_days or 0) < 2]
+            active.sort(key=lambda m: m.today_exp or 0, reverse=True)
+
+            for rank, m in enumerate(active):
+                if m.last_eval_date == today:
+                    continue
+
+                # Anti-cheat
+                if (m.today_exp or 0) > LEAGUE_DAILY_EXP_CAP:
+                    m.last_eval_date = today
+                    continue
+
+                # Safety zone: top N for promotion
+                if rank < LEAGUE_PROMO_TOP_N and (m.today_exp or 0) > 0:
+                    m.promo_streak = (m.promo_streak or 0) + 1
+                    m.demote_streak = 0
+                # Last place for demotion
+                elif rank == len(active) - 1 and len(active) >= 3:
+                    m.demote_streak = (m.demote_streak or 0) + 1
+                    m.promo_streak = 0
+                else:
+                    m.promo_streak = 0
+                    m.demote_streak = 0
+
+                m.last_eval_date = today
+
+                # Promote?
+                if (m.promo_streak or 0) >= LEAGUE_PROMO_DAYS and m.tier < 7:
+                    old_tier = m.tier
+                    m.tier += 1
+                    m.promo_streak = 0
+                    session.add(
+                        LeagueHistory(
+                            user_id=m.user_id,
+                            event="promote",
+                            from_tier=old_tier,
+                            to_tier=m.tier,
+                            date=today,
+                        )
+                    )
+
+                # Demote?
+                if (m.demote_streak or 0) >= LEAGUE_DEMOTE_DAYS and m.tier > 0:
+                    old_tier = m.tier
+                    m.tier -= 1
+                    m.demote_streak = 0
+                    session.add(
+                        LeagueHistory(
+                            user_id=m.user_id,
+                            event="demote",
+                            from_tier=old_tier,
+                            to_tier=m.tier,
+                            date=today,
+                        )
+                    )
+
+            # Reset inactive members' streaks
+            for m in members:
+                if (m.inactive_days or 0) >= 2 and m.last_eval_date != today:
+                    m.promo_streak = 0
+                    m.demote_streak = 0
+                    m.last_eval_date = today
+
+        # 3. Reset today_exp for all members
+        session.query(LeagueMember).update({LeagueMember.today_exp: 0})
+
+        # 4. Prune old daily_exp (keep 7 days)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+        session.query(LeagueDailyExp).filter(LeagueDailyExp.date < cutoff).delete()
+
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        import logging
+
+        logging.getLogger("octile").error(f"League daily evaluation failed: {e}")
+    finally:
+        session.close()
+
+
+def league_monthly_reassign():
+    """Run on 1st of each month: reassign all members to new teams."""
+    session = get_session()
+    try:
+        current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # Check if already reassigned this month
+        existing_teams = (
+            session.query(LeagueTeam).filter(LeagueTeam.month == current_month).count()
+        )
+        if existing_teams > 0:
+            return  # Already done
+
+        all_members = session.query(LeagueMember).all()
+        if not all_members:
+            return
+
+        # Group by tier, sub-sort by recent activity
+        by_tier = defaultdict(list)
+        for m in all_members:
+            # Get 7-day EXP for activity sorting
+            recent_exp = (
+                session.query(func.coalesce(func.sum(LeagueDailyExp.exp), 0))
+                .filter(LeagueDailyExp.user_id == m.user_id)
+                .scalar()
+            )
+            by_tier[m.tier].append((m, recent_exp))
+
+        for tier, members_with_exp in by_tier.items():
+            # Sort by activity (most active first), then shuffle within activity bands
+            members_with_exp.sort(key=lambda x: x[1], reverse=True)
+            members = [m for m, _ in members_with_exp]
+
+            team_size = LEAGUE_TIERS.get(tier, LEAGUE_TIERS[0])["team_size"]
+
+            # Smart sizing: avoid tiny last team
+            n = len(members)
+            if n <= team_size:
+                chunks = [members]
+            else:
+                full_teams = n // team_size
+                remainder = n % team_size
+                if remainder > 0 and remainder < team_size // 2:
+                    # Distribute remainder: make last 2 teams more even
+                    chunks = []
+                    idx = 0
+                    for i in range(full_teams - 1):
+                        chunks.append(members[idx : idx + team_size])
+                        idx += team_size
+                    # Split remaining evenly
+                    rest = members[idx:]
+                    mid = len(rest) // 2
+                    chunks.append(rest[:mid])
+                    chunks.append(rest[mid:])
+                else:
+                    chunks = [
+                        members[i : i + team_size] for i in range(0, n, team_size)
+                    ]
+
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                team = LeagueTeam(
+                    tier=tier, month=current_month, team_name=_gen_team_name()
+                )
+                session.add(team)
+                session.flush()
+                for m in chunk:
+                    m.team_id = team.id
+                    m.promo_streak = 0
+                    m.demote_streak = 0
+                    m.inactive_days = 0
+                    m.last_eval_date = None
+                session.add(
+                    LeagueHistory(
+                        user_id=chunk[0].user_id,
+                        event="reassign",
+                        from_tier=tier,
+                        to_tier=tier,
+                        date=today,
+                    )
+                )
+
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        import logging
+
+        logging.getLogger("octile").error(f"League monthly reassignment failed: {e}")
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
