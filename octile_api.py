@@ -788,7 +788,7 @@ class LeagueHistory(OctileBase):
 # Auth configuration
 # ---------------------------------------------------------------------------
 OCTILE_JWT_SECRET = os.getenv("OCTILE_JWT_SECRET", "octile-change-me-in-production")
-OCTILE_JWT_EXPIRY_DAYS = 30
+OCTILE_JWT_EXPIRY_DAYS = 365
 
 # Google OAuth (server-side redirect flow)
 OCTILE_GOOGLE_CLIENT_ID = os.getenv(
@@ -1814,15 +1814,21 @@ def auth_magic_link_verify(token: str, uid: int):
     """Verify magic link token and return JWT. Redirects to app with token."""
     session = get_session()
     try:
+        _err_style = 'style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px"'
+        _err_btn = f'<a href="{OCTILE_SITE_URL}" style="display:inline-block;margin-top:20px;padding:12px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Open Octile</a>'
         user = session.query(OctileUser).filter(OctileUser.id == uid).first()
         if not user or user.otp_code != "magic:" + token:
             return HTMLResponse(
-                "<h2>Invalid or expired link</h2><p>Please request a new sign-in link.</p>",
+                f'<body {_err_style}><h2 style="color:#e74c3c">Link Invalid</h2>'
+                f"<p>This sign-in link is no longer valid.<br>It may have already been used.</p>"
+                f"<p>Please open Octile and request a new sign-in link.</p>{_err_btn}</body>",
                 status_code=400,
             )
         if user.otp_expires_at and user.otp_expires_at < datetime.now(timezone.utc):
             return HTMLResponse(
-                "<h2>Link expired</h2><p>Please request a new sign-in link.</p>",
+                f'<body {_err_style}><h2 style="color:#f39c12">Link Expired</h2>'
+                f"<p>This sign-in link has expired (15 minutes).</p>"
+                f"<p>Please open Octile and request a new sign-in link.</p>{_err_btn}</body>",
                 status_code=400,
             )
 
@@ -2087,18 +2093,34 @@ def auth_reset_password(req: ResetPasswordRequest):
 
 @octile_router.get("/auth/me")
 def auth_me(user: dict = Depends(require_octile_auth)):
-    """Get current authenticated user info."""
+    """Get current authenticated user info. Auto-refreshes JWT if past halfway."""
     session = get_session()
     try:
         db_user = (
             session.query(OctileUser).filter(OctileUser.id == int(user["sub"])).first()
         )
-        return {
+        result = {
             "id": int(user["sub"]),
             "display_name": db_user.display_name if db_user else user["name"],
             "email": user["email"],
             "picture": db_user.picture if db_user else None,
         }
+        # Auto-refresh: if token is past halfway (>182 days old), issue new one
+        iat = user.get("iat")
+        if iat:
+            issued = (
+                datetime.fromtimestamp(iat, tz=timezone.utc)
+                if isinstance(iat, (int, float))
+                else iat
+            )
+            age_days = (datetime.now(timezone.utc) - issued).days
+            if age_days > OCTILE_JWT_EXPIRY_DAYS // 2:
+                result["refreshed_token"] = _create_octile_jwt(
+                    int(user["sub"]),
+                    db_user.display_name if db_user else user.get("name", ""),
+                    user.get("email", ""),
+                )
+        return result
     finally:
         session.close()
 
