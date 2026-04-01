@@ -729,6 +729,8 @@ LEAGUE_TIERS = {
 LEAGUE_PROMO_DAYS = 3
 LEAGUE_DEMOTE_DAYS = 3
 LEAGUE_PROMO_TOP_N = 2  # safety zone: top 2 for promotion
+LEAGUE_MIN_ACTIVE_FOR_EVAL = 3  # need >= 3 active members to evaluate
+LEAGUE_MIN_EXP_FOR_PROMO = 500  # must earn >= 500 EXP/day to count for promotion
 LEAGUE_DAILY_EXP_CAP = 20000  # anti-cheat: max daily EXP before flagging
 
 
@@ -2852,6 +2854,11 @@ def league_my_team(user: dict = Depends(require_octile_auth)):
             "my_exp_today": member.today_exp or 0,
             "promo_streak": member.promo_streak or 0,
             "demote_streak": member.demote_streak or 0,
+            "active_count": sum(
+                1 for m in members_data if (m.get("inactive_days") or 0) < 2
+            ),
+            "min_active": LEAGUE_MIN_ACTIVE_FOR_EVAL,
+            "min_exp_for_promo": LEAGUE_MIN_EXP_FOR_PROMO,
             "members": members_data,
         }
     finally:
@@ -2944,6 +2951,12 @@ def league_daily_evaluation():
             active = [m for m in members if (m.inactive_days or 0) < 2]
             active.sort(key=lambda m: m.today_exp or 0, reverse=True)
 
+            # Skip evaluation if not enough active members (cold-start protection)
+            if len(active) < LEAGUE_MIN_ACTIVE_FOR_EVAL:
+                for m in active:
+                    m.last_eval_date = today
+                continue
+
             for rank, m in enumerate(active):
                 if m.last_eval_date == today:
                     continue
@@ -2954,11 +2967,15 @@ def league_daily_evaluation():
                     continue
 
                 # Safety zone: top N for promotion
-                if rank < LEAGUE_PROMO_TOP_N and (m.today_exp or 0) > 0:
+                # Must also meet minimum EXP threshold to prevent idle promotion
+                if (
+                    rank < LEAGUE_PROMO_TOP_N
+                    and (m.today_exp or 0) >= LEAGUE_MIN_EXP_FOR_PROMO
+                ):
                     m.promo_streak = (m.promo_streak or 0) + 1
                     m.demote_streak = 0
                 # Last place for demotion
-                elif rank == len(active) - 1 and len(active) >= 3:
+                elif rank == len(active) - 1:
                     m.demote_streak = (m.demote_streak or 0) + 1
                     m.promo_streak = 0
                 else:
