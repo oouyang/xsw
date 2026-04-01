@@ -652,6 +652,7 @@ class OctileScore(OctileBase):
         Index("idx_octile_uuid_puzzle", "browser_uuid", "puzzle_number"),
         Index("idx_octile_uuid_created", "browser_uuid", "created_at"),
         Index("idx_octile_uuid_userid", "browser_uuid", "user_id"),
+        Index("idx_octile_userid_created", "user_id", "created_at"),
     )
 
     def __repr__(self):
@@ -742,6 +743,10 @@ class LeagueMember(OctileBase):
     inactive_days = Column(Integer, default=0)
     last_eval_date = Column(String, nullable=True)
     joined_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        Index("idx_league_member_team_exp", "team_id", "today_exp"),
+        Index("idx_league_member_tier", "tier"),
+    )
 
 
 class LeagueTeam(OctileBase):
@@ -2999,8 +3004,12 @@ def league_daily_evaluation():
                     m.demote_streak = 0
                     m.last_eval_date = today
 
-        # 3. Reset today_exp for all members
-        session.query(LeagueMember).update({LeagueMember.today_exp: 0})
+        # 3. Reset today_exp atomically — use BEGIN IMMEDIATE to block
+        # concurrent score submits from incrementing during the reset window
+        session.commit()  # commit evaluation results first
+        session.execute(sql_text("BEGIN IMMEDIATE"))
+        session.execute(sql_text("UPDATE league_members SET today_exp = 0"))
+        session.execute(sql_text("COMMIT"))
 
         # 4. Prune old daily_exp (keep 7 days)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
