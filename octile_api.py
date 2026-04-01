@@ -1742,6 +1742,131 @@ def _send_otp_email(email: str, otp: str, purpose: str = "verify") -> bool:
     return result.get("status") == "success"
 
 
+class MagicLinkRequest(BaseModel):
+    email: str
+    browser_uuid: Optional[str] = None
+
+
+@octile_router.post("/auth/magic-link")
+def auth_magic_link(req: MagicLinkRequest):
+    """Send a magic sign-in link to the given email."""
+    email = _normalize_email(req.email.strip().lower())
+    if not email or "@" not in email:
+        return JSONResponse({"detail": "Invalid email"}, status_code=400)
+
+    session = get_session()
+    try:
+        # Find or create user
+        user = session.query(OctileUser).filter(OctileUser.email == email).first()
+        if not user:
+            # Auto-create account
+            user = OctileUser(
+                email=email,
+                display_name=email.split("@")[0],
+                browser_uuid=req.browser_uuid,
+                is_verified=False,
+            )
+            session.add(user)
+            session.flush()
+
+        # Generate a short-lived token (15 min)
+        token = secrets.token_urlsafe(32)
+        user.otp_code = "magic:" + token
+        user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        if req.browser_uuid and not user.browser_uuid:
+            user.browser_uuid = req.browser_uuid
+        session.commit()
+
+        # Build magic link URL
+        verify_url = (
+            OCTILE_WORKER_URL.rstrip("/")
+            + "/auth/magic-link/verify?token="
+            + token
+            + "&uid="
+            + str(user.id)
+        )
+
+        # Send email
+        sender = _get_email_sender()
+        if not sender:
+            return JSONResponse(
+                {"detail": "Email service unavailable"}, status_code=503
+            )
+        body = f"""
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+          <h2 style="color:#f1c40f">Octile Sign In</h2>
+          <p>Click the button below to sign in to Octile:</p>
+          <a href="{verify_url}" style="display:inline-block;padding:14px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px">Sign In to Octile</a>
+          <p style="color:#888;font-size:12px;margin-top:20px">This link expires in 15 minutes. If you didn't request this, ignore this email.</p>
+        </div>
+        """
+        result = sender.send_email(email, "Octile Sign-In Link", body, is_html=True)
+        if result.get("status") != "success":
+            return JSONResponse({"detail": "Failed to send email"}, status_code=500)
+
+        return {"status": "ok"}
+    finally:
+        session.close()
+
+
+@octile_router.get("/auth/magic-link/verify")
+def auth_magic_link_verify(token: str, uid: int):
+    """Verify magic link token and return JWT. Redirects to app with token."""
+    session = get_session()
+    try:
+        user = session.query(OctileUser).filter(OctileUser.id == uid).first()
+        if not user or user.otp_code != "magic:" + token:
+            return HTMLResponse(
+                "<h2>Invalid or expired link</h2><p>Please request a new sign-in link.</p>",
+                status_code=400,
+            )
+        if user.otp_expires_at and user.otp_expires_at < datetime.now(timezone.utc):
+            return HTMLResponse(
+                "<h2>Link expired</h2><p>Please request a new sign-in link.</p>",
+                status_code=400,
+            )
+
+        # Mark verified, clear OTP
+        user.is_verified = True
+        user.otp_code = None
+        user.otp_expires_at = None
+        user.last_login_at = datetime.now(timezone.utc)
+        session.commit()
+
+        # Backfill scores
+        _backfill_scores_for_user(session, user)
+
+        # Generate JWT
+        jwt_token = _create_octile_jwt(user.id, user.display_name or "", user.email)
+
+        # Redirect to app with token (works for both web and Android deep link)
+        safe_name = (user.display_name or "").replace("'", "\\'")
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+        <title>Signing in...</title>
+        <script>
+        try {{
+          if (window.opener) {{
+            window.opener.postMessage({{type:'octile-auth',token:'{jwt_token}',name:'{safe_name}'}}, '*');
+            window.close();
+          }} else {{
+            window.location.href = 'octile://auth?token={jwt_token}&name={safe_name}';
+            setTimeout(function() {{
+              window.location.href = '{OCTILE_SITE_URL}?auth_token={jwt_token}';
+            }}, 1000);
+          }}
+        }} catch(e) {{
+          window.location.href = '{OCTILE_SITE_URL}?auth_token={jwt_token}';
+        }}
+        </script>
+        </head><body style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px">
+        <h2 style="color:#2ecc71">✓ Signed in!</h2>
+        <p>Redirecting to Octile...</p>
+        </body></html>"""
+        return HTMLResponse(html)
+    finally:
+        session.close()
+
+
 @octile_router.post("/auth/register")
 def auth_register(req: RegisterRequest):
     """Register a new account. Sends OTP to email for verification."""
