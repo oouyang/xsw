@@ -705,6 +705,9 @@ class OctileProgress(OctileBase):
     grades_s = Column(Integer, default=0)
     grades_a = Column(Integer, default=0)
     grades_b = Column(Integer, default=0)
+    daily_tasks_date = Column(String, nullable=True)
+    daily_tasks_claimed = Column(Text, default="[]")
+    daily_tasks_bonus_claimed = Column(Integer, default=0)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -2206,6 +2209,9 @@ class SyncPushRequest(BaseModel):
     grades_s: int = 0
     grades_a: int = 0
     grades_b: int = 0
+    daily_tasks_date: Optional[str] = None
+    daily_tasks_claimed: list = []
+    daily_tasks_bonus_claimed: bool = False
 
 
 def _merge_json_lists(server_json: str, client_list: list) -> str:
@@ -2267,6 +2273,19 @@ def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
             prog.streak_count = req.streak_count
             prog.streak_last_date = req.streak_last_date
 
+        # Daily tasks: if client date is newer or same, merge claimed lists
+        if req.daily_tasks_date and (
+            req.daily_tasks_date >= (prog.daily_tasks_date or "")
+        ):
+            prog.daily_tasks_date = req.daily_tasks_date
+            prog.daily_tasks_claimed = _merge_json_lists(
+                prog.daily_tasks_claimed or "[]", req.daily_tasks_claimed
+            )
+            prog.daily_tasks_bonus_claimed = max(
+                prog.daily_tasks_bonus_claimed or 0,
+                1 if req.daily_tasks_bonus_claimed else 0,
+            )
+
         prog.updated_at = datetime.now(timezone.utc)
         session.commit()
 
@@ -2314,6 +2333,9 @@ def sync_pull(user: dict = Depends(require_octile_auth)):
                 "grades_s": prog.grades_s or 0,
                 "grades_a": prog.grades_a or 0,
                 "grades_b": prog.grades_b or 0,
+                "daily_tasks_date": prog.daily_tasks_date,
+                "daily_tasks_claimed": json.loads(prog.daily_tasks_claimed or "[]"),
+                "daily_tasks_bonus_claimed": bool(prog.daily_tasks_bonus_claimed),
             },
         }
     finally:
