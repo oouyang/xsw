@@ -3526,7 +3526,14 @@ def submit_feedback(req: FeedbackRequest, request: Request):
         "feature": "Feature Request",
         "general": "General Feedback",
     }.get(req.type, req.type)
-    subject = f"[Octile Feedback] {type_label}"
+    # Build descriptive subject: [Octile Bug] first 50 chars of message (device)
+    preview = msg[:50].replace("\n", " ").strip()
+    if len(msg) > 50:
+        preview += "..."
+    device_short = (req.device or "")[:30]
+    subject = f"[Octile {type_label}] {preview}"
+    if device_short:
+        subject += f" ({device_short})"
 
     body = f"""Type: {type_label}
 From: {req.email or "(anonymous)"}
