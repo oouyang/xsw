@@ -69,6 +69,7 @@ Still accepted for backward compatibility.
 
 import hashlib
 import hmac
+import json
 import os
 import re as _re
 import secrets
@@ -722,6 +723,9 @@ class OctileProgress(OctileBase):
     daily_tasks_date = Column(String, nullable=True)
     daily_tasks_claimed = Column(Text, default="[]")
     daily_tasks_bonus_claimed = Column(Integer, default=0)
+    unlocked_themes = Column(Text, default="[]")
+    solved_set = Column(Text, default="[]")
+    best_times = Column(Text, default="{}")
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -1399,12 +1403,24 @@ async def submit_score(request: Request):
         session.commit()
         session.refresh(score)
 
-        # Atomic league EXP update
+        # Atomic league EXP update (with speed-hack protection)
         if auth_user_id and not flagged and exp > 0:
-            session.query(LeagueMember).filter(
-                LeagueMember.user_id == auth_user_id
-            ).update({LeagueMember.today_exp: LeagueMember.today_exp + exp})
-            session.commit()
+            # League rate limit: skip league EXP if 3+ scores under 15s in last 5 min
+            recent_fast = (
+                session.query(func.count(OctileScore.id))
+                .filter(
+                    OctileScore.user_id == auth_user_id,
+                    OctileScore.resolve_time < 15,
+                    OctileScore.created_at
+                    >= datetime.now(timezone.utc) - timedelta(minutes=5),
+                )
+                .scalar()
+            )
+            if recent_fast < 3:
+                session.query(LeagueMember).filter(
+                    LeagueMember.user_id == auth_user_id
+                ).update({LeagueMember.today_exp: LeagueMember.today_exp + exp})
+                session.commit()
 
         # Calculate updated ELO for this player
         resp = _score_to_response(score)
@@ -1790,6 +1806,7 @@ def _send_otp_email(email: str, otp: str, purpose: str = "verify") -> bool:
 
 class MagicLinkRequest(BaseModel):
     email: str
+    display_name: Optional[str] = None
     browser_uuid: Optional[str] = None
 
 
@@ -1844,7 +1861,8 @@ def auth_magic_link(req: MagicLinkRequest):
             # Auto-create account
             user = OctileUser(
                 email=email,
-                display_name=email.split("@")[0],
+                display_name=(req.display_name.strip() if req.display_name else None)
+                or email.split("@")[0],
                 browser_uuid=req.browser_uuid,
                 is_verified=False,
             )
@@ -2595,6 +2613,9 @@ class SyncPushRequest(BaseModel):
     daily_tasks_date: Optional[str] = None
     daily_tasks_claimed: list = []
     daily_tasks_bonus_claimed: bool = False
+    unlocked_themes: list = []
+    solved_set: list = []
+    best_times: dict = {}
 
 
 def _merge_json_lists(server_json: str, client_list: list) -> str:
@@ -2669,6 +2690,23 @@ def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
                 1 if req.daily_tasks_bonus_claimed else 0,
             )
 
+        # Unlocked themes: union
+        prog.unlocked_themes = _merge_json_lists(
+            prog.unlocked_themes or "[]", req.unlocked_themes
+        )
+        # Solved set: union
+        prog.solved_set = _merge_json_lists(prog.solved_set or "[]", req.solved_set)
+        # Best times: per-puzzle MIN (keep faster time)
+        try:
+            server_best = json.loads(prog.best_times or "{}")
+        except Exception:
+            server_best = {}
+        for k, v in (req.best_times or {}).items():
+            sk = str(k)
+            if sk not in server_best or v < server_best[sk]:
+                server_best[sk] = v
+        prog.best_times = json.dumps(server_best)
+
         prog.updated_at = datetime.now(timezone.utc)
         session.commit()
 
@@ -2719,6 +2757,9 @@ def sync_pull(user: dict = Depends(require_octile_auth)):
                 "daily_tasks_date": prog.daily_tasks_date,
                 "daily_tasks_claimed": json.loads(prog.daily_tasks_claimed or "[]"),
                 "daily_tasks_bonus_claimed": bool(prog.daily_tasks_bonus_claimed),
+                "unlocked_themes": json.loads(prog.unlocked_themes or "[]"),
+                "solved_set": json.loads(prog.solved_set or "[]"),
+                "best_times": json.loads(prog.best_times or "{}"),
             },
         }
     finally:
