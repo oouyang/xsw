@@ -1894,8 +1894,8 @@ def auth_magic_link_verify(token: str, uid: int):
         user.last_login_at = datetime.now(timezone.utc)  # also serves as used_at
         session.commit()
 
-        # Backfill scores
-        _backfill_scores_for_user(session, user)
+        # Backfill scores: link anonymous scores to this user
+        _backfill_scores_for_user(session, user.id, user.browser_uuid or "")
 
         # Generate JWT and store for magic link polling
         jwt_token = _create_octile_jwt(user.id, user.display_name or "", user.email)
