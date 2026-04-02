@@ -676,6 +676,8 @@ class OctileUser(OctileBase):
     is_verified = Column(Boolean, default=False)
     otp_code = Column(String, nullable=True)
     otp_expires_at = Column(DateTime, nullable=True)
+    magic_request_id = Column(String, nullable=True, index=True)
+    magic_jwt = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login_at = Column(DateTime, nullable=True)
 
@@ -990,6 +992,8 @@ def _migrate_db():
         "ALTER TABLE octile_scores ADD COLUMN coins INTEGER DEFAULT 0",
         "ALTER TABLE octile_scores ADD COLUMN exp INTEGER DEFAULT 0",
         "ALTER TABLE octile_scores ADD COLUMN diamonds INTEGER DEFAULT 0",
+        "ALTER TABLE octile_users ADD COLUMN magic_request_id TEXT",
+        "ALTER TABLE octile_users ADD COLUMN magic_jwt TEXT",
     ]
     with _engine.connect() as conn:
         for sql in migrations:
@@ -1769,10 +1773,13 @@ def auth_magic_link(req: MagicLinkRequest):
             session.add(user)
             session.flush()
 
-        # Generate a short-lived token (15 min)
+        # Generate a short-lived token (15 min) and poll request_id
         token = secrets.token_urlsafe(32)
+        request_id = secrets.token_urlsafe(16)
         user.otp_code = "magic:" + token
         user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        user.magic_request_id = request_id
+        user.magic_jwt = None
         if req.browser_uuid and not user.browser_uuid:
             user.browser_uuid = req.browser_uuid
         session.commit()
@@ -1804,7 +1811,7 @@ def auth_magic_link(req: MagicLinkRequest):
         if result.get("status") != "success":
             return JSONResponse({"detail": "Failed to send email"}, status_code=500)
 
-        return {"status": "ok"}
+        return {"status": "ok", "request_id": request_id}
     finally:
         session.close()
 
@@ -1832,7 +1839,7 @@ def auth_magic_link_verify(token: str, uid: int):
                 status_code=400,
             )
 
-        # Mark verified, clear OTP
+        # Mark verified, clear OTP, store JWT for poll status
         user.is_verified = True
         user.otp_code = None
         user.otp_expires_at = None
@@ -1842,8 +1849,11 @@ def auth_magic_link_verify(token: str, uid: int):
         # Backfill scores
         _backfill_scores_for_user(session, user)
 
-        # Generate JWT
+        # Generate JWT and store for magic link polling
         jwt_token = _create_octile_jwt(user.id, user.display_name or "", user.email)
+        if user.magic_request_id:
+            user.magic_jwt = jwt_token
+            session.commit()
 
         # Redirect to app with token (works for both web and Android deep link)
         safe_name = (user.display_name or "").replace("'", "\\'")
@@ -1869,6 +1879,44 @@ def auth_magic_link_verify(token: str, uid: int):
         <p>Redirecting to Octile...</p>
         </body></html>"""
         return HTMLResponse(html)
+    finally:
+        session.close()
+
+
+@octile_router.get("/auth/magic-link/status")
+def auth_magic_link_status(id: str):
+    """Poll magic link verification status (for PWA cross-browser flow)."""
+    if not id:
+        return JSONResponse({"detail": "Missing id"}, status_code=400)
+    session = get_session()
+    try:
+        user = (
+            session.query(OctileUser).filter(OctileUser.magic_request_id == id).first()
+        )
+        if not user:
+            return {"status": "expired"}
+
+        # Check if verified (JWT stored by verify endpoint)
+        if user.magic_jwt:
+            jwt_token = user.magic_jwt
+            # Clear poll data (one-time read)
+            user.magic_request_id = None
+            user.magic_jwt = None
+            session.commit()
+            return {
+                "status": "verified",
+                "access_token": jwt_token,
+                "display_name": user.display_name or "",
+                "email": user.email or "",
+            }
+
+        # Check if expired
+        if user.otp_expires_at and user.otp_expires_at < datetime.now(timezone.utc):
+            user.magic_request_id = None
+            session.commit()
+            return {"status": "expired"}
+
+        return {"status": "pending"}
     finally:
         session.close()
 
