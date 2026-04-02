@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Backup Octile database to timestamped SQLite copy and/or JSON dump.
+Optionally zip and email the backup to octileapp@googlegroups.com.
 
 Usage:
     # In Docker container:
@@ -20,6 +21,9 @@ Usage:
 
     # Both (default):
     python3 scripts/backup_octile.py --format all
+
+    # Backup + email to octileapp@googlegroups.com:
+    python3 scripts/backup_octile.py --email
 """
 
 import argparse
@@ -27,7 +31,14 @@ import json
 import os
 import sqlite3
 import sys
+import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
+
+# Add parent directory for email_sender import
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+BACKUP_EMAIL = "octileapp@googlegroups.com"
 
 
 def dump_table(conn, table):
@@ -53,7 +64,6 @@ def backup_json(db_path, out_dir, timestamp):
     total_rows = 0
     for table in tables:
         rows = dump_table(conn, table)
-        # Convert any non-serializable values
         for row in rows:
             for k, v in row.items():
                 if hasattr(v, "isoformat"):
@@ -93,6 +103,74 @@ def backup_sqlite(db_path, out_dir, timestamp):
         return None
 
 
+def zip_files(files, out_dir, timestamp):
+    """Zip backup files into a single archive."""
+    zip_path = os.path.join(out_dir, f"octile_backup_{timestamp}.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            zf.write(f, os.path.basename(f))
+    size = os.path.getsize(zip_path)
+    print(f"  Zip: {zip_path} ({size:,} bytes)")
+    return zip_path
+
+
+def send_backup_email(zip_path, timestamp):
+    """Send backup zip to octileapp@googlegroups.com using OCTILE_SMTP_* env vars."""
+    smtp_host = os.getenv("OCTILE_SMTP_HOST", os.getenv("SMTP_HOST", ""))
+    smtp_user = os.getenv("OCTILE_SMTP_USER", "")
+    smtp_password = os.getenv("OCTILE_SMTP_PASSWORD", os.getenv("SMTP_PASSWORD", ""))
+
+    if not smtp_host or not smtp_user:
+        print(
+            "  [ERROR] Email not sent — OCTILE_SMTP_HOST and OCTILE_SMTP_USER required"
+        )
+        print(
+            "    Set env vars: OCTILE_SMTP_HOST, OCTILE_SMTP_USER, OCTILE_SMTP_PASSWORD"
+        )
+        return False
+
+    try:
+        from email_sender import EmailSender
+
+        sender = EmailSender(
+            smtp_host=smtp_host,
+            smtp_port=int(os.getenv("OCTILE_SMTP_PORT", os.getenv("SMTP_PORT", "587"))),
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            from_email=os.getenv("OCTILE_FROM_EMAIL", smtp_user),
+            from_name="Octile Backup",
+        )
+
+        zip_size = os.path.getsize(zip_path)
+        subject = f"[Octile Backup] {timestamp}"
+        body = (
+            f"Octile database backup — {timestamp}\n\n"
+            f"Attachment: {os.path.basename(zip_path)} ({zip_size:,} bytes)\n"
+            f"Source: {os.getenv('OCTILE_DB_PATH', 'octile.db')}\n"
+        )
+
+        result = sender.send_email(
+            to_email=BACKUP_EMAIL,
+            subject=subject,
+            body=body,
+            attachments=[zip_path],
+        )
+
+        if result.get("success"):
+            print(f"  Email sent to {BACKUP_EMAIL}")
+            return True
+        else:
+            print(f"  [ERROR] Email failed: {result.get('error', 'unknown')}")
+            return False
+
+    except ImportError:
+        print("  [ERROR] email_sender module not found")
+        return False
+    except Exception as e:
+        print(f"  [ERROR] Email failed: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Backup Octile database (scores, users, progress)",
@@ -113,6 +191,11 @@ def main():
         choices=["json", "sqlite", "all"],
         default="all",
         help="Backup format (default: all)",
+    )
+    parser.add_argument(
+        "--email",
+        action="store_true",
+        help=f"Zip and email backup to {BACKUP_EMAIL}",
     )
 
     args = parser.parse_args()
@@ -140,6 +223,11 @@ def main():
 
     if args.format in ("json", "all"):
         files.append(backup_json(db_path, out_dir, timestamp))
+
+    if args.email and files:
+        print()
+        zip_path = zip_files(files, out_dir, timestamp)
+        send_backup_email(zip_path, timestamp)
 
     print()
     print(f"Done. {len(files)} file(s) written to {out_dir}")

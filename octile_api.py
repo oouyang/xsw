@@ -111,8 +111,10 @@ P92_MAP = {c: i for i, c in enumerate(P92)}
 
 # Loaded lazily from puzzle_data.py to keep this file readable
 _PUZZLE_DATA: str | None = None
+_PUZZLE_DATA_HASH: str | None = None
 PUZZLE_COUNT = 11378  # base puzzles stored in puzzle data
 TOTAL_PUZZLE_COUNT = PUZZLE_COUNT * 8  # 91024 — with D4 symmetry transforms
+OCTILE_DATA_VERSION = "2026-04-02"  # bump when puzzle data or encoding changes
 
 
 def _get_puzzle_data() -> str:
@@ -122,6 +124,14 @@ def _get_puzzle_data() -> str:
 
         _PUZZLE_DATA = PUZZLE_DATA
     return _PUZZLE_DATA
+
+
+def _get_puzzle_data_hash() -> str:
+    """SHA-256 hash (first 16 hex chars) of puzzle data for version matching."""
+    global _PUZZLE_DATA_HASH
+    if _PUZZLE_DATA_HASH is None:
+        _PUZZLE_DATA_HASH = hashlib.sha256(_get_puzzle_data().encode()).hexdigest()[:16]
+    return _PUZZLE_DATA_HASH
 
 
 # Difficulty levels: 1=easy, 2=medium, 3=hard, 4=hell (nightmare in UI)
@@ -1079,6 +1089,7 @@ class ScoreSubmitRequest(BaseModel):
     resolve_time: float
     browser_uuid: str
     solution: Optional[str] = None  # 27-char compact or 128-char legacy
+    data_version: Optional[str] = None  # client puzzle data version for compat check
     # Legacy fields (accepted but ignored during transition)
     timestamp_utc: Optional[str] = None
     os: Optional[str] = None
@@ -1256,6 +1267,24 @@ def _check_anomalies(session: Session, browser_uuid: str) -> bool:
 octile_router = APIRouter(prefix="/octile")
 
 
+@octile_router.get("/version")
+def get_octile_version():
+    """Return puzzle data version info for client compatibility checks.
+
+    Clients should call this on startup and compare data_hash with their
+    locally cached value. If mismatched, the client should update its
+    puzzle data before submitting scores.
+    """
+    return {
+        "data_version": OCTILE_DATA_VERSION,
+        "data_hash": _get_puzzle_data_hash(),
+        "puzzle_count": PUZZLE_COUNT,
+        "total_puzzles": TOTAL_PUZZLE_COUNT,
+        "encoding": "base92-3char",
+        "solution_formats": ["8-char-compact", "27-char-compact", "128-char-legacy"],
+    }
+
+
 @octile_router.post("/score")
 async def submit_score(request: Request):
     """Submit a puzzle solve score."""
@@ -1275,6 +1304,17 @@ async def submit_score(request: Request):
         return JSONResponse(
             status_code=422,
             content={"detail": "invalid request body"},
+        )
+
+    # --- Version compatibility check ---
+    if body.data_version and body.data_version != OCTILE_DATA_VERSION:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "puzzle data outdated, please refresh",
+                "current_version": OCTILE_DATA_VERSION,
+                "data_hash": _get_puzzle_data_hash(),
+            },
         )
 
     # --- Validation (Layer 2) ---
