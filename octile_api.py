@@ -681,7 +681,9 @@ class OctileUser(OctileBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String, unique=True, nullable=False, index=True)
-    password_hash = Column(String, nullable=False)
+    password_hash = Column(
+        String, nullable=True
+    )  # NULL for magic link users (passwordless)
     display_name = Column(String, nullable=False)
     picture = Column(String, nullable=True)
     browser_uuid = Column(String, nullable=True, index=True)
