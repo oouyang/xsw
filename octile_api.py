@@ -1751,26 +1751,32 @@ class MagicLinkRequest(BaseModel):
     browser_uuid: Optional[str] = None
 
 
-MAGIC_LINK_RATE_LIMIT = {}  # {email: (count, window_start)}
+MAGIC_LINK_RATE_LIMIT = {}  # {email: (count, window_start, last_send)}
 MAGIC_LINK_MAX_PER_EMAIL = 5  # max 5 requests per 15 min per email
 MAGIC_LINK_WINDOW_SEC = 900  # 15 min window
+MAGIC_LINK_RESEND_COOLDOWN = 60  # min 60s between sends per email
 
 
-def _check_magic_link_rate(email: str) -> bool:
-    """Return True if rate limited."""
+def _check_magic_link_rate(email: str) -> str | None:
+    """Return error message if rate limited, None if OK."""
     now = _time.time()
     entry = MAGIC_LINK_RATE_LIMIT.get(email)
     if entry:
-        count, window_start = entry
+        count, window_start, last_send = entry
+        # Resend cooldown
+        if now - last_send < MAGIC_LINK_RESEND_COOLDOWN:
+            wait = int(MAGIC_LINK_RESEND_COOLDOWN - (now - last_send))
+            return f"Please wait {wait} seconds before requesting again."
+        # Window rate limit
         if now - window_start > MAGIC_LINK_WINDOW_SEC:
-            MAGIC_LINK_RATE_LIMIT[email] = (1, now)
-            return False
+            MAGIC_LINK_RATE_LIMIT[email] = (1, now, now)
+            return None
         if count >= MAGIC_LINK_MAX_PER_EMAIL:
-            return True
-        MAGIC_LINK_RATE_LIMIT[email] = (count + 1, window_start)
+            return "Too many requests. Please wait a few minutes."
+        MAGIC_LINK_RATE_LIMIT[email] = (count + 1, window_start, now)
     else:
-        MAGIC_LINK_RATE_LIMIT[email] = (1, now)
-    return False
+        MAGIC_LINK_RATE_LIMIT[email] = (1, now, now)
+    return None
 
 
 @octile_router.post("/auth/magic-link")
@@ -1781,9 +1787,10 @@ def auth_magic_link(req: MagicLinkRequest):
         return JSONResponse({"detail": "Invalid email"}, status_code=400)
 
     # Rate limit: max 5 requests per 15 min per email
-    if _check_magic_link_rate(email):
+    rate_err = _check_magic_link_rate(email)
+    if rate_err:
         return JSONResponse(
-            {"detail": "Too many requests. Please wait a few minutes."},
+            {"detail": rate_err},
             status_code=429,
         )
 
@@ -1829,15 +1836,25 @@ def auth_magic_link(req: MagicLinkRequest):
             return JSONResponse(
                 {"detail": "Email service unavailable"}, status_code=503
             )
+        subject = "Your Octile sign-in link"
         body = f"""
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
-          <h2 style="color:#f1c40f">Octile Sign In</h2>
-          <p>Click the button below to sign in to Octile:</p>
-          <a href="{verify_url}" style="display:inline-block;padding:14px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px">Sign In to Octile</a>
-          <p style="color:#888;font-size:12px;margin-top:20px">This link expires in 15 minutes. If you didn't request this, ignore this email.</p>
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#333">
+          <div style="text-align:center;margin-bottom:20px">
+            <span style="font-size:24px;font-weight:800;color:#1a1a2e;letter-spacing:2px">Octile</span>
+          </div>
+          <p>Hi,</p>
+          <p>You requested to sign in to Octile. Use the link below to continue:</p>
+          <div style="text-align:center;margin:24px 0">
+            <a href="{verify_url}" style="display:inline-block;padding:14px 32px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px">Sign in to Octile</a>
+          </div>
+          <p style="font-size:13px;color:#666">Or copy and paste this URL into your browser:</p>
+          <p style="font-size:12px;color:#888;word-break:break-all">{verify_url}</p>
+          <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+          <p style="font-size:12px;color:#999">This link is valid for 15 minutes and can only be used once. If you did not request this, you can safely ignore this email.</p>
+          <p style="font-size:11px;color:#bbb;margin-top:16px">Octile &mdash; The 8&times;8 Puzzle Game<br>octileapp@googlegroups.com</p>
         </div>
         """
-        result = sender.send_email(email, "Octile Sign-In Link", body, is_html=True)
+        result = sender.send_email(email, subject, body, is_html=True)
         if result.get("status") != "success":
             return JSONResponse({"detail": "Failed to send email"}, status_code=500)
 
