@@ -1751,12 +1751,41 @@ class MagicLinkRequest(BaseModel):
     browser_uuid: Optional[str] = None
 
 
+MAGIC_LINK_RATE_LIMIT = {}  # {email: (count, window_start)}
+MAGIC_LINK_MAX_PER_EMAIL = 5  # max 5 requests per 15 min per email
+MAGIC_LINK_WINDOW_SEC = 900  # 15 min window
+
+
+def _check_magic_link_rate(email: str) -> bool:
+    """Return True if rate limited."""
+    now = _time.time()
+    entry = MAGIC_LINK_RATE_LIMIT.get(email)
+    if entry:
+        count, window_start = entry
+        if now - window_start > MAGIC_LINK_WINDOW_SEC:
+            MAGIC_LINK_RATE_LIMIT[email] = (1, now)
+            return False
+        if count >= MAGIC_LINK_MAX_PER_EMAIL:
+            return True
+        MAGIC_LINK_RATE_LIMIT[email] = (count + 1, window_start)
+    else:
+        MAGIC_LINK_RATE_LIMIT[email] = (1, now)
+    return False
+
+
 @octile_router.post("/auth/magic-link")
 def auth_magic_link(req: MagicLinkRequest):
     """Send a magic sign-in link to the given email."""
     email = _normalize_email(req.email.strip().lower())
     if not email or "@" not in email:
         return JSONResponse({"detail": "Invalid email"}, status_code=400)
+
+    # Rate limit: max 5 requests per 15 min per email
+    if _check_magic_link_rate(email):
+        return JSONResponse(
+            {"detail": "Too many requests. Please wait a few minutes."},
+            status_code=429,
+        )
 
     session = get_session()
     try:
@@ -1775,8 +1804,9 @@ def auth_magic_link(req: MagicLinkRequest):
 
         # Generate a short-lived token (15 min) and poll request_id
         token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
         request_id = secrets.token_urlsafe(16)
-        user.otp_code = "magic:" + token
+        user.otp_code = "magic:" + token_hash
         user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
         user.magic_request_id = request_id
         user.magic_jwt = None
@@ -1824,7 +1854,8 @@ def auth_magic_link_verify(token: str, uid: int):
         _err_style = 'style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px"'
         _err_btn = f'<a href="{OCTILE_SITE_URL}" style="display:inline-block;margin-top:20px;padding:12px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Open Octile</a>'
         user = session.query(OctileUser).filter(OctileUser.id == uid).first()
-        if not user or user.otp_code != "magic:" + token:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        if not user or user.otp_code != "magic:" + token_hash:
             return HTMLResponse(
                 f'<body {_err_style}><h2 style="color:#e74c3c">Link Invalid</h2>'
                 f"<p>This sign-in link is no longer valid.<br>It may have already been used.</p>"
@@ -1839,11 +1870,11 @@ def auth_magic_link_verify(token: str, uid: int):
                 status_code=400,
             )
 
-        # Mark verified, clear OTP, store JWT for poll status
+        # Mark verified, clear OTP (one-time use), store JWT for poll status
         user.is_verified = True
-        user.otp_code = None
+        user.otp_code = None  # invalidate token — one-time use
         user.otp_expires_at = None
-        user.last_login_at = datetime.now(timezone.utc)
+        user.last_login_at = datetime.now(timezone.utc)  # also serves as used_at
         session.commit()
 
         # Backfill scores
