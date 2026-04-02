@@ -75,6 +75,7 @@ import re as _re
 import secrets
 import time as _time
 from collections import defaultdict
+from functools import lru_cache
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -1676,14 +1677,8 @@ def get_puzzles():
         session.close()
 
 
-@octile_router.get("/puzzle/{number}")
-def get_puzzle(number: int):
-    """Get decoded puzzle cells by extended puzzle number (1-based, up to 91024)."""
-    if not (1 <= number <= TOTAL_PUZZLE_COUNT):
-        return JSONResponse(
-            status_code=400,
-            content={"detail": f"puzzle_number must be 1–{TOTAL_PUZZLE_COUNT}"},
-        )
+@lru_cache(maxsize=4096)
+def _cached_puzzle(number: int) -> dict:
     base, transform = _decompose_puzzle_number(number)
     cells = decode_puzzle_extended(number)
     level = get_puzzle_difficulty(number)
@@ -1697,6 +1692,25 @@ def get_puzzle(number: int):
     }
 
 
+@octile_router.get("/puzzle/{number}")
+def get_puzzle(number: int):
+    """Get decoded puzzle cells by extended puzzle number (1-based, up to 91024)."""
+    if not (1 <= number <= TOTAL_PUZZLE_COUNT):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"puzzle_number must be 1–{TOTAL_PUZZLE_COUNT}"},
+        )
+    return _cached_puzzle(number)
+
+
+@lru_cache(maxsize=8)
+def _cached_levels(t: int) -> dict:
+    return {
+        level_name: len(_get_level_bases().get(level_num, [])) * t
+        for level_num, level_name in DIFFICULTY_LABELS.items()
+    }
+
+
 @octile_router.get("/levels")
 def get_levels(transforms: int = 8):
     """Return puzzle counts per difficulty level.
@@ -1704,9 +1718,26 @@ def get_levels(transforms: int = 8):
     transforms: number of D4 transforms per base puzzle (1=base only, 8=full set).
     """
     t = max(1, min(8, transforms))
+    return _cached_levels(t)
+
+
+@lru_cache(maxsize=4096)
+def _cached_level_puzzle(level: str, slot: int, t: int) -> dict:
+    level_num = next(k for k, v in DIFFICULTY_LABELS.items() if v == level)
+    bases = _get_level_bases().get(level_num, [])
+    num_bases = len(bases)
+    slot_0 = slot - 1
+    base_pos = slot_0 % num_bases
+    transform = slot_0 // num_bases
+    base_idx = bases[base_pos]
+    puzzle_number = transform * PUZZLE_COUNT + base_idx + 1
+    cells = decode_puzzle_extended(puzzle_number)
     return {
-        level_name: len(_get_level_bases().get(level_num, [])) * t
-        for level_num, level_name in DIFFICULTY_LABELS.items()
+        "puzzle_number": puzzle_number,
+        "level": level,
+        "slot": slot,
+        "total": num_bases * t,
+        "cells": cells,
     }
 
 
@@ -1736,20 +1767,7 @@ def get_level_puzzle(level: str, slot: int, transforms: int = 8):
             content={"detail": f"slot must be 1–{total}"},
         )
 
-    # Interleaved ordering: slot → (base_pos, transform)
-    slot_0 = slot - 1
-    base_pos = slot_0 % num_bases
-    transform = slot_0 // num_bases
-    base_idx = bases[base_pos]
-    puzzle_number = transform * PUZZLE_COUNT + base_idx + 1
-    cells = decode_puzzle_extended(puzzle_number)
-    return {
-        "puzzle_number": puzzle_number,
-        "level": level,
-        "slot": slot,
-        "total": total,
-        "cells": cells,
-    }
+    return _cached_level_puzzle(level, slot, t)
 
 
 # ---------------------------------------------------------------------------
