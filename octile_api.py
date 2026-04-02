@@ -115,6 +115,7 @@ _PUZZLE_DATA_HASH: str | None = None
 PUZZLE_COUNT = 11378  # base puzzles stored in puzzle data
 TOTAL_PUZZLE_COUNT = PUZZLE_COUNT * 8  # 91024 — with D4 symmetry transforms
 OCTILE_DATA_VERSION = "2026-04-02"  # bump when puzzle data or encoding changes
+OCTILE_API_VERSION = 1  # bump when OTA frontend requires new backend endpoints
 
 
 def _get_puzzle_data() -> str:
@@ -1276,6 +1277,7 @@ def get_octile_version():
     puzzle data before submitting scores.
     """
     return {
+        "apiVersion": OCTILE_API_VERSION,
         "data_version": OCTILE_DATA_VERSION,
         "data_hash": _get_puzzle_data_hash(),
         "puzzle_count": PUZZLE_COUNT,
