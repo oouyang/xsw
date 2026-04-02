@@ -1905,26 +1905,44 @@ def auth_magic_link_verify(token: str, uid: int):
 
         # Redirect to app with token (works for both web and Android deep link)
         safe_name = (user.display_name or "").replace("'", "\\'")
+        web_url = f"{OCTILE_SITE_URL}?auth_token={jwt_token}"
+        deep_url = f"octile://auth?token={jwt_token}&name={safe_name}"
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>Signing in...</title>
         <script>
-        try {{
-          if (window.opener) {{
-            window.opener.postMessage({{type:'octile-auth',token:'{jwt_token}',name:'{safe_name}'}}, '*');
-            window.close();
-          }} else {{
-            window.location.href = 'octile://auth?token={jwt_token}&name={safe_name}';
+        (function() {{
+          var webUrl = '{web_url}';
+          var deepUrl = '{deep_url}';
+          // postMessage to opener (same-browser tab)
+          try {{
+            if (window.opener) {{
+              window.opener.postMessage({{type:'octile-auth',token:'{jwt_token}',name:'{safe_name}'}}, '*');
+              document.getElementById('msg').textContent = 'Signed in! You can close this tab.';
+              setTimeout(function() {{ window.close(); }}, 1500);
+              return;
+            }}
+          }} catch(e) {{}}
+          // Mobile: try deep link, fall back to web
+          var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+          if (isMobile) {{
+            var iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = deepUrl;
+            document.body.appendChild(iframe);
             setTimeout(function() {{
-              window.location.href = '{OCTILE_SITE_URL}?auth_token={jwt_token}';
-            }}, 1000);
+              window.location.href = webUrl;
+            }}, 1500);
+          }} else {{
+            // Desktop: go straight to web
+            window.location.href = webUrl;
           }}
-        }} catch(e) {{
-          window.location.href = '{OCTILE_SITE_URL}?auth_token={jwt_token}';
-        }}
+        }})();
         </script>
         </head><body style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px">
-        <h2 style="color:#2ecc71">✓ Signed in!</h2>
-        <p>Redirecting to Octile...</p>
+        <h2 style="color:#2ecc71">&#10003; Signed in!</h2>
+        <p id="msg">Redirecting to Octile...</p>
+        <p style="margin-top:20px"><a href="{web_url}" style="color:#3498db">Open Octile manually</a></p>
         </body></html>"""
         return HTMLResponse(html)
     finally:
