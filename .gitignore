@@ -30,7 +30,12 @@ yarn-error.log*
 *.sln
 
 # local .env files
+.env
 .env.local*
+
+# Data files
+*.db
+redeems.txt
 
 # Python
 __pycache__/
