@@ -6,8 +6,9 @@ Scoreboard API for the Octile puzzle game. Stores scores in a separate SQLite da
 
 | Layer | What | Effect |
 |-------|------|--------|
-| **Validation** | Puzzle range 1–11378, time 10s–24h | Rejects obviously invalid submissions |
-| **Solution verification** | Server verifies 128-char board state against puzzle data | Cheaters cannot submit without actually solving the puzzle |
+| **Version check** | Optional `data_version` field on score submit | Rejects outdated clients with 409 (opt-in) |
+| **Validation** | Puzzle range 1–91024, time 10s–24h | Rejects obviously invalid submissions |
+| **Solution verification** | Server verifies board state against puzzle data | Cheaters cannot submit without actually solving the puzzle |
 | **Rate limiting** | 1 submission per UUID per 30 seconds | Prevents spam/flooding |
 | **Anomaly detection** | Flags >50 solves/hr or avg <20s over 10+ solves | Marks suspicious accounts for review (doesn't reject) |
 
@@ -15,9 +16,67 @@ Scoreboard API for the Octile puzzle game. Stores scores in a separate SQLite da
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/octile/version` | Puzzle data version info (for client compat checks) |
 | POST | `/octile/score` | Submit a score |
 | GET | `/octile/scoreboard` | Get scoreboard |
+| GET | `/octile/leaderboard` | EXP-based leaderboard |
 | GET | `/octile/puzzles` | List puzzles with stats |
+| GET | `/octile/puzzle/{number}` | Get decoded puzzle cells |
+| GET | `/octile/levels` | Puzzle counts per difficulty |
+| GET | `/octile/level/{level}/puzzle/{slot}` | Get puzzle by difficulty + slot |
+| POST | `/octile/auth/register` | Register (sends OTP email) |
+| POST | `/octile/auth/verify` | Verify email with OTP |
+| POST | `/octile/auth/login` | Login with email/password |
+| POST | `/octile/auth/forgot-password` | Send password reset OTP |
+| POST | `/octile/auth/reset-password` | Reset password with OTP |
+| GET | `/octile/auth/me` | Get current user profile |
+| GET | `/octile/auth/google` | Google OAuth redirect |
+| GET | `/octile/auth/google/callback` | Google OAuth callback |
+| POST | `/octile/auth/google/verify` | Google ID token verify (Android) |
+| POST | `/octile/sync/push` | Push progress to server |
+| GET | `/octile/sync/pull` | Pull progress from server |
+| GET | `/octile/player/{uuid}/stats` | Player stats |
+| GET | `/octile/player/{uuid}/elo` | Player ELO rating |
+| GET | `/octile/analytics` | User distribution data (JSON) |
+| GET | `/octile/analytics/dashboard` | Analytics dashboard (HTML) |
+| POST | `/octile/feedback` | Submit feedback |
+
+---
+
+### GET `/octile/version`
+
+Returns puzzle data version info. Clients should check this on startup to detect incompatible updates.
+
+**Response** (200 OK):
+
+```json
+{
+  "data_version": "2026-04-02",
+  "data_hash": "a1b2c3d4e5f67890",
+  "puzzle_count": 11378,
+  "total_puzzles": 91024,
+  "encoding": "base92-3char",
+  "solution_formats": ["8-char-compact", "27-char-compact", "128-char-legacy"]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `data_version` | Date string, bumped when puzzle data changes |
+| `data_hash` | SHA-256 prefix of puzzle data (16 hex chars) |
+| `puzzle_count` | Base puzzles (before D4 transforms) |
+| `total_puzzles` | Total including 8 D4 transforms per base |
+| `encoding` | Puzzle data encoding format |
+| `solution_formats` | Accepted solution string formats |
+
+**Client usage:**
+
+```javascript
+const ver = await fetch('/octile/version').then(r => r.json());
+if (ver.data_hash !== localPuzzleHash) {
+  // Prompt user to refresh/update
+}
+```
 
 ---
 
@@ -29,45 +88,41 @@ Submit a puzzle solve score.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `puzzle_number` | int | Yes | Puzzle identifier (1–11378) |
+| `puzzle_number` | int | Yes | Puzzle identifier (1–91024) |
 | `resolve_time` | float | Yes | Solve time in seconds (10–86400) |
 | `browser_uuid` | string | Yes | Persistent browser UUID identifying the player |
-| `solution` | string | No* | 128-char compact board state (64 cells × 2-char piece ID) |
-| `timestamp_utc` | string | No | Legacy: ISO 8601 UTC timestamp (accepted but ignored; server uses `created_at`) |
-| `os` | string | No | Legacy: client-detected OS (accepted but ignored; server parses User-Agent) |
-| `browser` | string | No | Legacy: client-detected browser (accepted but ignored) |
+| `solution` | string | No* | Board state (8-char, 27-char, or 128-char format) |
+| `data_version` | string | No | Client puzzle data version (for compat check) |
+| `timestamp_utc` | string | No | Legacy: ignored, server uses `created_at` |
+| `os` | string | No | Legacy: ignored |
+| `browser` | string | No | Legacy: ignored |
 
-\* `solution` is currently optional for backward compatibility. Will become required once all clients are updated.
+\* `solution` is currently optional for backward compatibility.
 
-**Solution encoding**: A 128-character string representing the 8×8 board, left-to-right, top-to-bottom. Each cell is a 2-char piece ID:
+**Solution formats** (all accepted):
 
-| Piece ID | Piece | Cells | Valid sizes |
-|----------|-------|-------|-------------|
-| `g1` | grey1 | 1 | 1×1 |
-| `g2` | grey2 | 2 | 1×2, 2×1 |
-| `g3` | grey3 | 3 | 1×3, 3×1 |
-| `r1` | red1 | 6 | 2×3, 3×2 |
-| `r2` | red2 | 4 | 1×4, 4×1 |
-| `w1` | white1 | 5 | 1×5, 5×1 |
-| `w2` | white2 | 4 | 2×2 |
-| `b1` | blue1 | 10 | 2×5, 5×2 |
-| `b2` | blue2 | 12 | 3×4, 4×3 |
-| `y1` | yel1 | 9 | 3×3 |
-| `y2` | yel2 | 8 | 2×4, 4×2 |
+| Format | Length | Description |
+|--------|--------|-------------|
+| 8-char compact | 8 | Base-92 encoded full board (newest) |
+| 27-char compact | 27 | Base-92 encoded non-grey cells only |
+| 128-char legacy | 128 | 64 × 2-char piece IDs |
 
-The server automatically extracts from request headers:
-- `client_ip` — from `X-Forwarded-For` (first entry) or `request.client.host`
-- `client_host` — `Host` header
-- `user_agent` — `User-Agent` header (used to detect OS/browser)
-- `forwarded_for` — full `X-Forwarded-For` header
-- `origin` — `Origin` header
-- `real_ip` — `X-Real-IP` header
+**Version compatibility** (returns 409 if `data_version` is sent and mismatched):
+
+```json
+{
+  "detail": "puzzle data outdated, please refresh",
+  "current_version": "2026-04-02",
+  "data_hash": "a1b2c3d4e5f67890"
+}
+```
+
+Old clients that don't send `data_version` are unaffected (field is optional, defaults to null, check is skipped).
 
 **Validation rules** (returns 400):
-- `puzzle_number` must be 1–11378
-- `resolve_time` must be ≥ 10 seconds (impossible to solve faster)
-- `resolve_time` must be ≤ 86400 seconds (24 hours)
-- If `solution` is provided: must be a valid solved board for the given puzzle
+- `puzzle_number` must be 1–91024
+- `resolve_time` must be 10–86400 seconds
+- If `solution` is provided: must be valid for the given puzzle
 
 **Rate limiting** (returns 429):
 - Max 1 submission per `browser_uuid` per 30 seconds
@@ -76,48 +131,27 @@ The server automatically extracts from request headers:
 - More than 50 scores from the same UUID in the last hour
 - Average solve time < 20 seconds across 10+ solves
 
+**Server-calculated fields** (authoritative, not client-provided):
+- `exp` — EXP reward based on difficulty and solve time
+- `diamonds` — 1 per solve (0 if flagged)
+- `grade` — S (≤par), A (≤2×par), B (normal)
+- `elo` — ELO change for the player
+
 **Response** (201 Created):
 
 ```json
 {
   "id": 1,
   "puzzle_number": 1,
-  "resolve_time": 12.345,
-  "browser_uuid": "550e8400-e29b-41d4-a716-446655440000",
-  "created_at": "2026-03-18T12:00:01.234567",
-  "timestamp_utc": "2026-03-18T12:00:01.234567",
-  "flagged": 0
+  "resolve_time": 45.2,
+  "browser_uuid": "550e8400-...",
+  "created_at": "2026-04-02T12:00:01.234567",
+  "flagged": 0,
+  "exp": 150,
+  "diamonds": 1,
+  "grade": "A",
+  "elo": 1225.3
 }
-```
-
-Note: `timestamp_utc` in the response is an alias for `created_at` (for backward compatibility with old clients).
-
-**Example**:
-
-```bash
-curl -X POST http://localhost:8000/octile/score \
-  -H "Content-Type: application/json" \
-  -d '{
-    "puzzle_number": 1,
-    "resolve_time": 12.345,
-    "browser_uuid": "550e8400-e29b-41d4-a716-446655440000",
-    "solution": "g1g2g2g3g3g3b1b1b2b2b2b2y2y2b1b1b2b2b2b2y2y2b1b1b2b2b2b2y2y2b1b1r2y1y1y1y2y2b1b1r2y1y1y1w2w2r1r1r2y1y1y1w2w2r1r1r2w1w1w1w1w1r1r1"
-  }'
-```
-
-**Error examples**:
-
-```bash
-# Puzzle number out of range → 400
-curl -X POST ... -d '{"puzzle_number": 0, ...}'
-
-# Too fast → 400
-curl -X POST ... -d '{"resolve_time": 5, ...}'
-
-# Invalid solution → 400
-curl -X POST ... -d '{"solution": "xxxxxxxxxxxx...", ...}'
-
-# Rate limited → 429 (submitted again within 30s)
 ```
 
 ---
@@ -132,139 +166,113 @@ Retrieve the scoreboard. By default returns the **best (fastest) score per playe
 |-------|------|---------|-------------|
 | `puzzle` | int | — | Filter by puzzle number |
 | `uuid` | string | — | Filter by browser UUID |
-| `best` | bool | `true` | `true` = one best score per player per puzzle; `false` = all scores |
+| `best` | bool | `true` | `true` = one best per player per puzzle; `false` = all |
 | `limit` | int | 50 | Max results (1–200) |
 | `offset` | int | 0 | Pagination offset |
+
+---
+
+### GET `/octile/leaderboard`
+
+EXP-based global leaderboard. Returns players ranked by total server-verified EXP. Merges scores across multiple browser UUIDs for authenticated users.
+
+**Query parameters**: `limit` (int, default 50, max 200)
+
+---
+
+### GET `/octile/puzzle/{number}`
+
+Get decoded puzzle cells for a given puzzle number (1-based, up to 91024).
 
 **Response** (200 OK):
 
 ```json
 {
-  "puzzle_number": 1,
-  "total": 3,
-  "scores": [
-    {
-      "id": 2,
-      "puzzle_number": 1,
-      "resolve_time": 8.5,
-      "browser_uuid": "uuid-alice",
-      "created_at": "2026-03-18T12:01:01",
-      "timestamp_utc": "2026-03-18T12:01:01",
-      "flagged": 0
-    },
-    {
-      "id": 1,
-      "puzzle_number": 1,
-      "resolve_time": 12.345,
-      "browser_uuid": "uuid-bob",
-      "created_at": "2026-03-18T12:00:01",
-      "timestamp_utc": "2026-03-18T12:00:01",
-      "flagged": 0
-    }
-  ]
+  "puzzle_number": 42,
+  "base_puzzle": 42,
+  "transform": 0,
+  "cells": [0, 9, 10, 32, 40, 48],
+  "difficulty": 2,
+  "difficulty_label": "medium"
 }
-```
-
-Scores are always ordered by `resolve_time ASC` (fastest first).
-
-**Examples**:
-
-```bash
-# Leaderboard for puzzle 1
-curl "http://localhost:8000/octile/scoreboard?puzzle=1"
-
-# All attempts by a specific player
-curl "http://localhost:8000/octile/scoreboard?uuid=550e8400-e29b-41d4-a716-446655440000&best=false"
-
-# Top 10 across all puzzles
-curl "http://localhost:8000/octile/scoreboard?limit=10"
-
-# Page 2 (scores 11-20)
-curl "http://localhost:8000/octile/scoreboard?limit=10&offset=10"
 ```
 
 ---
 
-### GET `/octile/puzzles`
+### GET `/octile/levels`
 
-List all puzzles that have at least one score, with aggregate stats.
+Puzzle counts per difficulty level.
 
-**Response** (200 OK):
+**Query parameters**: `transforms` (int, default 8, 1=base only)
 
-```json
-[
-  {
-    "puzzle_number": 1,
-    "total_scores": 42,
-    "unique_players": 15,
-    "best_time": 8.5
-  },
-  {
-    "puzzle_number": 2,
-    "total_scores": 28,
-    "unique_players": 12,
-    "best_time": 11.2
-  }
-]
-```
+**Response**: `{"easy": 2848, "medium": 4552, "hard": 2832, "hell": 1146}`
 
-Ordered by `puzzle_number ASC`. Returns an empty array `[]` if no scores exist.
+---
 
-**Example**:
+## Authentication
 
-```bash
-curl http://localhost:8000/octile/puzzles
-```
+Two-step email/password registration with OTP verification. Also supports Google OAuth.
+
+### Registration flow
+
+1. `POST /octile/auth/register` — sends 6-digit OTP to email
+2. `POST /octile/auth/verify` — verify OTP, returns JWT
+
+### Login
+
+- `POST /octile/auth/login` — email + password, returns JWT
+- `GET /octile/auth/google` — redirects to Google consent screen
+- `POST /octile/auth/google/verify` — Android ID token flow
+
+### Progress sync
+
+- `POST /octile/sync/push` — push local progress (MAX merge strategy)
+- `GET /octile/sync/pull` — pull server progress
+
+JWT is passed as `Authorization: Bearer <token>`.
 
 ---
 
 ## Database
 
-Scores are stored in `octile.db` (configurable via `OCTILE_DB_PATH` env var), separate from the main application database.
+Scores are stored in `octile.db` (configurable via `OCTILE_DB_PATH`).
 
-**Table: `octile_scores`**
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Auto-increment |
-| `puzzle_number` | INTEGER | Puzzle identifier (1–11378) |
-| `resolve_time` | FLOAT | Solve time in seconds |
-| `browser_uuid` | VARCHAR | Player browser UUID |
-| `timestamp_utc` | DATETIME | Legacy: client-provided timestamp (nullable for new clients) |
-| `client_ip` | VARCHAR | Resolved client IP |
-| `client_host` | VARCHAR | Host header |
-| `user_agent` | VARCHAR | User-Agent header (source for OS/browser detection) |
-| `forwarded_for` | VARCHAR | X-Forwarded-For header |
-| `origin` | VARCHAR | Origin header |
-| `real_ip` | VARCHAR | X-Real-IP header |
-| `os` | VARCHAR | Legacy: client-provided OS (nullable) |
-| `browser` | VARCHAR | Legacy: client-provided browser (nullable) |
-| `solution` | VARCHAR | 128-char board state for audit |
-| `flagged` | INTEGER | 0=normal, 1=flagged for review |
-| `created_at` | DATETIME | Server-side insertion time |
-
-**Indexes**: `puzzle_number`, `browser_uuid`, `(puzzle_number, resolve_time)`, `(browser_uuid, puzzle_number)`, `(browser_uuid, created_at)`, `created_at`
-
-**Migration**: New columns (`solution`, `flagged`) are added automatically via `ALTER TABLE` on startup if missing.
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `octile_api.py` | API endpoints, validation, verification, DB model |
-| `octile_puzzle_data.py` | 11,378 puzzles encoded as base64 string (68KB) |
-| `tests/test_octile_api.py` | 30 tests covering all endpoints and anti-cheat layers |
+**Tables**: `octile_scores`, `octile_users`, `octile_progress`
 
 ## Configuration
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `OCTILE_DB_PATH` | `octile.db` | Path to the Octile SQLite database file |
+| `OCTILE_DB_PATH` | `octile.db` | SQLite database path |
+| `OCTILE_SMTP_HOST` | — | SMTP host for OTP/backup emails |
+| `OCTILE_SMTP_USER` | — | SMTP username |
+| `OCTILE_SMTP_PASSWORD` | — | SMTP password |
+| `OCTILE_SMTP_PORT` | `587` | SMTP port |
+| `OCTILE_FROM_EMAIL` | smtp_user | From address |
+| `OCTILE_GOOGLE_CLIENT_ID` | — | Google OAuth client ID |
+| `OCTILE_GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
+| `OCTILE_JWT_SECRET` | random | JWT signing secret |
+| `OCTILE_SITE_URL` | — | Redirect URL after Google OAuth |
+| `WORKER_HMAC_SECRET` | — | Shared secret for Worker HMAC signing |
+
+## Backup
+
+```bash
+# Full backup (SQLite copy + JSON dump)
+python3 scripts/backup_octile.py
+
+# Backup + email to octileapp@googlegroups.com
+python3 scripts/backup_octile.py --email
+```
 
 ## Deployment
 
-The anti-cheat changes are backward compatible. Recommended deployment order:
+The version endpoint enables safe rolling updates:
 
-1. **Deploy server** — accepts both old format (no solution) and new format (with solution)
-2. **Deploy client** — sends solution + legacy `timestamp_utc` for compat with old server
-3. **Make solution required** — once all clients are updated, make `solution` non-optional
+1. **Deploy server** with new puzzle data
+2. **Bump `OCTILE_DATA_VERSION`** in octile_api.py
+3. **Update client** to send `data_version` on score submit
+4. Server rejects outdated clients with 409 + `current_version`
+5. Client prompts user to refresh
+
+Old clients without `data_version` field are never rejected (backward compatible).
