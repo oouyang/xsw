@@ -1941,7 +1941,7 @@ def auth_magic_link_verify(token: str, uid: int):
                 f"<p>Please open Octile and request a new sign-in link.</p>{_err_btn}</body>",
                 status_code=400,
             )
-        if user.otp_expires_at and user.otp_expires_at < datetime.now(timezone.utc):
+        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
             return HTMLResponse(
                 f'<body {_err_style}><h2 style="color:#f39c12">Link Expired</h2>'
                 f"<p>This sign-in link has expired (15 minutes).</p>"
@@ -2039,7 +2039,7 @@ def auth_magic_link_status(id: str):
             }
 
         # Check if expired
-        if user.otp_expires_at and user.otp_expires_at < datetime.now(timezone.utc):
+        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
             user.magic_request_id = None
             session.commit()
             return {"status": "expired"}
@@ -2081,7 +2081,7 @@ def auth_register(req: RegisterRequest):
             )
 
         otp = f"{secrets.randbelow(1000000):06d}"
-        otp_expires = datetime.utcnow() + timedelta(minutes=10)
+        otp_expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         pw_hash = _pw_hasher.hash(req.password)
 
         if existing and not existing.is_verified:
@@ -2128,7 +2128,7 @@ def auth_verify(req: VerifyRequest):
             return JSONResponse(
                 status_code=400, content={"detail": "Invalid verification code"}
             )
-        if user.otp_expires_at and user.otp_expires_at < datetime.utcnow():
+        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
             return JSONResponse(
                 status_code=400,
                 content={"detail": "Code expired, please register again"},
@@ -2219,7 +2219,7 @@ def auth_forgot_password(req: ForgotPasswordRequest):
 
         otp = f"{secrets.randbelow(1000000):06d}"
         user.otp_code = otp
-        user.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+        user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
         session.commit()
 
         _send_otp_email(email, otp, purpose="reset")
@@ -2252,7 +2252,7 @@ def auth_reset_password(req: ResetPasswordRequest):
             return JSONResponse(
                 status_code=400, content={"detail": "Invalid reset code"}
             )
-        if user.otp_expires_at and user.otp_expires_at < datetime.utcnow():
+        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
             return JSONResponse(
                 status_code=400, content={"detail": "Code expired, request a new one"}
             )
