@@ -808,7 +808,10 @@ class LeagueHistory(OctileBase):
 # Auth configuration
 # ---------------------------------------------------------------------------
 OCTILE_JWT_SECRET = os.getenv("OCTILE_JWT_SECRET", "octile-change-me-in-production")
-OCTILE_JWT_EXPIRY_DAYS = 365
+if OCTILE_JWT_SECRET == "octile-change-me-in-production":
+    import warnings
+    warnings.warn("OCTILE_JWT_SECRET is using default value! Set a strong secret via env var.", stacklevel=1)
+OCTILE_JWT_EXPIRY_DAYS = 30
 
 # Google OAuth (server-side redirect flow)
 OCTILE_GOOGLE_CLIENT_ID = os.getenv(
@@ -963,6 +966,24 @@ def _check_otp_rate_limit(email: str) -> bool:
         return True
     _otp_attempts[email].append(now)
     return False
+
+
+# OTP verification attempt limiting (brute-force protection)
+_otp_verify_attempts: dict[str, list[float]] = defaultdict(list)
+OTP_VERIFY_MAX = 5
+OTP_VERIFY_WINDOW = 900  # 15 minutes
+
+
+def _check_otp_verify_limit(email: str) -> bool:
+    """Return True if too many failed verification attempts."""
+    now = _time.time()
+    attempts = _otp_verify_attempts[email]
+    _otp_verify_attempts[email] = [t for t in attempts if now - t < OTP_VERIFY_WINDOW]
+    return len(_otp_verify_attempts[email]) >= OTP_VERIFY_MAX
+
+
+def _record_otp_verify_fail(email: str):
+    _otp_verify_attempts[email].append(_time.time())
 
 
 # ---------------------------------------------------------------------------
@@ -1363,6 +1384,20 @@ async def submit_score(request: Request):
             return JSONResponse(
                 status_code=429,
                 content={"detail": "too many submissions, try again in 30s"},
+            )
+
+        # --- Duplicate submission check ---
+        one_min_ago = datetime.now(timezone.utc) - timedelta(seconds=60)
+        dupe = session.query(OctileScore).filter(
+            OctileScore.browser_uuid == body.browser_uuid,
+            OctileScore.puzzle_number == body.puzzle_number,
+            OctileScore.resolve_time == body.resolve_time,
+            OctileScore.created_at >= one_min_ago,
+        ).first()
+        if dupe:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "duplicate submission", "id": dupe.id},
             )
 
         # --- Anomaly detection (Layer 4) ---
@@ -1997,7 +2032,7 @@ def auth_magic_link_verify(token: str, uid: int):
           // postMessage to opener (same-browser tab)
           try {{
             if (window.opener) {{
-              window.opener.postMessage({{type:'octile-auth',token:'{jwt_token}',name:'{safe_name}'}}, '*');
+              window.opener.postMessage({{type:'octile-auth',token:'{jwt_token}',name:'{safe_name}'}}, '{OCTILE_SITE_URL.rstrip("/")}');
               document.getElementById('msg').textContent = 'Signed in! You can close this tab.';
               setTimeout(function() {{ window.close(); }}, 1500);
               return;
@@ -2142,7 +2177,12 @@ def auth_verify(req: VerifyRequest):
             return JSONResponse(
                 status_code=400, content={"detail": "Already verified, please login"}
             )
+        if _check_otp_verify_limit(email):
+            return JSONResponse(
+                status_code=429, content={"detail": "Too many attempts, try again later"}
+            )
         if not user.otp_code or user.otp_code != req.otp_code.strip():
+            _record_otp_verify_fail(email)
             return JSONResponse(
                 status_code=400, content={"detail": "Invalid verification code"}
             )
@@ -2266,7 +2306,12 @@ def auth_reset_password(req: ResetPasswordRequest):
             return JSONResponse(
                 status_code=404, content={"detail": "Account not found"}
             )
+        if _check_otp_verify_limit(email):
+            return JSONResponse(
+                status_code=429, content={"detail": "Too many attempts, try again later"}
+            )
         if not user.otp_code or user.otp_code != req.otp_code.strip():
+            _record_otp_verify_fail(email)
             return JSONResponse(
                 status_code=400, content={"detail": "Invalid reset code"}
             )
@@ -2343,8 +2388,9 @@ def auth_google_verify(req: GoogleVerifyRequest):
             req.id_token, google_requests.Request(), OCTILE_GOOGLE_CLIENT_ID
         )
     except Exception as e:
+        logger.warning(f"Google ID token verification failed: {e}")
         return JSONResponse(
-            status_code=401, content={"detail": f"Invalid ID token: {e}"}
+            status_code=401, content={"detail": "Invalid ID token"}
         )
 
     google_email = _normalize_email(idinfo.get("email", ""))
