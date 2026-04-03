@@ -2802,8 +2802,22 @@ def sync_pull(user: dict = Depends(require_octile_auth)):
         if not prog:
             return {"status": "empty"}
 
+        # Compute authoritative EXP/diamonds from score records
+        score_totals = (
+            session.query(
+                func.sum(OctileScore.exp).label("total_exp"),
+                func.sum(OctileScore.diamonds).label("total_diamonds"),
+            )
+            .filter(OctileScore.user_id == user_id, OctileScore.flagged == 0)
+            .first()
+        )
+        score_exp = (score_totals.total_exp or 0) if score_totals else 0
+        score_diamonds = (score_totals.total_diamonds or 0) if score_totals else 0
+
         return {
             "status": "ok",
+            "score_exp": score_exp,
+            "score_diamonds": score_diamonds,
             "progress": {
                 "level_easy": prog.level_easy or 0,
                 "level_medium": prog.level_medium or 0,
