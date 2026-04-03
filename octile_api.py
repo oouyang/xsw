@@ -67,6 +67,7 @@ Legacy Format (128 chars)
 Still accepted for backward compatibility.
 """
 
+import logging
 import hashlib
 import hmac
 import json
