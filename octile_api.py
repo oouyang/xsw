@@ -2388,7 +2388,7 @@ def auth_google_verify(req: GoogleVerifyRequest):
             req.id_token, google_requests.Request(), OCTILE_GOOGLE_CLIENT_ID
         )
     except Exception as e:
-        logger.warning(f"Google ID token verification failed: {e}")
+        logging.getLogger("octile").warning(f"Google ID token verification failed: {e}")
         return JSONResponse(
             status_code=401, content={"detail": "Invalid ID token"}
         )
