@@ -817,12 +817,12 @@ OCTILE_GOOGLE_CLIENT_ID = os.getenv(
 OCTILE_GOOGLE_CLIENT_SECRET = os.getenv("OCTILE_GOOGLE_CLIENT_SECRET", "")
 OCTILE_GOOGLE_REDIRECT_URI = os.getenv("OCTILE_GOOGLE_REDIRECT_URI", "")
 OCTILE_WORKER_URL = os.getenv(
-    "OCTILE_WORKER_URL", "https://octile.owen-ouyang.workers.dev"
+    "OCTILE_WORKER_URL", "https://api.octile.eu.cc"
 )
 # Where to send the user after successful Google login
 # Android: octile://auth?token=...&name=...
-# Web: https://mtaleon.github.io/octile/?auth_token=...&auth_name=...
-OCTILE_SITE_URL = os.getenv("OCTILE_SITE_URL", "https://mtaleon.github.io/octile/")
+# Web: https://app.octile.eu.cc/?auth_token=...&auth_name=...
+OCTILE_SITE_URL = os.getenv("OCTILE_SITE_URL", "https://app.octile.eu.cc/")
 
 _octile_email_sender = None
 
