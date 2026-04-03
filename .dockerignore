@@ -72,6 +72,9 @@ venv.bak/
 Thumbs.db
 ehthumbs.db
 
+# Ignore Cloudflare Workers
+workers/
+
 # Ignore Docker specific files
 Dockerfile*
 docker-compose*
