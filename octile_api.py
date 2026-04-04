@@ -639,6 +639,7 @@ class OctileScore(OctileBase):
 
     # Anti-cheat fields
     solution = Column(String, nullable=True)  # 27-char compact or 128-char legacy
+    moves = Column(String, nullable=True)  # base-92 encoded move log (2 chars per placement)
     flagged = Column(Integer, default=0)  # 0=normal, 1=flagged for review
 
     # Server-calculated rewards (authoritative, not client-provided)
@@ -1055,6 +1056,7 @@ def _migrate_db():
         "ALTER TABLE octile_scores ADD COLUMN diamonds INTEGER DEFAULT 0",
         "ALTER TABLE octile_users ADD COLUMN magic_request_id TEXT",
         "ALTER TABLE octile_users ADD COLUMN magic_jwt TEXT",
+        "ALTER TABLE octile_scores ADD COLUMN moves TEXT",
         # Phase: is_verified → verified_at migration
         "ALTER TABLE octile_users ADD COLUMN verified_at DATETIME",
     ]
@@ -1152,6 +1154,7 @@ class ScoreSubmitRequest(BaseModel):
     resolve_time: float
     browser_uuid: str
     solution: Optional[str] = None  # 27-char compact or 128-char legacy
+    moves: Optional[str] = None  # base-92 encoded move log (2 chars per placement)
     data_version: Optional[str] = None  # client puzzle data version for compat check
     timestamp_utc: Optional[str] = None  # legacy, default to server time
 
@@ -1472,6 +1475,7 @@ async def submit_score(request: Request):
             browser_uuid=body.browser_uuid,
             timestamp_utc=timestamp,
             solution=body.solution,
+            moves=body.moves,
             flagged=flagged,
             coins=exp,  # legacy coins = exp for backward compat
             exp=exp,
