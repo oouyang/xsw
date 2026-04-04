@@ -187,7 +187,6 @@ def test_submit_score_extracts_headers(client):
         headers={
             "X-Forwarded-For": "1.2.3.4, 5.6.7.8",
             "X-Real-IP": "1.2.3.4",
-            "Origin": "https://octile.example.com",
             "User-Agent": "TestBot/1.0",
         },
     )
@@ -202,9 +201,6 @@ def test_submit_score_extracts_headers(client):
         )
         assert score is not None
         assert score.client_ip == "1.2.3.4"
-        assert score.forwarded_for == "1.2.3.4, 5.6.7.8"
-        assert score.real_ip == "1.2.3.4"
-        assert score.origin == "https://octile.example.com"
         assert score.user_agent == "TestBot/1.0"
     finally:
         session.close()

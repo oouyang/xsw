@@ -633,17 +633,9 @@ class OctileScore(OctileBase):
     browser_uuid = Column(String, nullable=False, index=True)
     timestamp_utc = Column(DateTime, nullable=True)  # legacy, nullable for new clients
 
-    # Server-extracted client info
+    # Server-extracted client info (Worker resolves real IP via CF-Connecting-IP)
     client_ip = Column(String, nullable=True)
-    client_host = Column(String, nullable=True)
-    user_agent = Column(String, nullable=True)
-    forwarded_for = Column(String, nullable=True)
-    origin = Column(String, nullable=True)
-    real_ip = Column(String, nullable=True)
-
-    # Legacy client-provided device info (no longer sent by new clients)
-    os = Column(String, nullable=True)
-    browser = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)  # full UA kept for /analytics parsing
 
     # Anti-cheat fields
     solution = Column(String, nullable=True)  # 27-char compact or 128-char legacy
@@ -689,16 +681,45 @@ class OctileUser(OctileBase):
     display_name = Column(String, nullable=False)
     picture = Column(String, nullable=True)
     browser_uuid = Column(String, nullable=True, index=True)
-    is_verified = Column(Boolean, default=False)
+    # Verification: NULL = unverified, timestamp = when verified
+    verified_at = Column(DateTime, nullable=True)
+    # OTP for email verification and password reset (shared, one active at a time)
     otp_code = Column(String, nullable=True)
     otp_expires_at = Column(DateTime, nullable=True)
+    # Legacy columns kept for migration (new magic links use octile_magic_links table)
     magic_request_id = Column(String, nullable=True, index=True)
     magic_jwt = Column(String, nullable=True)
+    # Legacy is_verified column (kept for SQLite backward compat, not used in code)
+    is_verified = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login_at = Column(DateTime, nullable=True)
 
+    @property
+    def is_verified_bool(self) -> bool:
+        """Check if user is verified (supports both old is_verified and new verified_at)."""
+        return self.verified_at is not None or bool(self.is_verified)
+
+    def set_verified(self):
+        """Mark user as verified (sets both columns for compat)."""
+        self.verified_at = datetime.now(timezone.utc)
+        self.is_verified = True
+
     def __repr__(self):
         return f"<OctileUser(id={self.id}, email='{self.email}')>"
+
+
+class OctileMagicLink(OctileBase):
+    """Magic link login request (one per sign-in attempt)."""
+
+    __tablename__ = "octile_magic_links"
+
+    id = Column(String, primary_key=True)  # request_id (token_urlsafe)
+    user_id = Column(Integer, nullable=False, index=True)
+    token_hash = Column(String, nullable=False)  # SHA-256 of the magic link token
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)  # NULL = pending, set = used
+    jwt_token = Column(String, nullable=True)  # stored for poll-based flow
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class OctileProgress(OctileBase):
@@ -1034,6 +1055,8 @@ def _migrate_db():
         "ALTER TABLE octile_scores ADD COLUMN diamonds INTEGER DEFAULT 0",
         "ALTER TABLE octile_users ADD COLUMN magic_request_id TEXT",
         "ALTER TABLE octile_users ADD COLUMN magic_jwt TEXT",
+        # Phase: is_verified → verified_at migration
+        "ALTER TABLE octile_users ADD COLUMN verified_at DATETIME",
     ]
     with _engine.connect() as conn:
         for sql in migrations:
@@ -1041,6 +1064,16 @@ def _migrate_db():
                 conn.execute(sql_text(sql))
             except Exception:
                 pass  # Column already exists
+
+        # Backfill verified_at from is_verified for existing verified users
+        try:
+            conn.execute(sql_text(
+                "UPDATE octile_users SET verified_at = COALESCE(last_login_at, created_at) "
+                "WHERE is_verified = 1 AND verified_at IS NULL"
+            ))
+            conn.commit()
+        except Exception:
+            pass
 
     # Backfill EXP/diamonds for existing scores (idempotent — only updates rows with 0)
     _backfill_rewards()
@@ -1120,10 +1153,7 @@ class ScoreSubmitRequest(BaseModel):
     browser_uuid: str
     solution: Optional[str] = None  # 27-char compact or 128-char legacy
     data_version: Optional[str] = None  # client puzzle data version for compat check
-    # Legacy fields (accepted but ignored during transition)
-    timestamp_utc: Optional[str] = None
-    os: Optional[str] = None
-    browser: Optional[str] = None
+    timestamp_utc: Optional[str] = None  # legacy, default to server time
 
 
 class ScoreResponse(BaseModel):
@@ -1189,19 +1219,21 @@ def _parse_timestamp(ts_str: str) -> datetime:
 
 
 def _extract_client_info(request: Request) -> dict:
-    """Extract client info from request headers."""
-    forwarded_for = request.headers.get("X-Forwarded-For", "")
-    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else ""
+    """Extract client info from request headers.
+
+    Worker sends the real client IP via X-Real-IP (from CF-Connecting-IP).
+    Falls back to X-Forwarded-For first hop, then direct connection IP.
+    """
+    client_ip = request.headers.get("X-Real-IP", "")
+    if not client_ip:
+        forwarded_for = request.headers.get("X-Forwarded-For", "")
+        client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else ""
     if not client_ip:
         client_ip = request.client.host if request.client else "unknown"
 
     return {
         "client_ip": client_ip,
-        "client_host": request.headers.get("Host"),
         "user_agent": request.headers.get("User-Agent"),
-        "forwarded_for": forwarded_for or None,
-        "origin": request.headers.get("Origin"),
-        "real_ip": request.headers.get("X-Real-IP"),
     }
 
 
@@ -1244,6 +1276,12 @@ def _verify_worker_signature(request: Request, body_bytes: bytes) -> bool:
         return False
 
     return hmac.compare_digest(expected, received)
+
+
+def _get_player_uuid(request: Request, fallback: Optional[str] = None) -> str:
+    """Get player UUID: prefer Worker-issued X-Player-UUID header, fall back to body value."""
+    header_uuid = request.headers.get("X-Player-UUID")
+    return header_uuid or fallback or ""
 
 
 def _check_rate_limit(session: Session, browser_uuid: str) -> bool:
@@ -1337,6 +1375,11 @@ async def submit_score(request: Request):
             content={"detail": "invalid request body"},
         )
 
+    # --- Cookie UUID override: prefer Worker-issued cookie UUID over client body ---
+    player_uuid = request.headers.get("X-Player-UUID")
+    if player_uuid:
+        body.browser_uuid = player_uuid
+
     # --- Version compatibility check ---
     if body.data_version and body.data_version != OCTILE_DATA_VERSION:
         return JSONResponse(
@@ -1428,8 +1471,6 @@ async def submit_score(request: Request):
             resolve_time=body.resolve_time,
             browser_uuid=body.browser_uuid,
             timestamp_utc=timestamp,
-            os=body.os,
-            browser=body.browser,
             solution=body.solution,
             flagged=flagged,
             coins=exp,  # legacy coins = exp for backward compat
@@ -1895,8 +1936,9 @@ def _check_magic_link_rate(email: str) -> str | None:
 
 
 @octile_router.post("/auth/magic-link")
-def auth_magic_link(req: MagicLinkRequest):
+def auth_magic_link(req: MagicLinkRequest, request: Request):
     """Send a magic sign-in link to the given email."""
+    req.browser_uuid = _get_player_uuid(request, req.browser_uuid)
     email = _normalize_email(req.email.strip().lower())
     if not email or "@" not in email:
         return JSONResponse({"detail": "Invalid email"}, status_code=400)
@@ -1920,19 +1962,25 @@ def auth_magic_link(req: MagicLinkRequest):
                 display_name=(req.display_name.strip() if req.display_name else None)
                 or email.split("@")[0],
                 browser_uuid=req.browser_uuid,
-                is_verified=False,
             )
             session.add(user)
             session.flush()
 
         # Generate a short-lived token (15 min) and poll request_id
         token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        tok_hash = hashlib.sha256(token.encode()).hexdigest()
         request_id = secrets.token_urlsafe(16)
-        user.otp_code = "magic:" + token_hash
-        user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
-        user.magic_request_id = request_id
-        user.magic_jwt = None
+        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+        # Create magic link record in dedicated table
+        magic_link = OctileMagicLink(
+            id=request_id,
+            user_id=user.id,
+            token_hash=tok_hash,
+            expires_at=expires,
+        )
+        session.add(magic_link)
+
         if req.browser_uuid and not user.browser_uuid:
             user.browser_uuid = req.browser_uuid
         session.commit()
@@ -1987,15 +2035,26 @@ def auth_magic_link_verify(token: str, uid: int):
         _err_style = 'style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px"'
         _err_btn = f'<a href="{OCTILE_SITE_URL}" style="display:inline-block;margin-top:20px;padding:12px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Open Octile</a>'
         user = session.query(OctileUser).filter(OctileUser.id == uid).first()
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        if not user or user.otp_code != "magic:" + token_hash:
+        tok_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        # Look up magic link in dedicated table
+        magic_link = (
+            session.query(OctileMagicLink)
+            .filter(
+                OctileMagicLink.user_id == uid,
+                OctileMagicLink.token_hash == tok_hash,
+                OctileMagicLink.consumed_at.is_(None),
+            )
+            .first()
+        )
+        if not user or not magic_link:
             return HTMLResponse(
                 f'<body {_err_style}><h2 style="color:#e74c3c">Link Invalid</h2>'
                 f"<p>This sign-in link is no longer valid.<br>It may have already been used.</p>"
                 f"<p>Please open Octile and request a new sign-in link.</p>{_err_btn}</body>",
                 status_code=400,
             )
-        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
+        if magic_link.expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
             return HTMLResponse(
                 f'<body {_err_style}><h2 style="color:#f39c12">Link Expired</h2>'
                 f"<p>This sign-in link has expired (15 minutes).</p>"
@@ -2003,21 +2062,19 @@ def auth_magic_link_verify(token: str, uid: int):
                 status_code=400,
             )
 
-        # Mark verified, clear OTP (one-time use), store JWT for poll status
-        user.is_verified = True
-        user.otp_code = None  # invalidate token — one-time use
-        user.otp_expires_at = None
-        user.last_login_at = datetime.now(timezone.utc)  # also serves as used_at
+        # Mark verified and consume the magic link
+        user.set_verified()
+        user.last_login_at = datetime.now(timezone.utc)
+        magic_link.consumed_at = datetime.now(timezone.utc)
         session.commit()
 
         # Backfill scores: link anonymous scores to this user
         _backfill_scores_for_user(session, user.id, user.browser_uuid or "")
 
-        # Generate JWT and store for magic link polling
+        # Generate JWT and store on magic link for poll-based flow
         jwt_token = _create_octile_jwt(user.id, user.display_name or "", user.email)
-        if user.magic_request_id:
-            user.magic_jwt = jwt_token
-            session.commit()
+        magic_link.jwt_token = jwt_token
+        session.commit()
 
         # Redirect to app with token (works for both web and Android deep link)
         safe_name = (user.display_name or "").replace("'", "\\'")
@@ -2072,30 +2129,28 @@ def auth_magic_link_status(id: str):
         return JSONResponse({"detail": "Missing id"}, status_code=400)
     session = get_session()
     try:
-        user = (
-            session.query(OctileUser).filter(OctileUser.magic_request_id == id).first()
+        magic_link = (
+            session.query(OctileMagicLink).filter(OctileMagicLink.id == id).first()
         )
-        if not user:
+        if not magic_link:
             return {"status": "expired"}
 
-        # Check if verified (JWT stored by verify endpoint)
-        if user.magic_jwt:
-            jwt_token = user.magic_jwt
-            # Clear poll data (one-time read)
-            user.magic_request_id = None
-            user.magic_jwt = None
+        # Check if consumed and JWT is ready
+        if magic_link.consumed_at and magic_link.jwt_token:
+            user = session.query(OctileUser).filter(OctileUser.id == magic_link.user_id).first()
+            jwt_token = magic_link.jwt_token
+            # Clear JWT after one read (one-time)
+            magic_link.jwt_token = None
             session.commit()
             return {
                 "status": "verified",
                 "access_token": jwt_token,
-                "display_name": user.display_name or "",
-                "email": user.email or "",
+                "display_name": (user.display_name or "") if user else "",
+                "email": (user.email or "") if user else "",
             }
 
         # Check if expired
-        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
-            user.magic_request_id = None
-            session.commit()
+        if magic_link.expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
             return {"status": "expired"}
 
         return {"status": "pending"}
@@ -2104,8 +2159,9 @@ def auth_magic_link_status(id: str):
 
 
 @octile_router.post("/auth/register")
-def auth_register(req: RegisterRequest):
+def auth_register(req: RegisterRequest, request: Request):
     """Register a new account. Sends OTP to email for verification."""
+    req.browser_uuid = _get_player_uuid(request, req.browser_uuid)
     email = _normalize_email(req.email)
     if not email or "@" not in email or len(req.password) < 6:
         return JSONResponse(
@@ -2121,7 +2177,7 @@ def auth_register(req: RegisterRequest):
     session = get_session()
     try:
         existing = session.query(OctileUser).filter(OctileUser.email == email).first()
-        if existing and existing.is_verified:
+        if existing and existing.is_verified_bool:
             # Check if this was a Google-created account (has picture or random password)
             if existing.picture:
                 return JSONResponse(
@@ -2138,7 +2194,7 @@ def auth_register(req: RegisterRequest):
         otp_expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         pw_hash = _pw_hasher.hash(req.password)
 
-        if existing and not existing.is_verified:
+        if existing and not existing.is_verified_bool:
             # Re-register: update pending account
             existing.password_hash = pw_hash
             existing.display_name = req.display_name.strip() or email.split("@")[0]
@@ -2174,7 +2230,7 @@ def auth_verify(req: VerifyRequest):
             return JSONResponse(
                 status_code=404, content={"detail": "Account not found"}
             )
-        if user.is_verified:
+        if user.is_verified_bool:
             return JSONResponse(
                 status_code=400, content={"detail": "Already verified, please login"}
             )
@@ -2193,7 +2249,7 @@ def auth_verify(req: VerifyRequest):
                 content={"detail": "Code expired, please register again"},
             )
 
-        user.is_verified = True
+        user.set_verified()
         user.otp_code = None
         user.otp_expires_at = None
         user.last_login_at = datetime.now(timezone.utc)
@@ -2215,13 +2271,14 @@ def auth_verify(req: VerifyRequest):
 
 
 @octile_router.post("/auth/login")
-def auth_login(req: LoginRequest):
+def auth_login(req: LoginRequest, request: Request):
     """Login with email and password. Returns JWT."""
+    req.browser_uuid = _get_player_uuid(request, req.browser_uuid)
     email = _normalize_email(req.email)
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
-        if not user or not user.is_verified:
+        if not user or not user.is_verified_bool:
             return JSONResponse(
                 status_code=401, content={"detail": "Invalid email or password"}
             )
@@ -2269,7 +2326,7 @@ def auth_forgot_password(req: ForgotPasswordRequest):
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
-        if not user or not user.is_verified:
+        if not user or not user.is_verified_bool:
             # Don't reveal whether email exists
             return {
                 "status": "sent",
@@ -2303,7 +2360,7 @@ def auth_reset_password(req: ResetPasswordRequest):
     session = get_session()
     try:
         user = session.query(OctileUser).filter(OctileUser.email == email).first()
-        if not user or not user.is_verified:
+        if not user or not user.is_verified_bool:
             return JSONResponse(
                 status_code=404, content={"detail": "Account not found"}
             )
@@ -2374,8 +2431,9 @@ class GoogleVerifyRequest(BaseModel):
 
 
 @octile_router.post("/auth/google/verify")
-def auth_google_verify(req: GoogleVerifyRequest):
+def auth_google_verify(req: GoogleVerifyRequest, request: Request):
     """Verify a Google ID token (from Android Credential Manager) and return a JWT."""
+    req.browser_uuid = _get_player_uuid(request, req.browser_uuid)
     if not OCTILE_GOOGLE_CLIENT_ID:
         return JSONResponse(
             status_code=501, content={"detail": "Google OAuth not configured"}
@@ -2414,16 +2472,17 @@ def auth_google_verify(req: GoogleVerifyRequest):
                 display_name=google_name,
                 picture=google_picture,
                 browser_uuid=browser_uuid or None,
+                verified_at=datetime.now(timezone.utc),
                 is_verified=True,
             )
             session.add(user)
             session.commit()
             session.refresh(user)
         else:
-            if not user.is_verified:
+            if not user.is_verified_bool:
                 # Pre-verification attack prevention: reset password so
                 # attacker who pre-registered can't use their password
-                user.is_verified = True
+                user.set_verified()
                 user.password_hash = _pw_hasher.hash(secrets.token_urlsafe(32))
                 user.display_name = google_name
             if browser_uuid and not user.browser_uuid:
@@ -2476,7 +2535,7 @@ def auth_google_redirect(request: Request):
     # Detect source platform from query param (android or web)
     source = request.query_params.get("source", "web")
     return_url = request.query_params.get("return_url", "")
-    browser_uuid = request.query_params.get("browser_uuid", "")
+    browser_uuid = _get_player_uuid(request, request.query_params.get("browser_uuid", ""))
 
     # Generate state token
     state = secrets.token_urlsafe(32)
@@ -2603,15 +2662,16 @@ def auth_google_callback(
                 display_name=google_name,
                 picture=google_picture,
                 browser_uuid=browser_uuid or None,
+                verified_at=datetime.now(timezone.utc),
                 is_verified=True,
             )
             session.add(user)
             session.commit()
             session.refresh(user)
         else:
-            if not user.is_verified:
+            if not user.is_verified_bool:
                 # Pre-verification attack prevention: reset password
-                user.is_verified = True
+                user.set_verified()
                 user.password_hash = _pw_hasher.hash(secrets.token_urlsafe(32))
                 user.display_name = google_name
             # Link browser_uuid if not already set
@@ -2698,8 +2758,9 @@ def _merge_json_lists(server_json: str, client_list: list) -> str:
 
 
 @octile_router.post("/sync/push")
-def sync_push(req: SyncPushRequest, user: dict = Depends(require_octile_auth)):
+def sync_push(req: SyncPushRequest, request: Request, user: dict = Depends(require_octile_auth)):
     """Push local progress to server. Merges with MAX strategy."""
+    req.browser_uuid = _get_player_uuid(request, req.browser_uuid)
     user_id = int(user["sub"])
     session = get_session()
     try:
@@ -3578,6 +3639,7 @@ class FeedbackRequest(BaseModel):
     display_name: Optional[str] = None
     browser_uuid: Optional[str] = None
     device: Optional[str] = None
+    origin: Optional[str] = None  # window.location.origin
     screenshot: Optional[str] = None  # data:image/...;base64,...
     screenshot_name: Optional[str] = None
 
@@ -3585,6 +3647,7 @@ class FeedbackRequest(BaseModel):
 @octile_router.post("/feedback")
 def submit_feedback(req: FeedbackRequest, request: Request):
     """Receive user feedback and email it to the team."""
+    req.browser_uuid = _get_player_uuid(request, req.browser_uuid)
     msg = req.message.strip()
     if not msg or len(msg) < 3:
         return JSONResponse({"detail": "Message too short"}, status_code=400)
@@ -3621,6 +3684,7 @@ Language: {req.lang or "en"}
 Version: {req.version or "unknown"}
 UUID: {req.browser_uuid or "unknown"}
 Device: {req.device or "unknown"}
+Origin: {req.origin or "unknown"}
 IP: {client_ip}
 Platform: {(req.platform or "unknown")[:200]}
 
