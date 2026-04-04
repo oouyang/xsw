@@ -1090,9 +1090,10 @@ def _backfill_rewards():
     """
     session = _SessionLocal()
     try:
+        # Only backfill non-flagged scores (flagged scores correctly have exp=0)
         count = (
             session.query(func.count(OctileScore.id))
-            .filter(OctileScore.exp == 0)
+            .filter(OctileScore.exp == 0, OctileScore.flagged == 0)
             .scalar()
         )
         if count == 0:
@@ -1104,7 +1105,7 @@ def _backfill_rewards():
         while True:
             rows = (
                 session.query(OctileScore)
-                .filter(OctileScore.exp == 0)
+                .filter(OctileScore.exp == 0, OctileScore.flagged == 0)
                 .limit(batch_size)
                 .all()
             )
@@ -1114,15 +1115,12 @@ def _backfill_rewards():
                 try:
                     difficulty = get_puzzle_difficulty(score.puzzle_number)
                     exp = calc_exp(difficulty, score.resolve_time)
-                    if score.flagged:
-                        exp = 0
-                    score.exp = exp
-                    score.diamonds = 0 if score.flagged else 1
-                    # Also backfill coins if still 0
+                    score.exp = max(exp, 1)  # at least 1 to mark as processed
+                    score.diamonds = 1
                     if not score.coins:
-                        score.coins = exp  # align legacy coins with EXP
+                        score.coins = score.exp
                 except Exception:
-                    score.exp = 0
+                    score.exp = 1  # mark as processed to avoid infinite re-query
                     score.diamonds = 0
                     if not score.coins:
                         score.coins = 0
