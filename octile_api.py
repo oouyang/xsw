@@ -2755,7 +2755,10 @@ def _merge_json_lists(server_json: str, client_list: list) -> str:
         server_list = json.loads(server_json or "[]")
     except (json.JSONDecodeError, TypeError):
         server_list = []
-    merged = sorted(set(server_list) | set(client_list))
+    merged = sorted(
+        (x for x in set(server_list) | set(client_list) if x is not None),
+        key=lambda x: str(x),
+    )
     return json.dumps(merged)
 
 
