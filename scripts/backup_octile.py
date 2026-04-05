@@ -156,11 +156,11 @@ def send_backup_email(zip_path, timestamp):
             attachments=[zip_path],
         )
 
-        if result.get("success"):
+        if result.get("status") == "success":
             print(f"  Email sent to {BACKUP_EMAIL}")
             return True
         else:
-            print(f"  [ERROR] Email failed: {result.get('error', 'unknown')}")
+            print(f"  [ERROR] Email failed: {result.get('error') or result.get('message', 'unknown')}")
             return False
 
     except ImportError:
