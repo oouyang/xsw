@@ -2424,6 +2424,36 @@ def auth_me(user: dict = Depends(require_octile_auth)):
         session.close()
 
 
+# --- Account Deletion ---
+
+
+@octile_router.delete("/auth/account")
+def auth_delete_account(user: dict = Depends(require_octile_auth)):
+    """Permanently delete the authenticated user's account and all associated data."""
+    user_id = int(user["sub"])
+    session = get_session()
+    try:
+        db_user = session.query(OctileUser).filter(OctileUser.id == user_id).first()
+        if not db_user:
+            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+
+        # Delete all associated data in dependency order (single transaction)
+        session.query(LeagueDailyExp).filter(LeagueDailyExp.user_id == user_id).delete()
+        session.query(LeagueHistory).filter(LeagueHistory.user_id == user_id).delete()
+        session.query(LeagueMember).filter(LeagueMember.user_id == user_id).delete()
+        session.query(OctileScore).filter(OctileScore.user_id == user_id).delete()
+        session.query(OctileProgress).filter(OctileProgress.user_id == user_id).delete()
+        session.query(OctileMagicLink).filter(OctileMagicLink.user_id == user_id).delete()
+        session.delete(db_user)
+        session.commit()
+        return {"deleted": True}
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 # --- Google OAuth: ID token verification (Android Credential Manager) ---
 
 
