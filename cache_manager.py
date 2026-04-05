@@ -544,17 +544,24 @@ class CacheManager:
         """Get cache statistics."""
         session = self._get_session()
         try:
-            book_count = session.query(Book).count()
-            chapter_count = session.query(Chapter).count()
-            chapters_with_content = (
-                session.query(Chapter).filter(Chapter.text.isnot(None)).count()
-            )
+            from sqlalchemy import func
+            book_count = session.query(func.count(Book.id)).scalar() or 0
+            chapter_count = session.query(func.count(Chapter.id)).scalar() or 0
+            chapters_with_content = session.query(func.count(Chapter.id)).filter(Chapter.text.isnot(None)).scalar() or 0
 
             return {
                 "books_in_db": book_count,
                 "chapters_in_db": chapter_count,
                 "chapters_with_content": chapters_with_content,
                 "memory_cache_size": len(self.memory_cache._store),
+                "memory_cache_ttl": self.ttl_seconds,
+            }
+        except Exception:
+            return {
+                "books_in_db": -1,
+                "chapters_in_db": -1,
+                "chapters_with_content": -1,
+                "memory_cache_size": len(self.memory_cache._store) if self.memory_cache else 0,
                 "memory_cache_ttl": self.ttl_seconds,
             }
         finally:
