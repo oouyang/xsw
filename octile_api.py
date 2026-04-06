@@ -1859,6 +1859,7 @@ class RegisterRequest(BaseModel):
     password: str
     display_name: str
     browser_uuid: Optional[str] = None
+    lang: Optional[str] = "en"
 
 
 class VerifyRequest(BaseModel):
@@ -1874,6 +1875,7 @@ class LoginRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: str
+    lang: Optional[str] = "en"
 
 
 class ResetPasswordRequest(BaseModel):
@@ -1882,21 +1884,27 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
-def _send_otp_email(email: str, otp: str, purpose: str = "verify") -> bool:
+def _send_otp_email(email: str, otp: str, purpose: str = "verify", lang: str = "en") -> bool:
     sender = _get_email_sender()
     if not sender:
         print(f"[Octile Auth] Email not configured, OTP for {email}: {otp}")
         return True  # Don't block registration in dev
-    subject = (
-        "Octile verification code" if purpose == "verify" else "Octile password reset"
-    )
+    lang = (lang or "en").lower()
+    if lang == "zh":
+        subject = "Octile 驗證碼" if purpose == "verify" else "Octile 密碼重設"
+        prompt = "你的驗證碼是："
+        expire = "此驗證碼將在 10 分鐘後過期。"
+    else:
+        subject = "Octile verification code" if purpose == "verify" else "Octile password reset"
+        prompt = "Your verification code is:"
+        expire = "This code expires in 10 minutes."
     body = (
         f"<div style='font-family:sans-serif;max-width:400px;margin:0 auto;padding:20px'>"
         f"<h2 style='color:#1a1a2e'>Octile</h2>"
-        f"<p>Your verification code is:</p>"
+        f"<p>{prompt}</p>"
         f"<div style='font-size:32px;font-weight:bold;letter-spacing:8px;"
         f"color:#2ecc71;padding:16px;text-align:center'>{otp}</div>"
-        f"<p style='color:#888;font-size:13px'>This code expires in 10 minutes.</p>"
+        f"<p style='color:#888;font-size:13px'>{expire}</p>"
         f"</div>"
     )
     result = sender.send_email(email, subject, body, is_html=True)
@@ -1907,6 +1915,7 @@ class MagicLinkRequest(BaseModel):
     email: str
     display_name: Optional[str] = None
     browser_uuid: Optional[str] = None
+    lang: Optional[str] = "en"
 
 
 MAGIC_LINK_RATE_LIMIT = {}  # {email: (count, window_start, last_send)}
@@ -2002,22 +2011,38 @@ def auth_magic_link(req: MagicLinkRequest, request: Request):
             return JSONResponse(
                 {"detail": "Email service unavailable"}, status_code=503
             )
-        subject = "Your Octile sign-in link"
+        lang = (req.lang or "en").lower()
+        if lang == "zh":
+            subject = "Octile 登入連結"
+            greeting = "你好，"
+            body_text = "你已要求登入 Octile，請點擊下方按鈕繼續："
+            cta_text = "登入 Octile"
+            alt_text = "或複製以下網址到瀏覽器開啟："
+            expire_text = "此連結有效期為 15 分鐘，僅限使用一次。如果這不是你的操作，請忽略此郵件。"
+            tagline = "Octile &mdash; 8&times;8 拼圖遊戲"
+        else:
+            subject = "Your Octile sign-in link"
+            greeting = "Hi,"
+            body_text = "You requested to sign in to Octile. Use the link below to continue:"
+            cta_text = "Sign in to Octile"
+            alt_text = "Or copy and paste this URL into your browser:"
+            expire_text = "This link is valid for 15 minutes and can only be used once. If you did not request this, you can safely ignore this email."
+            tagline = "Octile &mdash; The 8&times;8 Puzzle Game"
         body = f"""
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#333">
           <div style="text-align:center;margin-bottom:20px">
             <span style="font-size:24px;font-weight:800;color:#1a1a2e;letter-spacing:2px">Octile</span>
           </div>
-          <p>Hi,</p>
-          <p>You requested to sign in to Octile. Use the link below to continue:</p>
+          <p>{greeting}</p>
+          <p>{body_text}</p>
           <div style="text-align:center;margin:24px 0">
-            <a href="{verify_url}" style="display:inline-block;padding:14px 32px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px">Sign in to Octile</a>
+            <a href="{verify_url}" style="display:inline-block;padding:14px 32px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px">{cta_text}</a>
           </div>
-          <p style="font-size:13px;color:#666">Or copy and paste this URL into your browser:</p>
+          <p style="font-size:13px;color:#666">{alt_text}</p>
           <p style="font-size:12px;color:#888;word-break:break-all">{verify_url}</p>
           <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-          <p style="font-size:12px;color:#999">This link is valid for 15 minutes and can only be used once. If you did not request this, you can safely ignore this email.</p>
-          <p style="font-size:11px;color:#bbb;margin-top:16px">Octile &mdash; The 8&times;8 Puzzle Game<br>octileapp@googlegroups.com</p>
+          <p style="font-size:12px;color:#999">{expire_text}</p>
+          <p style="font-size:11px;color:#bbb;margin-top:16px">{tagline}<br>octileapp@googlegroups.com</p>
         </div>
         """
         result = sender.send_email(email, subject, body, is_html=True)
@@ -2215,7 +2240,7 @@ def auth_register(req: RegisterRequest, request: Request):
             session.add(user)
 
         session.commit()
-        _send_otp_email(email, otp, purpose="verify")
+        _send_otp_email(email, otp, purpose="verify", lang=req.lang)
         return {"status": "pending", "message": "Verification code sent to your email"}
     finally:
         session.close()
@@ -2340,7 +2365,7 @@ def auth_forgot_password(req: ForgotPasswordRequest):
         user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
         session.commit()
 
-        _send_otp_email(email, otp, purpose="reset")
+        _send_otp_email(email, otp, purpose="reset", lang=req.lang)
         return {
             "status": "sent",
             "message": "If the email is registered, a reset code was sent",
