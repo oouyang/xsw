@@ -3704,6 +3704,192 @@ class FeedbackRequest(BaseModel):
     screenshot_name: Optional[str] = None
 
 
+# --- Daily Challenge (Steam-exclusive, backend-authoritative) ---
+# Offline puzzles bundled in client — daily challenge must skip these
+OFFLINE_PUZZLE_NUMS = frozenset([
+    1, 1035, 2069, 3104, 4138, 5172, 6207, 7241, 8275, 9310, 10344, 11379,
+    12413, 13447, 14482, 15516, 16550, 17585, 18619, 19653, 20688, 21722,
+    22757, 23791, 24825, 25860, 26894, 27928, 28963, 29997, 31031, 32066,
+    33100, 34135, 35169, 36203, 37238, 38272, 39306, 40341, 41375, 42409,
+    43444, 44478, 45513, 46547, 47581, 48616, 49650, 50684, 51719, 52753,
+    53787, 54822, 55856, 56891, 57925, 58959, 59994, 61028, 62062, 63097,
+    64131, 65165, 66200, 67234, 68269, 69303, 70337, 71372, 72406, 73440,
+    74475, 75509, 76543, 77578, 78612, 79647, 80681, 81715, 82750, 83784,
+    84818, 85853, 86887, 87921, 88956, 89990,
+])
+
+
+def _daily_challenge_slot(level_name: str, date_str: str) -> int:
+    """Deterministic daily slot via FNV-1a, identical to client getDailyChallengeSlot().
+
+    Skips slots that map to offline puzzle numbers by probing forward.
+    """
+    level_num = next((k for k, v in DIFFICULTY_LABELS.items() if v == level_name), None)
+    if level_num is None:
+        raise ValueError(f"unknown level: {level_name}")
+
+    key = f"{date_str}:{level_name}"
+    h = 2166136261
+    for ch in key:
+        h ^= ord(ch)
+        h = (h * 16777619) & 0xFFFFFFFF
+
+    total = get_level_total(level_num)
+    if total == 0:
+        raise ValueError(f"level {level_name} has no puzzles")
+
+    # Probe from the FNV slot; skip offline puzzles (max 100 probes)
+    base_slot = (h % total) + 1
+    for offset in range(100):
+        slot = ((base_slot - 1 + offset) % total) + 1
+        result = level_slot_to_puzzle(level_num, slot)
+        if result and result[0] not in OFFLINE_PUZZLE_NUMS:
+            return slot
+    # Fallback (should never happen — offline set is tiny vs level totals)
+    return base_slot
+
+
+@octile_router.get("/daily-challenge/puzzle")
+def get_daily_challenge_puzzle(level: str, date: str):
+    """Return today's daily challenge puzzle for a given level.
+
+    The puzzle is deterministically selected from the date+level,
+    and offline-bundled puzzles are skipped so the client must be online.
+    """
+    if level not in ("easy", "medium", "hard", "hell"):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "level must be easy, medium, hard, or hell"},
+        )
+    # Validate date format
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "date must be YYYY-MM-DD"},
+        )
+
+    try:
+        slot = _daily_challenge_slot(level, date)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+    level_num = next(k for k, v in DIFFICULTY_LABELS.items() if v == level)
+    result = level_slot_to_puzzle(level_num, slot)
+    if result is None:
+        return JSONResponse(status_code=500, content={"detail": "slot mapping failed"})
+
+    puzzle_number, _ = result
+    cells = decode_puzzle_extended(puzzle_number)
+
+    return {
+        "puzzle_number": puzzle_number,
+        "level": level,
+        "slot": slot,
+        "date": date,
+        "cells": cells,
+    }
+
+
+@octile_router.get("/daily-challenge/scoreboard")
+def get_daily_challenge_scoreboard(level: str, date: str, limit: int = 50):
+    """Return the daily challenge leaderboard for a given level and date.
+
+    Only includes scores submitted with daily_challenge=true for this date+level.
+    Ranked by resolve_time ascending (fastest first), one entry per player.
+    """
+    if level not in ("easy", "medium", "hard", "hell"):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "level must be easy, medium, hard, or hell"},
+        )
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "date must be YYYY-MM-DD"},
+        )
+    limit = min(max(limit, 1), 100)
+
+    # Compute the authoritative puzzle_number for this date+level
+    try:
+        slot = _daily_challenge_slot(level, date)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+    level_num = next(k for k, v in DIFFICULTY_LABELS.items() if v == level)
+    result = level_slot_to_puzzle(level_num, slot)
+    if result is None:
+        return {"scores": [], "date": date, "level": level}
+
+    puzzle_number, _ = result
+
+    # Query: best score per player for this puzzle, on this UTC date
+    session = get_session()
+    try:
+        target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        next_date = target_date + timedelta(days=1)
+
+        # Subquery: min resolve_time per player for this puzzle on this date
+        best_sub = (
+            session.query(
+                OctileScore.browser_uuid,
+                func.min(OctileScore.resolve_time).label("best_time"),
+            )
+            .filter(
+                OctileScore.puzzle_number == puzzle_number,
+                OctileScore.created_at >= target_date,
+                OctileScore.created_at < next_date,
+                OctileScore.flagged == 0,
+            )
+            .group_by(OctileScore.browser_uuid)
+            .subquery()
+        )
+
+        rows = (
+            session.query(OctileScore)
+            .join(
+                best_sub,
+                (OctileScore.browser_uuid == best_sub.c.browser_uuid)
+                & (OctileScore.resolve_time == best_sub.c.best_time)
+                & (OctileScore.puzzle_number == puzzle_number),
+            )
+            .filter(
+                OctileScore.created_at >= target_date,
+                OctileScore.created_at < next_date,
+                OctileScore.flagged == 0,
+            )
+            .order_by(OctileScore.resolve_time.asc())
+            .limit(limit)
+            .all()
+        )
+
+        # Resolve display names for authenticated users
+        user_ids = [r.user_id for r in rows if r.user_id]
+        user_map = {}
+        if user_ids:
+            users = (
+                session.query(OctileUser)
+                .filter(OctileUser.id.in_(user_ids))
+                .all()
+            )
+            user_map = {u.id: u for u in users}
+
+        scores = []
+        for r in rows:
+            user = user_map.get(r.user_id)
+            difficulty = get_puzzle_difficulty(r.puzzle_number)
+            scores.append({
+                "browser_uuid": r.browser_uuid,
+                "resolve_time": r.resolve_time,
+                "display_name": user.display_name if user else None,
+                "picture": user.picture if user else None,
+                "grade": calc_skill_grade(difficulty, r.resolve_time),
+            })
+
+        return {"scores": scores, "date": date, "level": level, "puzzle_number": puzzle_number}
+    finally:
+        session.close()
+
+
 @octile_router.post("/feedback")
 def submit_feedback(req: FeedbackRequest, request: Request):
     """Receive user feedback and email it to the team."""
