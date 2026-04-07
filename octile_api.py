@@ -1832,7 +1832,7 @@ def get_level_puzzle(level: str, slot: int, transforms: int = 8):
     if level_num is None:
         return JSONResponse(
             status_code=400,
-            content={"detail": "level must be easy, medium, hard, or hell"},
+            content={"detail": "level must be easy, medium, hard, or hell (nightmare)"},
         )
 
     t = max(1, min(8, transforms))
@@ -3759,7 +3759,7 @@ def get_daily_challenge_puzzle(level: str, date: str):
     if level not in ("easy", "medium", "hard", "hell"):
         return JSONResponse(
             status_code=400,
-            content={"detail": "level must be easy, medium, hard, or hell"},
+            content={"detail": "level must be easy, medium, hard, or hell (nightmare)"},
         )
     # Validate date format
     if not _re.match(r"^\d{4}-\d{2}-\d{2}$", date):
@@ -3791,21 +3791,29 @@ def get_daily_challenge_puzzle(level: str, date: str):
 
 
 @octile_router.get("/daily-challenge/scoreboard")
-def get_daily_challenge_scoreboard(level: str, date: str, limit: int = 50):
+def get_daily_challenge_scoreboard(
+    level: str, date: str, limit: int = 50, sort: str = "time"
+):
     """Return the daily challenge leaderboard for a given level and date.
 
     Only includes scores submitted with daily_challenge=true for this date+level.
-    Ranked by resolve_time ascending (fastest first), one entry per player.
+    sort=time: ranked by resolve_time ASC (default, fastest first).
+    sort=elo: ranked by ELO delta DESC (who gained most today), filtered to ELO >= 2000.
     """
     if level not in ("easy", "medium", "hard", "hell"):
         return JSONResponse(
             status_code=400,
-            content={"detail": "level must be easy, medium, hard, or hell"},
+            content={"detail": "level must be easy, medium, hard, or hell (nightmare)"},
         )
     if not _re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return JSONResponse(
             status_code=400,
             content={"detail": "date must be YYYY-MM-DD"},
+        )
+    if sort not in ("time", "elo"):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "sort must be 'time' or 'elo'"},
         )
     limit = min(max(limit, 1), 100)
 
@@ -3858,7 +3866,7 @@ def get_daily_challenge_scoreboard(level: str, date: str, limit: int = 50):
                 OctileScore.flagged == 0,
             )
             .order_by(OctileScore.resolve_time.asc())
-            .limit(limit)
+            .limit(100 if sort == "elo" else limit)
             .all()
         )
 
@@ -3873,10 +3881,51 @@ def get_daily_challenge_scoreboard(level: str, date: str, limit: int = 50):
             )
             user_map = {u.id: u for u in users}
 
+        difficulty = get_puzzle_difficulty(puzzle_number)
+
+        if sort == "elo":
+            # Compute ELO + delta for each player, filter to >= 2000
+            elo_entries = []
+            for r in rows:
+                elo = calc_elo_for_player(session, r.browser_uuid)
+                if elo < 2000:
+                    continue
+                grade = calc_skill_grade(difficulty, r.resolve_time)
+                # Count player's total solves for K-factor
+                solve_count = (
+                    session.query(func.count(OctileScore.id))
+                    .filter(
+                        OctileScore.browser_uuid == r.browser_uuid,
+                        OctileScore.flagged == 0,
+                    )
+                    .scalar()
+                    or 0
+                )
+                elo_delta = calc_elo_change(elo, difficulty, grade, solve_count)
+                user = user_map.get(r.user_id)
+                elo_entries.append(
+                    {
+                        "browser_uuid": r.browser_uuid,
+                        "resolve_time": r.resolve_time,
+                        "display_name": user.display_name if user else None,
+                        "picture": user.picture if user else None,
+                        "grade": grade,
+                        "elo": round(elo, 1),
+                        "elo_delta": round(elo_delta, 1),
+                    }
+                )
+            # Sort by elo_delta DESC, then resolve_time ASC
+            elo_entries.sort(key=lambda e: (-e["elo_delta"], e["resolve_time"]))
+            return {
+                "scores": elo_entries[:limit],
+                "date": date,
+                "level": level,
+                "puzzle_number": puzzle_number,
+            }
+
         scores = []
         for r in rows:
             user = user_map.get(r.user_id)
-            difficulty = get_puzzle_difficulty(r.puzzle_number)
             scores.append({
                 "browser_uuid": r.browser_uuid,
                 "resolve_time": r.resolve_time,
