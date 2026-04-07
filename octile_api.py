@@ -2068,20 +2068,22 @@ def auth_magic_link_verify(token: str, uid: int):
         user = session.query(OctileUser).filter(OctileUser.id == uid).first()
         tok_hash = hashlib.sha256(token.encode()).hexdigest()
 
-        # Look up magic link in dedicated table
-        magic_link = (
+        # Look up magic link (include consumed ones for lang detection)
+        magic_link_any = (
             session.query(OctileMagicLink)
             .filter(
                 OctileMagicLink.user_id == uid,
                 OctileMagicLink.token_hash == tok_hash,
-                OctileMagicLink.consumed_at.is_(None),
             )
             .first()
         )
 
-        # Determine language from magic link record
-        _lang = (magic_link.lang if magic_link and magic_link.lang else "en").lower()
+        # Determine language from magic link record (even if consumed/expired)
+        _lang = (magic_link_any.lang if magic_link_any and magic_link_any.lang else "en").lower()
         _zh = _lang == "zh"
+
+        # Only unconsumed links are valid
+        magic_link = magic_link_any if (magic_link_any and magic_link_any.consumed_at is None) else None
 
         if not user or not magic_link:
             _title = "連結無效" if _zh else "Link Invalid"
