@@ -2119,7 +2119,6 @@ def auth_magic_link_verify(token: str, uid: int):
         # Redirect to app with token (works for both web and Android deep link)
         safe_name = (user.display_name or "").replace("'", "\\'")
         web_url = f"{OCTILE_SITE_URL}?auth_token={jwt_token}"
-        deep_url = f"octile://auth?token={jwt_token}&name={safe_name}"
 
         # Localized strings for redirect page
         _t_title = "登入中…" if _zh else "Signing in..."
