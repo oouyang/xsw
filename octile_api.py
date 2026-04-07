@@ -720,6 +720,7 @@ class OctileMagicLink(OctileBase):
     expires_at = Column(DateTime, nullable=False)
     consumed_at = Column(DateTime, nullable=True)  # NULL = pending, set = used
     jwt_token = Column(String, nullable=True)  # stored for poll-based flow
+    lang = Column(String, nullable=True)  # user language at request time
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -1059,6 +1060,7 @@ def _migrate_db():
         "ALTER TABLE octile_scores ADD COLUMN moves TEXT",
         # Phase: is_verified → verified_at migration
         "ALTER TABLE octile_users ADD COLUMN verified_at DATETIME",
+        "ALTER TABLE octile_magic_links ADD COLUMN lang TEXT",
     ]
     with _engine.connect() as conn:
         for sql in migrations:
@@ -1989,6 +1991,7 @@ def auth_magic_link(req: MagicLinkRequest, request: Request):
             user_id=user.id,
             token_hash=tok_hash,
             expires_at=expires,
+            lang=lang,
         )
         session.add(magic_link)
 
@@ -2074,18 +2077,27 @@ def auth_magic_link_verify(token: str, uid: int):
             )
             .first()
         )
+
+        # Determine language from magic link record
+        _lang = (magic_link.lang if magic_link and magic_link.lang else "en").lower()
+        _zh = _lang == "zh"
+
         if not user or not magic_link:
+            _title = "連結無效" if _zh else "Link Invalid"
+            _body = "此登入連結已失效。<br>可能已被使用過。" if _zh else "This sign-in link is no longer valid.<br>It may have already been used."
+            _hint = "請開啟 Octile 重新取得登入連結。" if _zh else "Please open Octile and request a new sign-in link."
             return HTMLResponse(
-                f'<body {_err_style}><h2 style="color:#e74c3c">Link Invalid</h2>'
-                f"<p>This sign-in link is no longer valid.<br>It may have already been used.</p>"
-                f"<p>Please open Octile and request a new sign-in link.</p>{_err_btn}</body>",
+                f'<body {_err_style}><h2 style="color:#e74c3c">{_title}</h2>'
+                f"<p>{_body}</p><p>{_hint}</p>{_err_btn}</body>",
                 status_code=400,
             )
         if magic_link.expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
+            _title = "連結已過期" if _zh else "Link Expired"
+            _body = "此登入連結已過期（15 分鐘）。" if _zh else "This sign-in link has expired (15 minutes)."
+            _hint = "請開啟 Octile 重新取得登入連結。" if _zh else "Please open Octile and request a new sign-in link."
             return HTMLResponse(
-                f'<body {_err_style}><h2 style="color:#f39c12">Link Expired</h2>'
-                f"<p>This sign-in link has expired (15 minutes).</p>"
-                f"<p>Please open Octile and request a new sign-in link.</p>{_err_btn}</body>",
+                f'<body {_err_style}><h2 style="color:#f39c12">{_title}</h2>'
+                f"<p>{_body}</p><p>{_hint}</p>{_err_btn}</body>",
                 status_code=400,
             )
 
@@ -2107,9 +2119,18 @@ def auth_magic_link_verify(token: str, uid: int):
         safe_name = (user.display_name or "").replace("'", "\\'")
         web_url = f"{OCTILE_SITE_URL}?auth_token={jwt_token}"
         deep_url = f"octile://auth?token={jwt_token}&name={safe_name}"
+
+        # Localized strings for redirect page
+        _t_title = "登入中…" if _zh else "Signing in..."
+        _t_signed = "&#10003; 登入成功！" if _zh else "&#10003; Signed in!"
+        _t_close = "登入成功！你可以關閉此分頁。" if _zh else "Signed in! You can close this tab."
+        _t_redirect = "正在跳轉至 Octile…" if _zh else "Redirecting to Octile..."
+        _t_manual = "手動開啟 Octile" if _zh else "Open Octile manually"
+        _t_back = "登入成功！請回到 Octile 繼續遊戲。" if _zh else "Signed in! Please return to Octile to continue."
+
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>Signing in...</title>
+        <title>{_t_title}</title>
         <script>
         (function() {{
           var webUrl = '{web_url}';
@@ -2118,21 +2139,20 @@ def auth_magic_link_verify(token: str, uid: int):
           try {{
             if (window.opener) {{
               window.opener.postMessage({{type:'octile-auth',token:'{jwt_token}',name:'{safe_name}'}}, '{OCTILE_SITE_URL.rstrip("/")}');
-              document.getElementById('msg').textContent = 'Signed in! You can close this tab.';
+              document.getElementById('msg').textContent = '{_t_close}';
               setTimeout(function() {{ window.close(); }}, 1500);
               return;
             }}
           }} catch(e) {{}}
-          // Mobile: try deep link, fall back to web
+          // Mobile: try deep link first, then show "return to app" message
           var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
           if (isMobile) {{
             var iframe = document.createElement('iframe');
             iframe.style.display = 'none';
             iframe.src = deepUrl;
             document.body.appendChild(iframe);
-            setTimeout(function() {{
-              window.location.href = webUrl;
-            }}, 1500);
+            // Show "return to app" instead of auto-redirecting to web
+            document.getElementById('msg').textContent = '{_t_back}';
           }} else {{
             // Desktop: go straight to web
             window.location.href = webUrl;
@@ -2140,9 +2160,9 @@ def auth_magic_link_verify(token: str, uid: int):
         }})();
         </script>
         </head><body style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px">
-        <h2 style="color:#2ecc71">&#10003; Signed in!</h2>
-        <p id="msg">Redirecting to Octile...</p>
-        <p style="margin-top:20px"><a href="{web_url}" style="color:#3498db">Open Octile manually</a></p>
+        <h2 style="color:#2ecc71">{_t_signed}</h2>
+        <p id="msg">{_t_redirect}</p>
+        <p style="margin-top:20px"><a href="{web_url}" style="color:#3498db">{_t_manual}</a></p>
         </body></html>"""
         return HTMLResponse(html)
     finally:
