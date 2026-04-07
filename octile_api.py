@@ -2064,7 +2064,6 @@ def auth_magic_link_verify(token: str, uid: int):
     session = get_session()
     try:
         _err_style = 'style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px"'
-        _err_btn = f'<a href="{OCTILE_SITE_URL}" style="display:inline-block;margin-top:20px;padding:12px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Open Octile</a>'
         user = session.query(OctileUser).filter(OctileUser.id == uid).first()
         tok_hash = hashlib.sha256(token.encode()).hexdigest()
 
@@ -2081,6 +2080,9 @@ def auth_magic_link_verify(token: str, uid: int):
         # Determine language from magic link record (even if consumed/expired)
         _lang = (magic_link_any.lang if magic_link_any and magic_link_any.lang else "en").lower()
         _zh = _lang == "zh"
+
+        _err_btn_text = "開啟 Octile" if _zh else "Open Octile"
+        _err_btn = f'<a href="{OCTILE_SITE_URL}" style="display:inline-block;margin-top:20px;padding:12px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">{_err_btn_text}</a>'
 
         # Only unconsumed links are valid
         magic_link = magic_link_any if (magic_link_any and magic_link_any.consumed_at is None) else None
