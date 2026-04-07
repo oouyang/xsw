@@ -2135,8 +2135,7 @@ def auth_magic_link_verify(token: str, uid: int):
         <script>
         (function() {{
           var webUrl = '{web_url}';
-          var deepUrl = '{deep_url}';
-          // postMessage to opener (same-browser tab)
+          // postMessage to opener (same-browser tab that opened this)
           try {{
             if (window.opener) {{
               window.opener.postMessage({{type:'octile-auth',token:'{jwt_token}',name:'{safe_name}'}}, '{OCTILE_SITE_URL.rstrip("/")}');
@@ -2145,24 +2144,14 @@ def auth_magic_link_verify(token: str, uid: int):
               return;
             }}
           }} catch(e) {{}}
-          // Mobile: try deep link first, then show "return to app" message
-          var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-          if (isMobile) {{
-            var iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = deepUrl;
-            document.body.appendChild(iframe);
-            // Show "return to app" instead of auto-redirecting to web
-            document.getElementById('msg').textContent = '{_t_back}';
-          }} else {{
-            // Desktop: go straight to web
-            window.location.href = webUrl;
-          }}
+          // No opener: user clicked magic link from email client.
+          // Show success message — they should return to the app/tab where they requested login.
+          // The poll-based flow in the original tab will pick up the JWT automatically.
         }})();
         </script>
         </head><body style="background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:60px">
         <h2 style="color:#2ecc71">{_t_signed}</h2>
-        <p id="msg">{_t_redirect}</p>
+        <p id="msg">{_t_back}</p>
         <p style="margin-top:20px"><a href="{web_url}" style="color:#3498db">{_t_manual}</a></p>
         </body></html>"""
         return HTMLResponse(html)
