@@ -1979,6 +1979,8 @@ def auth_magic_link(req: MagicLinkRequest, request: Request):
             session.add(user)
             session.flush()
 
+        lang = (req.lang or "en").lower()
+
         # Generate a short-lived token (15 min) and poll request_id
         token = secrets.token_urlsafe(32)
         tok_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -2014,7 +2016,6 @@ def auth_magic_link(req: MagicLinkRequest, request: Request):
             return JSONResponse(
                 {"detail": "Email service unavailable"}, status_code=503
             )
-        lang = (req.lang or "en").lower()
         if lang == "zh":
             subject = "Octile 登入連結"
             greeting = "你好，"
