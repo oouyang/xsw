@@ -834,20 +834,25 @@ async def souvenir_stock():
     }
 
     PAYLOAD = {
-        "para": {"myStock": "", "souvenir": "", "meetingDate": "", "dateType": 1}
+        "para": {
+            "myStock": "",
+            "souvenir": "",
+            "meetingDate": "",
+            "dateType": 1,
+        }
     }
 
-    try:
-        resp = requests.post(
-            URL,
-            json=PAYLOAD,
-            headers=HEADERS,
-            cookies=COOKIES,
-            timeout=30,
-        )
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Upstream request failed: {e}")
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            resp = await client.post(
+                URL,
+                json=PAYLOAD,
+                headers=HEADERS,
+                cookies=COOKIES,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Upstream request failed: {e}")
 
     try:
         data = resp.json()

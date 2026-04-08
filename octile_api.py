@@ -659,7 +659,9 @@ class OctileScore(OctileBase):
 
     # Anti-cheat fields
     solution = Column(String, nullable=True)  # 27-char compact or 128-char legacy
-    moves = Column(String, nullable=True)  # base-92 encoded move log (2 chars per placement)
+    moves = Column(
+        String, nullable=True
+    )  # base-92 encoded move log (2 chars per placement)
     flagged = Column(Integer, default=0)  # 0=normal, 1=flagged for review
 
     # Server-calculated rewards (authoritative, not client-provided)
@@ -854,7 +856,11 @@ class LeagueHistory(OctileBase):
 OCTILE_JWT_SECRET = os.getenv("OCTILE_JWT_SECRET", "octile-change-me-in-production")
 if OCTILE_JWT_SECRET == "octile-change-me-in-production":
     import warnings
-    warnings.warn("OCTILE_JWT_SECRET is using default value! Set a strong secret via env var.", stacklevel=1)
+
+    warnings.warn(
+        "OCTILE_JWT_SECRET is using default value! Set a strong secret via env var.",
+        stacklevel=1,
+    )
 OCTILE_JWT_EXPIRY_DAYS = 30
 
 # Google OAuth (server-side redirect flow)
@@ -863,9 +869,7 @@ OCTILE_GOOGLE_CLIENT_ID = os.getenv(
 )
 OCTILE_GOOGLE_CLIENT_SECRET = os.getenv("OCTILE_GOOGLE_CLIENT_SECRET", "")
 OCTILE_GOOGLE_REDIRECT_URI = os.getenv("OCTILE_GOOGLE_REDIRECT_URI", "")
-OCTILE_WORKER_URL = os.getenv(
-    "OCTILE_WORKER_URL", "https://api.octile.eu.cc"
-)
+OCTILE_WORKER_URL = os.getenv("OCTILE_WORKER_URL", "https://api.octile.eu.cc")
 # Where to send the user after successful Google login
 # Android: octile://auth?token=...&name=...
 # Web: https://app.octile.eu.cc/?auth_token=...&auth_name=...
@@ -1091,10 +1095,12 @@ def _migrate_db():
 
         # Backfill verified_at from is_verified for existing verified users
         try:
-            conn.execute(sql_text(
-                "UPDATE octile_users SET verified_at = COALESCE(last_login_at, created_at) "
-                "WHERE is_verified = 1 AND verified_at IS NULL"
-            ))
+            conn.execute(
+                sql_text(
+                    "UPDATE octile_users SET verified_at = COALESCE(last_login_at, created_at) "
+                    "WHERE is_verified = 1 AND verified_at IS NULL"
+                )
+            )
             conn.commit()
         except Exception:
             pass
@@ -1455,12 +1461,16 @@ async def submit_score(request: Request):
 
         # --- Duplicate submission check ---
         one_min_ago = datetime.now(timezone.utc) - timedelta(seconds=60)
-        dupe = session.query(OctileScore).filter(
-            OctileScore.browser_uuid == body.browser_uuid,
-            OctileScore.puzzle_number == body.puzzle_number,
-            OctileScore.resolve_time == body.resolve_time,
-            OctileScore.created_at >= one_min_ago,
-        ).first()
+        dupe = (
+            session.query(OctileScore)
+            .filter(
+                OctileScore.browser_uuid == body.browser_uuid,
+                OctileScore.puzzle_number == body.puzzle_number,
+                OctileScore.resolve_time == body.resolve_time,
+                OctileScore.created_at >= one_min_ago,
+            )
+            .first()
+        )
         if dupe:
             return JSONResponse(
                 status_code=409,
@@ -1906,7 +1916,9 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
-def _send_otp_email(email: str, otp: str, purpose: str = "verify", lang: str = "en") -> bool:
+def _send_otp_email(
+    email: str, otp: str, purpose: str = "verify", lang: str = "en"
+) -> bool:
     sender = _get_email_sender()
     if not sender:
         print(f"[Octile Auth] Email not configured, OTP for {email}: {otp}")
@@ -1917,7 +1929,11 @@ def _send_otp_email(email: str, otp: str, purpose: str = "verify", lang: str = "
         prompt = "你的驗證碼是："
         expire = "此驗證碼將在 10 分鐘後過期。"
     else:
-        subject = "Octile verification code" if purpose == "verify" else "Octile password reset"
+        subject = (
+            "Octile verification code"
+            if purpose == "verify"
+            else "Octile password reset"
+        )
         prompt = "Your verification code is:"
         expire = "This code expires in 10 minutes."
     body = (
@@ -2047,7 +2063,9 @@ def auth_magic_link(req: MagicLinkRequest, request: Request):
         else:
             subject = "Your Octile sign-in link"
             greeting = "Hi,"
-            body_text = "You requested to sign in to Octile. Use the link below to continue:"
+            body_text = (
+                "You requested to sign in to Octile. Use the link below to continue:"
+            )
             cta_text = "Sign in to Octile"
             alt_text = "Or copy and paste this URL into your browser:"
             expire_text = "This link is valid for 15 minutes and can only be used once. If you did not request this, you can safely ignore this email."
@@ -2098,28 +2116,52 @@ def auth_magic_link_verify(token: str, uid: int):
         )
 
         # Determine language from magic link record (even if consumed/expired)
-        _lang = (magic_link_any.lang if magic_link_any and magic_link_any.lang else "en").lower()
+        _lang = (
+            magic_link_any.lang if magic_link_any and magic_link_any.lang else "en"
+        ).lower()
         _zh = _lang == "zh"
 
         _err_btn_text = "開啟 Octile" if _zh else "Open Octile"
         _err_btn = f'<a href="{OCTILE_SITE_URL}" style="display:inline-block;margin-top:20px;padding:12px 28px;background:#2ecc71;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">{_err_btn_text}</a>'
 
         # Only unconsumed links are valid
-        magic_link = magic_link_any if (magic_link_any and magic_link_any.consumed_at is None) else None
+        magic_link = (
+            magic_link_any
+            if (magic_link_any and magic_link_any.consumed_at is None)
+            else None
+        )
 
         if not user or not magic_link:
             _title = "連結無效" if _zh else "Link Invalid"
-            _body = "此登入連結已失效。<br>可能已被使用過。" if _zh else "This sign-in link is no longer valid.<br>It may have already been used."
-            _hint = "請開啟 Octile 重新取得登入連結。" if _zh else "Please open Octile and request a new sign-in link."
+            _body = (
+                "此登入連結已失效。<br>可能已被使用過。"
+                if _zh
+                else "This sign-in link is no longer valid.<br>It may have already been used."
+            )
+            _hint = (
+                "請開啟 Octile 重新取得登入連結。"
+                if _zh
+                else "Please open Octile and request a new sign-in link."
+            )
             return HTMLResponse(
                 f'<body {_err_style}><h2 style="color:#e74c3c">{_title}</h2>'
                 f"<p>{_body}</p><p>{_hint}</p>{_err_btn}</body>",
                 status_code=400,
             )
-        if magic_link.expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
+        if magic_link.expires_at.replace(tzinfo=None) < datetime.now(
+            timezone.utc
+        ).replace(tzinfo=None):
             _title = "連結已過期" if _zh else "Link Expired"
-            _body = "此登入連結已過期（15 分鐘）。" if _zh else "This sign-in link has expired (15 minutes)."
-            _hint = "請開啟 Octile 重新取得登入連結。" if _zh else "Please open Octile and request a new sign-in link."
+            _body = (
+                "此登入連結已過期（15 分鐘）。"
+                if _zh
+                else "This sign-in link has expired (15 minutes)."
+            )
+            _hint = (
+                "請開啟 Octile 重新取得登入連結。"
+                if _zh
+                else "Please open Octile and request a new sign-in link."
+            )
             return HTMLResponse(
                 f'<body {_err_style}><h2 style="color:#f39c12">{_title}</h2>'
                 f"<p>{_body}</p><p>{_hint}</p>{_err_btn}</body>",
@@ -2147,10 +2189,18 @@ def auth_magic_link_verify(token: str, uid: int):
         # Localized strings for redirect page
         _t_title = "登入中…" if _zh else "Signing in..."
         _t_signed = "&#10003; 登入成功！" if _zh else "&#10003; Signed in!"
-        _t_close = "登入成功！你可以關閉此分頁。" if _zh else "Signed in! You can close this tab."
+        _t_close = (
+            "登入成功！你可以關閉此分頁。"
+            if _zh
+            else "Signed in! You can close this tab."
+        )
         _t_redirect = "正在跳轉至 Octile…" if _zh else "Redirecting to Octile..."
         _t_manual = "手動開啟 Octile" if _zh else "Open Octile manually"
-        _t_back = "登入成功！請回到 Octile 繼續遊戲。" if _zh else "Signed in! Please return to Octile to continue."
+        _t_back = (
+            "登入成功！請回到 Octile 繼續遊戲。"
+            if _zh
+            else "Signed in! Please return to Octile to continue."
+        )
 
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2197,7 +2247,11 @@ def auth_magic_link_status(id: str):
 
         # Check if consumed and JWT is ready
         if magic_link.consumed_at and magic_link.jwt_token:
-            user = session.query(OctileUser).filter(OctileUser.id == magic_link.user_id).first()
+            user = (
+                session.query(OctileUser)
+                .filter(OctileUser.id == magic_link.user_id)
+                .first()
+            )
             jwt_token = magic_link.jwt_token
             # Clear JWT after one read (one-time)
             magic_link.jwt_token = None
@@ -2210,7 +2264,9 @@ def auth_magic_link_status(id: str):
             }
 
         # Check if expired
-        if magic_link.expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
+        if magic_link.expires_at.replace(tzinfo=None) < datetime.now(
+            timezone.utc
+        ).replace(tzinfo=None):
             return {"status": "expired"}
 
         return {"status": "pending"}
@@ -2296,14 +2352,17 @@ def auth_verify(req: VerifyRequest):
             )
         if _check_otp_verify_limit(email):
             return JSONResponse(
-                status_code=429, content={"detail": "Too many attempts, try again later"}
+                status_code=429,
+                content={"detail": "Too many attempts, try again later"},
             )
         if not user.otp_code or user.otp_code != req.otp_code.strip():
             _record_otp_verify_fail(email)
             return JSONResponse(
                 status_code=400, content={"detail": "Invalid verification code"}
             )
-        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
+        if user.otp_expires_at and user.otp_expires_at.replace(
+            tzinfo=None
+        ) < datetime.now(timezone.utc).replace(tzinfo=None):
             return JSONResponse(
                 status_code=400,
                 content={"detail": "Code expired, please register again"},
@@ -2426,14 +2485,17 @@ def auth_reset_password(req: ResetPasswordRequest):
             )
         if _check_otp_verify_limit(email):
             return JSONResponse(
-                status_code=429, content={"detail": "Too many attempts, try again later"}
+                status_code=429,
+                content={"detail": "Too many attempts, try again later"},
             )
         if not user.otp_code or user.otp_code != req.otp_code.strip():
             _record_otp_verify_fail(email)
             return JSONResponse(
                 status_code=400, content={"detail": "Invalid reset code"}
             )
-        if user.otp_expires_at and user.otp_expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
+        if user.otp_expires_at and user.otp_expires_at.replace(
+            tzinfo=None
+        ) < datetime.now(timezone.utc).replace(tzinfo=None):
             return JSONResponse(
                 status_code=400, content={"detail": "Code expired, request a new one"}
             )
@@ -2493,7 +2555,9 @@ def auth_delete_account(user: dict = Depends(require_octile_auth)):
     try:
         db_user = session.query(OctileUser).filter(OctileUser.id == user_id).first()
         if not db_user:
-            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+            return JSONResponse(
+                status_code=404, content={"detail": "Account not found"}
+            )
 
         # Delete all associated data in dependency order (single transaction)
         session.query(LeagueDailyExp).filter(LeagueDailyExp.user_id == user_id).delete()
@@ -2501,7 +2565,9 @@ def auth_delete_account(user: dict = Depends(require_octile_auth)):
         session.query(LeagueMember).filter(LeagueMember.user_id == user_id).delete()
         session.query(OctileScore).filter(OctileScore.user_id == user_id).delete()
         session.query(OctileProgress).filter(OctileProgress.user_id == user_id).delete()
-        session.query(OctileMagicLink).filter(OctileMagicLink.user_id == user_id).delete()
+        session.query(OctileMagicLink).filter(
+            OctileMagicLink.user_id == user_id
+        ).delete()
         session.delete(db_user)
         session.commit()
         return {"deleted": True}
@@ -2538,9 +2604,7 @@ def auth_google_verify(req: GoogleVerifyRequest, request: Request):
         )
     except Exception as e:
         logging.getLogger("octile").warning(f"Google ID token verification failed: {e}")
-        return JSONResponse(
-            status_code=401, content={"detail": "Invalid ID token"}
-        )
+        return JSONResponse(status_code=401, content={"detail": "Invalid ID token"})
 
     google_email = _normalize_email(idinfo.get("email", ""))
     google_name = idinfo.get("name", google_email.split("@")[0])
@@ -2625,7 +2689,9 @@ def auth_google_redirect(request: Request):
     # Detect source platform from query param (android or web)
     source = request.query_params.get("source", "web")
     return_url = request.query_params.get("return_url", "")
-    browser_uuid = _get_player_uuid(request, request.query_params.get("browser_uuid", ""))
+    browser_uuid = _get_player_uuid(
+        request, request.query_params.get("browser_uuid", "")
+    )
 
     # Generate state token
     state = secrets.token_urlsafe(32)
@@ -2851,7 +2917,9 @@ def _merge_json_lists(server_json: str, client_list: list) -> str:
 
 
 @octile_router.post("/sync/push")
-def sync_push(req: SyncPushRequest, request: Request, user: dict = Depends(require_octile_auth)):
+def sync_push(
+    req: SyncPushRequest, request: Request, user: dict = Depends(require_octile_auth)
+):
     """Push local progress to server. Merges with MAX strategy."""
     req.browser_uuid = _get_player_uuid(request, req.browser_uuid)
     user_id = int(user["sub"])
@@ -3739,17 +3807,98 @@ class FeedbackRequest(BaseModel):
 
 # --- Daily Challenge (Steam-exclusive, backend-authoritative) ---
 # Offline puzzles bundled in client — daily challenge must skip these
-OFFLINE_PUZZLE_NUMS = frozenset([
-    1, 1035, 2069, 3104, 4138, 5172, 6207, 7241, 8275, 9310, 10344, 11379,
-    12413, 13447, 14482, 15516, 16550, 17585, 18619, 19653, 20688, 21722,
-    22757, 23791, 24825, 25860, 26894, 27928, 28963, 29997, 31031, 32066,
-    33100, 34135, 35169, 36203, 37238, 38272, 39306, 40341, 41375, 42409,
-    43444, 44478, 45513, 46547, 47581, 48616, 49650, 50684, 51719, 52753,
-    53787, 54822, 55856, 56891, 57925, 58959, 59994, 61028, 62062, 63097,
-    64131, 65165, 66200, 67234, 68269, 69303, 70337, 71372, 72406, 73440,
-    74475, 75509, 76543, 77578, 78612, 79647, 80681, 81715, 82750, 83784,
-    84818, 85853, 86887, 87921, 88956, 89990,
-])
+OFFLINE_PUZZLE_NUMS = frozenset(
+    [
+        1,
+        1035,
+        2069,
+        3104,
+        4138,
+        5172,
+        6207,
+        7241,
+        8275,
+        9310,
+        10344,
+        11379,
+        12413,
+        13447,
+        14482,
+        15516,
+        16550,
+        17585,
+        18619,
+        19653,
+        20688,
+        21722,
+        22757,
+        23791,
+        24825,
+        25860,
+        26894,
+        27928,
+        28963,
+        29997,
+        31031,
+        32066,
+        33100,
+        34135,
+        35169,
+        36203,
+        37238,
+        38272,
+        39306,
+        40341,
+        41375,
+        42409,
+        43444,
+        44478,
+        45513,
+        46547,
+        47581,
+        48616,
+        49650,
+        50684,
+        51719,
+        52753,
+        53787,
+        54822,
+        55856,
+        56891,
+        57925,
+        58959,
+        59994,
+        61028,
+        62062,
+        63097,
+        64131,
+        65165,
+        66200,
+        67234,
+        68269,
+        69303,
+        70337,
+        71372,
+        72406,
+        73440,
+        74475,
+        75509,
+        76543,
+        77578,
+        78612,
+        79647,
+        80681,
+        81715,
+        82750,
+        83784,
+        84818,
+        85853,
+        86887,
+        87921,
+        88956,
+        89990,
+    ]
+)
 
 
 def _daily_challenge_slot(level_name: str, date_str: str) -> int:
@@ -3907,11 +4056,7 @@ def get_daily_challenge_scoreboard(
         user_ids = [r.user_id for r in rows if r.user_id]
         user_map = {}
         if user_ids:
-            users = (
-                session.query(OctileUser)
-                .filter(OctileUser.id.in_(user_ids))
-                .all()
-            )
+            users = session.query(OctileUser).filter(OctileUser.id.in_(user_ids)).all()
             user_map = {u.id: u for u in users}
 
         difficulty = get_puzzle_difficulty(puzzle_number)
@@ -3959,15 +4104,22 @@ def get_daily_challenge_scoreboard(
         scores = []
         for r in rows:
             user = user_map.get(r.user_id)
-            scores.append({
-                "browser_uuid": r.browser_uuid,
-                "resolve_time": r.resolve_time,
-                "display_name": user.display_name if user else None,
-                "picture": user.picture if user else None,
-                "grade": calc_skill_grade(difficulty, r.resolve_time),
-            })
+            scores.append(
+                {
+                    "browser_uuid": r.browser_uuid,
+                    "resolve_time": r.resolve_time,
+                    "display_name": user.display_name if user else None,
+                    "picture": user.picture if user else None,
+                    "grade": calc_skill_grade(difficulty, r.resolve_time),
+                }
+            )
 
-        return {"scores": scores, "date": date, "level": level, "puzzle_number": puzzle_number}
+        return {
+            "scores": scores,
+            "date": date,
+            "level": level,
+            "puzzle_number": puzzle_number,
+        }
     finally:
         session.close()
 
@@ -4001,9 +4153,17 @@ def submit_feedback(req: FeedbackRequest, request: Request):
     if len(msg) > 50:
         preview += "..."
     device_short = (req.device or "")[:30]
-    _ptag_map = {"electron-demo": "Demo", "electron": "Steam", "android": "Android", "ios": "iOS", "pwa": "PWA"}
+    _ptag_map = {
+        "electron-demo": "Demo",
+        "electron": "Steam",
+        "android": "Android",
+        "ios": "iOS",
+        "pwa": "PWA",
+    }
     platform_tag = _ptag_map.get(req.platform or "", "")
-    subject = f"[Octile{' ' + platform_tag if platform_tag else ''} {type_label}] {preview}"
+    subject = (
+        f"[Octile{' ' + platform_tag if platform_tag else ''} {type_label}] {preview}"
+    )
     if device_short:
         subject += f" ({device_short})"
 
