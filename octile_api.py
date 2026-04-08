@@ -3981,7 +3981,8 @@ def submit_feedback(req: FeedbackRequest, request: Request):
     if len(msg) > 50:
         preview += "..."
     device_short = (req.device or "")[:30]
-    platform_tag = (req.platform or "").replace("electron-demo", "Demo").replace("electron", "Steam") if req.platform and req.platform.startswith("electron") else ""
+    _ptag_map = {"electron-demo": "Demo", "electron": "Steam", "android": "Android", "ios": "iOS"}
+    platform_tag = _ptag_map.get(req.platform or "", "")
     subject = f"[Octile{' ' + platform_tag if platform_tag else ''} {type_label}] {preview}"
     if device_short:
         subject += f" ({device_short})"
