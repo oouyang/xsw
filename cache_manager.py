@@ -545,9 +545,15 @@ class CacheManager:
         session = self._get_session()
         try:
             from sqlalchemy import func
+
             book_count = session.query(func.count(Book.id)).scalar() or 0
             chapter_count = session.query(func.count(Chapter.id)).scalar() or 0
-            chapters_with_content = session.query(func.count(Chapter.id)).filter(Chapter.text.isnot(None)).scalar() or 0
+            chapters_with_content = (
+                session.query(func.count(Chapter.id))
+                .filter(Chapter.text.isnot(None))
+                .scalar()
+                or 0
+            )
 
             return {
                 "books_in_db": book_count,
@@ -561,7 +567,9 @@ class CacheManager:
                 "books_in_db": -1,
                 "chapters_in_db": -1,
                 "chapters_with_content": -1,
-                "memory_cache_size": len(self.memory_cache._store) if self.memory_cache else 0,
+                "memory_cache_size": len(self.memory_cache._store)
+                if self.memory_cache
+                else 0,
                 "memory_cache_ttl": self.ttl_seconds,
             }
         finally:

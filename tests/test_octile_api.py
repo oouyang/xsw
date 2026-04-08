@@ -1937,13 +1937,23 @@ def test_player_stats_with_scores(client):
     uuid1 = "stats-player-a"
     uuid2 = "stats-player-b"
     # Submit easy puzzle (fast = S grade)
-    client.post("/octile/score", json={
-        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": uuid1,
-    })
+    client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 1,
+            "resolve_time": 30.0,
+            "browser_uuid": uuid1,
+        },
+    )
     # Submit another with different uuid (slower = B grade)
-    client.post("/octile/score", json={
-        "puzzle_number": 2, "resolve_time": 200.0, "browser_uuid": uuid2,
-    })
+    client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 2,
+            "resolve_time": 200.0,
+            "browser_uuid": uuid2,
+        },
+    )
 
     # Check stats for first player (1 score)
     resp = client.get(f"/octile/player/{uuid1}/stats")
@@ -1968,11 +1978,17 @@ def test_player_elo_initial(client):
 def test_player_elo_after_scores(client):
     """ELO should change after solving puzzles."""
     import time
+
     uuid = "elo-test-player"
     # Fast solve on easy puzzle = S grade → ELO should go up slightly
-    client.post("/octile/score", json={
-        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": uuid,
-    })
+    client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 1,
+            "resolve_time": 30.0,
+            "browser_uuid": uuid,
+        },
+    )
     time.sleep(0.1)
     resp = client.get(f"/octile/player/{uuid}/elo")
     data = resp.json()
@@ -1984,9 +2000,14 @@ def test_player_elo_after_scores(client):
 
 def test_elo_in_score_response(client):
     """Score submission response should include ELO."""
-    resp = client.post("/octile/score", json={
-        "puzzle_number": 1, "resolve_time": 30.0, "browser_uuid": "elo-resp-uuid",
-    })
+    resp = client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 1,
+            "resolve_time": 30.0,
+            "browser_uuid": "elo-resp-uuid",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert "elo" in data
@@ -1995,6 +2016,7 @@ def test_elo_in_score_response(client):
 
 def test_calc_elo_change():
     from octile_api import calc_elo_change
+
     # High player on easy puzzle, S grade → tiny gain
     change = calc_elo_change(2000, 1, "S", 200)
     assert 0 < change < 1

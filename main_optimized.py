@@ -30,6 +30,8 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import requests
+import base64
+import json
 import os
 import shutil
 import uuid
@@ -815,6 +817,47 @@ def health():
         "cache_stats": cache_stats,
         "service": "TPEX Proxy",
     }
+
+
+@app.get("/stock/souvenir")
+async def souvenir_stock():
+    URL = "https://istockapp.cathaysec.com.tw/Marketing/Souvenir/Service.aspx/SouvenirSearch"
+
+    HEADERS = {
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+    COOKIES = {
+        "ASP.NET_SessionId": "...",
+        "__RequestVerificationToken_L01hcmtldGluZy9Tb3V2ZW5pcg2": "...",
+    }
+
+    PAYLOAD = {
+        "para": {"myStock": "", "souvenir": "", "meetingDate": "", "dateType": 1}
+    }
+
+    try:
+        resp = requests.post(
+            URL,
+            json=PAYLOAD,
+            headers=HEADERS,
+            cookies=COOKIES,
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Upstream request failed: {e}")
+
+    try:
+        data = resp.json()
+        base64_payload = data["d"]
+        decoded_json = json.loads(base64.b64decode(base64_payload))
+        stock_list = decoded_json.get("StockList", [])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Response parse error: {e}")
+
+    return {"stock_list": stock_list}
 
 
 @app.get("/tpex/etf-list")
