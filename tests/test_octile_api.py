@@ -1283,7 +1283,11 @@ def test_level_slot_interleaved():
 
 
 def test_level_slot_ordering():
-    """Earlier slots should have easier puzzles (fewer attempts) within level."""
+    """First slot should generally be easier than last slot within level.
+
+    With v2 themed chapters + step-ladder, strict monotonic ordering no longer
+    holds, but overall first-vs-last should still show progression.
+    """
     from octile_api import get_puzzle_attempts
 
     # Compare slot 1 vs last slot of easy
@@ -1292,6 +1296,35 @@ def test_level_slot_ordering():
     last = level_slot_to_puzzle(1, total)
     assert first is not None and last is not None
     assert get_puzzle_attempts(first[0]) <= get_puzzle_attempts(last[0])
+
+
+def test_level_ordering_integrity():
+    """Verify each level's ordering has correct count, no duplicates, correct membership."""
+    from octile_api import _get_level_bases, _get_difficulty_data
+
+    bases = _get_level_bases()
+    data = _get_difficulty_data()
+    levels_list = data["levels"]
+    dist = data["distribution"]
+
+    level_expected = {"easy": 1, "medium": 2, "hard": 3, "hell": 4}
+    for name, level in level_expected.items():
+        order = bases[level]
+        expected_count = dist[name]
+        assert len(order) == expected_count, (
+            f"{name}: got {len(order)}, expected {expected_count}"
+        )
+        assert len(set(order)) == len(order), f"{name}: duplicates in ordering"
+        for idx in order:
+            assert levels_list[idx] == level, (
+                f"{name}: puzzle {idx} has level {levels_list[idx]}, expected {level}"
+            )
+
+    # Union should cover all puzzles
+    all_indices = set()
+    for order in bases.values():
+        all_indices.update(order)
+    assert len(all_indices) == data["total"]
 
 
 # ---------------------------------------------------------------------------
@@ -1391,7 +1424,12 @@ def test_level_puzzle_transforms_1(client):
 
 
 def test_get_level_puzzle_sequential_order(client):
-    """First puzzle in each level should be easier than last."""
+    """First puzzle in each level should be easier than last (overall trend).
+
+    With v2 themed chapters + step-ladder, strict monotonicity no longer holds
+    within a level, but the first puzzle should still be from an easier region
+    than the very last puzzle.
+    """
     from octile_api import get_puzzle_attempts
 
     for level_name in ("easy", "medium", "hard", "hell"):

@@ -275,12 +275,22 @@ _LEVEL_BASES: dict[int, list[int]] | None = None
 
 
 def _get_level_bases() -> dict[int, list[int]]:
-    """Return {level: [base_indices sorted by attempts ascending]}."""
+    """Return {level: [base_indices in display order]}.
+
+    If difficulty_levels.json has an "ordering" field (v2 themed chapters),
+    use it directly. Otherwise fall back to sorting by attempts ascending.
+    """
     global _LEVEL_BASES
     if _LEVEL_BASES is not None:
         return _LEVEL_BASES
 
     data = _get_difficulty_data()
+
+    if "ordering" in data:
+        _LEVEL_BASES = {int(k): v for k, v in data["ordering"].items()}
+        return _LEVEL_BASES
+
+    # Fallback: sort by attempts ascending (v1 behavior)
     levels_list = data["levels"]
     attempts_list = data["attempts"]
 
