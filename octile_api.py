@@ -270,38 +270,48 @@ def get_puzzle_attempts(puzzle_number: int) -> int:
     return _get_difficulty_data()["attempts"][base]
 
 
-# Sorted base puzzle indices per level (sorted by ascending attempts)
+# Puzzle ordering version — set via OCTILE_ORDERING env var.
+#   "v0" = original puzzle index order (no sorting)
+#   "v1" = sort by solver attempts ascending (previous default)
+#   "v2" = themed chapters with step-ladder curves (current default)
+ORDERING_VERSION = os.environ.get("OCTILE_ORDERING", "v2")
+
 _LEVEL_BASES: dict[int, list[int]] | None = None
 
 
 def _get_level_bases() -> dict[int, list[int]]:
     """Return {level: [base_indices in display order]}.
 
-    If difficulty_levels.json has an "ordering" field (v2 themed chapters),
-    use it directly. Otherwise fall back to sorting by attempts ascending.
+    Ordering version controlled by OCTILE_ORDERING env var:
+      v0 — raw puzzle index order (no reordering)
+      v1 — sort by attempts ascending
+      v2 — themed chapters from "ordering" field in difficulty_levels.json
     """
     global _LEVEL_BASES
     if _LEVEL_BASES is not None:
         return _LEVEL_BASES
 
     data = _get_difficulty_data()
+    levels_list = data["levels"]
 
-    if "ordering" in data:
+    if ORDERING_VERSION == "v2" and "ordering" in data:
         _LEVEL_BASES = {int(k): v for k, v in data["ordering"].items()}
         return _LEVEL_BASES
 
-    # Fallback: sort by attempts ascending (v1 behavior)
-    levels_list = data["levels"]
-    attempts_list = data["attempts"]
-
     by_level: dict[int, list[tuple[int, int]]] = {1: [], 2: [], 3: [], 4: []}
-    for base_idx, (level, att) in enumerate(zip(levels_list, attempts_list)):
-        by_level[level].append((att, base_idx))
+    for base_idx, level in enumerate(levels_list):
+        by_level[level].append((data["attempts"][base_idx], base_idx))
 
     _LEVEL_BASES = {}
-    for level, items in by_level.items():
-        items.sort()  # sort by attempts ascending
-        _LEVEL_BASES[level] = [base_idx for _, base_idx in items]
+    if ORDERING_VERSION == "v0":
+        # v0: raw index order within each level
+        for level, items in by_level.items():
+            _LEVEL_BASES[level] = [base_idx for _, base_idx in items]
+    else:
+        # v1 (default fallback): sort by attempts ascending
+        for level, items in by_level.items():
+            items.sort()
+            _LEVEL_BASES[level] = [base_idx for _, base_idx in items]
 
     return _LEVEL_BASES
 

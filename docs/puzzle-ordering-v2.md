@@ -102,14 +102,33 @@ Each chapter of N puzzles (sorted by difficulty):
 
 Each array = base puzzle indices in display order for that level.
 
-## Backward Compatibility
+## Version Switching
 
-`_get_level_bases()` checks for `"ordering"` in the data. If absent,
-falls back to v1 behavior (sort by attempts ascending). This means:
+Controlled by `OCTILE_ORDERING` env var (default: `v2`):
 
-- Rolling back = remove `"ordering"` field from JSON
-- No client changes needed
-- No API contract changes
+| Version | Env value | Behavior |
+|---------|-----------|----------|
+| v0 | `OCTILE_ORDERING=v0` | Raw puzzle index order (no sorting) |
+| v1 | `OCTILE_ORDERING=v1` | Sort by solver attempts ascending |
+| v2 | `OCTILE_ORDERING=v2` (default) | Themed chapters + step-ladder curves |
+
+Switch at deploy time:
+```bash
+# Use v1 ordering
+OCTILE_ORDERING=v1 uvicorn main:app
+
+# Use v2 (default, same as not setting it)
+OCTILE_ORDERING=v2 uvicorn main:app
+
+# Docker
+docker run -e OCTILE_ORDERING=v1 ...
+```
+
+A/B testing: run two backend instances with different env vars behind
+a load balancer that routes by player ID or cookie. See below.
+
+No client changes needed. No API contract changes. The cache
+(`_LEVEL_BASES`) is set once at startup per process.
 
 ## Player Progress Impact
 
@@ -130,6 +149,14 @@ they just see a new puzzle at their current position. One-time shift.
 - Single-solution puzzles: 1,688 (14.8%)
 - Solution count correlates with difficulty: harder puzzles tend to have
   fewer solutions
+
+## TODO
+
+- [ ] A/B testing: per-request ordering version selection (query param or
+  cookie-based routing) so v1 vs v2 can be compared on the same backend
+  instance. Options: (a) backend reads `?ordering=v1` param, worker injects
+  based on player UUID hash; (b) two backend containers with different
+  `OCTILE_ORDERING`, worker routes by UUID.
 
 ## Verification
 
