@@ -14,7 +14,6 @@ from octile_api import (
     P92_MAP,
     _PIECE_ENC,
     _decode_compact_solution,
-    _get_ordering_id,
     _transform_cell,
     _decompose_puzzle_number,
     decode_puzzle,

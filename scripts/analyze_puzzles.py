@@ -21,7 +21,7 @@ from collections import deque
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from octile_puzzle_data import PUZZLE_DATA
-from octile_api import decode_puzzle, P92, P92_MAP
+from octile_api import P92_MAP
 
 PUZZLE_COUNT = 11378
 BOARD_SIZE = 8
@@ -211,7 +211,6 @@ def count_solutions(board, pieces_remaining, cap=100):
         return 1
 
     count = 0
-    piece_idx = 0
     # Try each remaining piece at each orientation at the first free cell's row
     fr, fc = divmod(first_free, 8)
 

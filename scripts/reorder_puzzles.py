@@ -15,7 +15,6 @@ Ordering strategy:
 
 import json
 import os
-import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCRIPT_DIR)
@@ -189,7 +188,7 @@ def main():
     print("\n--- Integrity checks ---")
     for level in range(1, 5):
         order = ordering[str(level)]
-        expected = sum(1 for l in levels if l == level)
+        expected = sum(1 for lv in levels if lv == level)
         assert len(order) == expected, f"Level {level}: {len(order)} != {expected}"
         assert len(set(order)) == len(order), f"Level {level}: duplicates found"
         for idx in order:
