@@ -69,6 +69,7 @@ Still accepted for backward compatibility.
 
 import logging
 import hashlib
+import struct
 import hmac
 import json
 import os
@@ -314,6 +315,25 @@ def _get_level_bases() -> dict[int, list[int]]:
             _LEVEL_BASES[level] = [base_idx for _, base_idx in items]
 
     return _LEVEL_BASES
+
+
+_ORDERING_ID: str | None = None
+
+
+def _get_ordering_id() -> str:
+    """Compute ordering_id: first 8 hex chars of SHA-256 of canonical ordering bytes."""
+    global _ORDERING_ID
+    if _ORDERING_ID is not None:
+        return _ORDERING_ID
+    bases = _get_level_bases()
+    buf = bytearray()
+    counts = [len(bases.get(lv, [])) for lv in (1, 2, 3, 4)]
+    buf.extend(struct.pack("<4H", *counts))
+    for lv in (1, 2, 3, 4):
+        for idx in bases.get(lv, []):
+            buf.extend(struct.pack("<H", idx))
+    _ORDERING_ID = hashlib.sha256(bytes(buf)).hexdigest()[:8]
+    return _ORDERING_ID
 
 
 def level_slot_to_puzzle(level: int, slot: int) -> tuple[int, int] | None:
@@ -1374,6 +1394,8 @@ def get_octile_version():
         "total_puzzles": TOTAL_PUZZLE_COUNT,
         "encoding": "base92-3char",
         "solution_formats": ["8-char-compact", "27-char-compact", "128-char-legacy"],
+        "ordering_id": _get_ordering_id(),
+        "ordering_version": ORDERING_VERSION,
     }
 
 

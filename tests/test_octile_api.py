@@ -14,6 +14,7 @@ from octile_api import (
     P92_MAP,
     _PIECE_ENC,
     _decode_compact_solution,
+    _get_ordering_id,
     _transform_cell,
     _decompose_puzzle_number,
     decode_puzzle,
@@ -2050,6 +2051,30 @@ def test_elo_in_score_response(client):
     data = resp.json()
     assert "elo" in data
     assert data["elo"] is not None
+
+
+def test_ordering_id_matches_release():
+    """CI gate: pack ordering_id must match backend-computed ordering_id."""
+    import json
+    from pathlib import Path
+
+    from octile_api import _get_ordering_id
+
+    release_path = Path(__file__).resolve().parent.parent.parent / "octile" / "packs" / "release.json"
+    if not release_path.exists():
+        pytest.skip("release.json not found (pack not generated)")
+
+    with open(release_path) as f:
+        release = json.load(f)
+
+    pack_ordering_id = release["current"].get("orderingId")
+    if not pack_ordering_id:
+        pytest.skip("release.json has no orderingId (old pack)")
+
+    computed_id = _get_ordering_id()
+    assert computed_id == pack_ordering_id, (
+        f"Ordering mismatch: backend={computed_id}, pack={pack_ordering_id}"
+    )
 
 
 def test_calc_elo_change():
