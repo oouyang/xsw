@@ -104,6 +104,18 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
+
+# Suppress noisy health-check access logs (200 responses only)
+class _HealthLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "200" in msg and ("/healthz" in msg or "/health" in msg):
+            return False
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_HealthLogFilter())
+
 # -----------------------
 # Configuration
 # -----------------------
