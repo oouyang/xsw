@@ -450,6 +450,54 @@ These optimizations **must never split puzzle truth** or weaken the trust model.
 
 ---
 
+## FAQ
+
+### When should we generate a new `.opk`?
+
+Only when puzzle **data** changes — new puzzles added, difficulty re-classified, or ordering restructured. Never for code changes. The pack is data only.
+
+### How do users get a new pack?
+
+Silently and automatically. On every app startup, `checkPackUpdate()` fetches `release.json`. If the version is newer than the local pack in IDB, the client downloads the `.opk` in the background, verifies SHA-256 + signature, and activates it. No prompt, no restart, no user action.
+
+### What happens on first launch (no pack yet)?
+
+1. **MiniPack** (embedded in JS, 99 base puzzles) — available immediately, but has no ordering, so it cannot map level/slot.
+2. **API fallback** — level/slot navigation works via backend API.
+3. **FullPack downloads** in background (~35KB gzipped) — once installed, all puzzles are offline with v2 ordering.
+
+For web users, the API is always reachable (they loaded the page), so MiniPack is effectively unused. MiniPack matters for Android/iOS/Steam apps opened offline.
+
+### Does the backend ordering affect pack users?
+
+No. Pack users use the ordering baked into the `.opk`. The backend ordering (`OCTILE_ORDERING` env var) only affects clients without a pack that fall back to the API. Set `OCTILE_ORDERING=v1` on the backend to keep API ordering stable for old clients while the pack uses v2.
+
+### What if the old client (v1.8.1, no pack) and new client (v2.0.0, with pack) request the same slot?
+
+They may get different puzzles at the same slot, because they use different ordering versions. But both puzzles are valid — scores are keyed by `puzzle_number`, not `(level, slot)`. No score corruption, just a cosmetic slot discrepancy.
+
+### Will GitLab Pages CI wipe the pack files?
+
+Yes. The deploy workflow force-pushes only `dist/web/*` to GitLab. Any manually uploaded files (including `packs/`) are overwritten. Host pack files on a separate domain (`packs.octile.eu.cc`) or a separate static host that CI does not touch.
+
+### Where should `.opk` files be hosted?
+
+Anywhere. The client verifies SHA-256 + Ed25519 signature regardless of source. The `.opk` URL in `release.json` can point to any CDN, S3 bucket, GitHub Release, or personal server. Distribution is untrusted by design.
+
+### What about China / restricted regions?
+
+`release.json` supports a `mirrors` array. The client tries the primary `url` first, then each mirror in order until one succeeds. Host a mirror on a China-accessible CDN (Alibaba OSS, Tencent COS, etc.). Alternatively, bundle the `.opk` directly in the APK for zero network dependency.
+
+### Is the pack release tied to the app release?
+
+No. Pack release is completely independent. Generate a new pack, upload the `.opk`, update `release.json` — all existing clients (web, Android, iOS, Steam) pick it up on next launch. No app update, no Play Store review, no CI trigger.
+
+### Do we need per-difficulty packs (easy.opk, medium.opk, etc.)?
+
+Not currently. The full pack is ~68KB (~35KB gzipped) — smaller than a favicon. Splitting adds complexity (multiple downloads, partial ordering, multiple IDB records) for negligible size savings. Listed as a future possibility if the pack grows significantly.
+
+---
+
 ## Summary
 
 PuzzlePack makes Octile:
