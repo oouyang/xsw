@@ -338,6 +338,30 @@ class AdminUser(Base):
         return f"<AdminUser(email='{self.email}', auth_method='{self.auth_method}', is_active={self.is_active})>"
 
 
+class ExceptionLog(Base):
+    """Tracks exception notifications for throttling."""
+
+    __tablename__ = "exception_logs"
+
+    id = Column(Integer, primary_key=True)
+    exception_hash = Column(
+        String(16), unique=True, index=True, nullable=False
+    )  # SHA256 hash
+    exception_type = Column(String, nullable=False)  # ValueError, KeyError, etc.
+    endpoint = Column(String, nullable=False)  # GET /api/books/123
+    count = Column(Integer, default=1)  # Occurrence count
+    last_sent_at = Column(DateTime, nullable=False)  # Last email sent
+    last_occurrence_at = Column(
+        DateTime, nullable=False
+    )  # Last time exception occurred
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (Index("idx_exception_hash", "exception_hash"),)
+
+    def __repr__(self):
+        return f"<ExceptionLog(hash='{self.exception_hash}', type='{self.exception_type}', count={self.count})>"
+
+
 # Database connection and session management
 class DatabaseManager:
     """Manages SQLite database connection and session lifecycle."""

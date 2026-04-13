@@ -99,6 +99,9 @@ from user_auth import (
 )
 import analytics
 from db_models import User, ReadingProgress, Comment
+from exception_notifier import ExceptionNotifier
+from exception_middleware import ExceptionNotificationMiddleware
+import exception_singleton
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -450,6 +453,17 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database and cache
     print(f"[App] Starting with BASE_URL={BASE_URL}, DB_PATH={DB_PATH}")
     init_database(f"sqlite:///{DB_PATH}")
+
+    # Configure SQLite for better concurrency (for exception logging)
+    from sqlalchemy import event
+    import db_models
+
+    @event.listens_for(db_models.db_manager.engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+        cursor.close()
+
     init_cache_manager(ttl_seconds=CACHE_TTL)
 
     # Backfill public_id for existing rows
@@ -493,6 +507,41 @@ app = FastAPI(
 
 # Create API router for all API endpoints
 api_router = APIRouter()
+
+# -----------------------
+# Exception Email Notification
+# -----------------------
+
+
+def init_exception_notifier():
+    """Initialize exception notifier with Octile SMTP settings."""
+    from octile_api import _get_email_sender, OCTILE_FEEDBACK_EMAIL
+
+    email_sender = _get_email_sender()
+    if email_sender is None:
+        logger.warning("[App] Exception notifier disabled (no SMTP configuration)")
+        return None
+
+    notifier = ExceptionNotifier(
+        email_sender=email_sender,
+        recipient_email=OCTILE_FEEDBACK_EMAIL,
+        session_factory=None,  # Use global db_manager
+    )
+    logger.info(
+        f"[App] Exception notifier enabled (recipient: {OCTILE_FEEDBACK_EMAIL})"
+    )
+    return notifier
+
+
+# Set global singleton (avoids circular imports with background_jobs)
+_exception_notifier = init_exception_notifier()
+exception_singleton.set_notifier(_exception_notifier)
+
+# Register middleware (BEFORE rate limiter so exceptions in rate limiter are caught)
+if _exception_notifier:
+    app.add_middleware(
+        ExceptionNotificationMiddleware, exception_notifier=_exception_notifier
+    )
 
 # -----------------------
 # Rate Limiting Middleware

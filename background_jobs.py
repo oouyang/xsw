@@ -10,7 +10,11 @@ import logging
 from typing import Dict, Set, Optional, List
 from queue import Queue, Empty
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import exception_singleton
+import socket
+import sys
+import platform
 
 logger = logging.getLogger("background-jobs")
 
@@ -221,6 +225,21 @@ class BackgroundJobManager:
                     # Mark as failed
                     with self.lock:
                         self.failed_jobs[job.book_id] = (datetime.now(), str(e))
+
+                    # Send exception notification via singleton (avoids circular import)
+                    notifier = exception_singleton.get_notifier()
+                    if notifier:
+                        context = {
+                            "endpoint": f"BackgroundJob: sync book {job.book_id}",
+                            "method": "BACKGROUND",
+                            "user_id": None,
+                            "ip_address": "127.0.0.1",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "hostname": socket.gethostname(),
+                            "python_version": sys.version.split()[0],
+                            "platform": platform.platform(),
+                        }
+                        notifier.notify(e, context)
 
                 finally:
                     # Remove from active
