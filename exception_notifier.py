@@ -379,6 +379,8 @@ class ExceptionNotifier:
         # In-flight gate: prevents duplicate sends during window between should_send=True and mark_sent()
         # hash -> timestamp when send started
         # Cleanup is lazy and triggered on reserve; TTL bounds memory growth under steady traffic.
+        # NOTE: This is in-memory and only works for single-process deployments (workers=1).
+        # For multi-worker/pod deployments, add DB-level reservation field (last_attempt_at / reserved_until).
         self._inflight: Dict[str, datetime] = {}
         self._inflight_lock = threading.Lock()
         self._inflight_ttl = timedelta(minutes=5)  # Expire stale in-flight entries
