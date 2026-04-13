@@ -247,6 +247,10 @@ class ExceptionThrottler:
         else:
             cooldown = timedelta(hours=24)
 
+        # Ensure last_sent is timezone-aware (SQLite may return naive datetime)
+        if last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+
         return datetime.now(timezone.utc) - last_sent < cooldown
 
     def _cleanup_cache(self):
