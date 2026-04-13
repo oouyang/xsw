@@ -102,8 +102,62 @@ from db_models import User, ReadingProgress, Comment
 from exception_notifier import ExceptionNotifier
 from exception_middleware import ExceptionNotificationMiddleware
 import exception_singleton
+import logging.config
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Configure logging with timestamps using dictConfig
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,  # Keep existing loggers
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            "datefmt": "%Y-%m-%dT%H:%M:%S.%f%z",  # ISO8601 with timezone + microseconds
+        },
+        "access": {
+            "()": "uvicorn.logging.AccessFormatter",
+            "format": '%(asctime)s - %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',  # Use 'format', not 'fmt'
+            "datefmt": "%Y-%m-%dT%H:%M:%S.%f%z",  # ISO8601 with timezone + microseconds
+        },
+    },
+    "handlers": {
+        "default": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": "ext://sys.stdout",
+        },
+        "access": {
+            "class": "logging.StreamHandler",
+            "formatter": "access",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "loggers": {
+        "uvicorn": {
+            "handlers": ["default"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "uvicorn.error": {
+            "handlers": ["default"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "uvicorn.access": {
+            "handlers": ["access"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+    "root": {
+        "level": "INFO",
+        "handlers": ["default"],
+    },
+}
+
+# Apply logging configuration
+logging.config.dictConfig(LOGGING_CONFIG)
 
 logger = logging.getLogger(__name__)
 
@@ -139,11 +193,11 @@ try:
 
     _cffi_session = CffiSession(impersonate="chrome")
     _use_cffi = True
-    print("[init] Using curl_cffi with Chrome TLS impersonation")
+    logger.info("[init] Using curl_cffi with Chrome TLS impersonation")
 except ImportError:
     _cffi_session = None
     _use_cffi = False
-    print("[init] curl_cffi not available, using standard requests")
+    logger.warning("[init] curl_cffi not available, using standard requests")
 
 session = requests.Session()
 session.headers.update(
@@ -351,7 +405,9 @@ def get_book_public_id(
                 session.rollback()
             except Exception:
                 pass
-            print(f"[API] Error getting/creating public_id for {book_czid}: {e}")
+            logger.error(
+                "[API] Error getting/creating public_id for %s: %s", book_czid, e
+            )
             return None
         finally:
             session.close()
@@ -402,19 +458,19 @@ def _backfill_public_ids():
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_books_public_id ON books (public_id)"
                 )
             )
-            print("[Migration] Added public_id column to books table")
+            logger.info("[Migration] Added public_id column to books table")
 
         if "description" not in book_cols:
             conn.execute(sa_text("ALTER TABLE books ADD COLUMN description TEXT"))
-            print("[Migration] Added description column to books table")
+            logger.info("[Migration] Added description column to books table")
 
         if "bookmark_count" not in book_cols:
             conn.execute(sa_text("ALTER TABLE books ADD COLUMN bookmark_count INTEGER"))
-            print("[Migration] Added bookmark_count column to books table")
+            logger.info("[Migration] Added bookmark_count column to books table")
 
         if "view_count" not in book_cols:
             conn.execute(sa_text("ALTER TABLE books ADD COLUMN view_count INTEGER"))
-            print("[Migration] Added view_count column to books table")
+            logger.info("[Migration] Added view_count column to books table")
 
         ch_cols = {c["name"] for c in inspector.get_columns("chapters")}
         if "public_id" not in ch_cols:
@@ -424,7 +480,7 @@ def _backfill_public_ids():
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_chapters_public_id ON chapters (public_id)"
                 )
             )
-            print("[Migration] Added public_id column to chapters table")
+            logger.info("[Migration] Added public_id column to chapters table")
 
     # Use raw SQL for fast bulk backfill — Python-level ORM is too slow for 1M+ rows
     with engine.connect() as conn:
@@ -435,7 +491,7 @@ def _backfill_public_ids():
             )
         )
         if result.rowcount:
-            print(f"[Backfill] Assigned public_id to {result.rowcount} books")
+            logger.info("[Backfill] Assigned public_id to %s books", result.rowcount)
 
         # Backfill chapters
         result = conn.execute(
@@ -444,14 +500,14 @@ def _backfill_public_ids():
             )
         )
         if result.rowcount:
-            print(f"[Backfill] Assigned public_id to {result.rowcount} chapters")
+            logger.info("[Backfill] Assigned public_id to %s chapters", result.rowcount)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown."""
     # Startup: Initialize database and cache
-    print(f"[App] Starting with BASE_URL={BASE_URL}, DB_PATH={DB_PATH}")
+    logger.info("[App] Starting with BASE_URL=%s, DB_PATH=%s", BASE_URL, DB_PATH)
     init_database(f"sqlite:///{DB_PATH}")
 
     # Configure SQLite for better concurrency (for exception logging)
@@ -486,16 +542,16 @@ async def lifespan(app: FastAPI):
 
         octile_mod.init_db()
     except Exception as e:
-        print(f"[WARNING] Failed to initialize Octile DB: {e}")
+        logger.warning("[WARNING] Failed to initialize Octile DB: %s", e)
 
-    print("[App] Database, cache, auth, and analytics initialized")
+    logger.info("[App] Database, cache, auth, and analytics initialized")
 
     yield  # Application runs here
 
     # Shutdown: Cleanup
-    print("[App] Shutting down...")
+    logger.info("[App] Shutting down...")
     analytics.stop_writer()
-    print("[App] Shutdown complete")
+    logger.info("[App] Shutdown complete")
 
 
 app = FastAPI(
@@ -571,8 +627,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Apply delay if needed
         if delay > 0:
             request_count = len(rate_limiter._request_history.get(client_ip, [])) + 1
-            print(
-                f"[RateLimit] Client {client_ip} has {request_count} requests in last 60s - applying {delay}s delay"
+            logger.warning(
+                "[RateLimit] Client %s has %s requests in last 60s - applying %ss delay",
+                client_ip,
+                request_count,
+                delay,
             )
             await asyncio.sleep(delay)
 
@@ -587,7 +646,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 # Add rate limiting middleware before CORS (so it runs first)
 if RATE_LIMIT_ENABLED:
     app.add_middleware(RateLimitMiddleware)
-    print(f"[App] Rate limiting enabled with whitelist: {RATE_LIMIT_WHITELIST}")
+    logger.info("[App] Rate limiting enabled with whitelist: %s", RATE_LIMIT_WHITELIST)
 
 app.add_middleware(
     CORSMiddleware,
@@ -737,7 +796,7 @@ def healthz():
 ubike_dir = "/app/dist/ubike"
 if os.path.exists(ubike_dir):
     app.mount("/ubike", StaticFiles(directory=ubike_dir, html=True), name="ubike")
-    print(f"[App] Ubike PWA static files mounted at /ubike from {ubike_dir}")
+    logger.info("[App] Ubike PWA static files mounted at /ubike from %s", ubike_dir)
 
 # Mount SPA static files (assets, js, css)
 spa_dir = "/app/dist/spa"
@@ -951,19 +1010,16 @@ def get_categories():
     """Get categories from homepage."""
     try:
         home_url = BASE_URL + "/"
-        print(f"[API] Fetching categories from {home_url}")
+        logger.debug("[API] Fetching categories from %s", home_url)
         html_content = fetch_html(home_url)
         cats = find_categories_from_nav(html_content, BASE_URL)
-        print(f"[API] Found {len(cats)} categories")
+        logger.debug("[API] Found %s categories", len(cats))
         result = [Category(**c) for c in cats]
         return result
     except requests.HTTPError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
-        print(f"[API] Exception fetching categories: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.exception("[API] Exception fetching categories")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1024,23 +1080,27 @@ def get_book_info(book_id: str, nocache: bool = Query(False)):
 
         # If nocache requested, invalidate and skip cache check
         if nocache:
-            print(f"[API] Book {czbooks_id} - nocache requested, forcing refresh")
+            logger.debug(
+                "[API] Book %s - nocache requested, forcing refresh", czbooks_id
+            )
             cache_mgr.cache_manager.invalidate_book_info(czbooks_id)
         else:
             # If the book is unfinished and stale (>12h), bypass cache
             stale = cache_mgr.cache_manager.is_book_stale(czbooks_id)
             if stale:
-                print(f"[API] Book {czbooks_id} - stale (unfinished, >12h), refreshing")
+                logger.debug(
+                    "[API] Book %s - stale (unfinished, >12h), refreshing", czbooks_id
+                )
                 cache_mgr.cache_manager.invalidate_book_info(czbooks_id)
             else:
                 # Check cache first
                 cached_info = cache_mgr.cache_manager.get_book_info(czbooks_id)
                 if cached_info:
-                    print(f"[API] Book {czbooks_id} - cache hit")
+                    logger.debug("[API] Book %s - cache hit", czbooks_id)
                     return cached_info
 
         # Cache miss or stale - fetch from web
-        print(f"[API] Book {czbooks_id} - fetching from web")
+        logger.debug("[API] Book %s - fetching from web", czbooks_id)
         url = resolve_book_home(czbooks_id)
         html_content = fetch_html(url)
         info = parse_book_info(html_content, BASE_URL)
@@ -1099,13 +1159,17 @@ def get_book_chapters(
                 # Stale data from old parser may have non-sequential numbers parsed from titles
                 first_num = min(c.number for c in all_chapters)
                 if first_num != 1:
-                    print(
-                        f"[API] Chapters for {book_id} - DB stale (first chapter is {first_num}, expected 1), re-fetching"
+                    logger.debug(
+                        "[API] Chapters for %s - DB stale (first chapter is %s, expected 1), re-fetching",
+                        book_id,
+                        first_num,
                     )
                     all_chapters = None
                 else:
-                    print(
-                        f"[API] Chapters for {book_id} - DB hit ({len(all_chapters)} chapters)"
+                    logger.debug(
+                        "[API] Chapters for %s - DB hit (%s chapters)",
+                        book_id,
+                        len(all_chapters),
                     )
 
         if not all_chapters:
@@ -1118,16 +1182,20 @@ def get_book_chapters(
                     if all_chapters:
                         first_num = min(c.number for c in all_chapters)
                         if first_num == 1:
-                            print(
-                                f"[API] Chapters for {book_id} - DB hit after lock ({len(all_chapters)} chapters)"
+                            logger.debug(
+                                "[API] Chapters for %s - DB hit after lock (%s chapters)",
+                                book_id,
+                                len(all_chapters),
                             )
                         else:
                             all_chapters = None
 
                 if not all_chapters:
                     # Still a cache miss - fetch from web
-                    print(
-                        f"[API] Chapters for {book_id} - fetching from web (www={www})"
+                    logger.debug(
+                        "[API] Chapters for %s - fetching from web (www=%s)",
+                        book_id,
+                        www,
                     )
 
                     if www:
@@ -1165,7 +1233,9 @@ def get_book_chapters(
                     # CRITICAL: Sort chapters by number to ensure correct order
                     # HTML may return chapters out of order
                     all_chapters.sort(key=lambda c: c.number)
-                    print(f"[API] Sorted {len(all_chapters)} chapters by number")
+                    logger.debug(
+                        "[API] Sorted %s chapters by number", len(all_chapters)
+                    )
 
                     # Note: book info (description, stats, last chapter) is already stored
                     # by fetch_all_chapters_from_pagination() for www=false fetches.
@@ -1189,8 +1259,11 @@ def get_book_chapters(
         end_idx = start_idx + CHAPTERS_PAGE_SIZE
         page_chapters = all_chapters[start_idx:end_idx]
 
-        print(
-            f"[API] Returning page {current_page}/{total_pages} ({len(page_chapters)} chapters)"
+        logger.debug(
+            "[API] Returning page %s/%s (%s chapters)",
+            current_page,
+            total_pages,
+            len(page_chapters),
         )
         return page_chapters
 
@@ -1215,7 +1288,9 @@ def fetch_all_chapters_from_pagination(book_id: str, volumes_out: list = None) -
     items = fetch_chapters_from_liebiao(
         html_content, book_url, base, start_index=1, volumes_out=volumes_out
     )
-    print(f"[API] Fetched {len(items)} chapters for book {book_id} from {book_url}")
+    logger.debug(
+        "[API] Fetched %s chapters for book %s from %s", len(items), book_id, book_url
+    )
 
     # Parse and store book info from the same HTML (description, bookmark/view counts)
     info = parse_book_info(html_content, BASE_URL)
@@ -1280,12 +1355,16 @@ def get_chapter_content(
                 czbooks_book_id, chapter_num
             )
             if cached_content:
-                print(f"[API] Chapter {czbooks_book_id}:{chapter_num} - cache hit")
+                logger.debug(
+                    "[API] Chapter %s:%s - cache hit", czbooks_book_id, chapter_num
+                )
                 return cached_content
 
         # Cache miss - need to fetch
-        print(
-            f"[API] Chapter {czbooks_book_id}:{chapter_num} - cache miss, fetching from web"
+        logger.debug(
+            "[API] Chapter %s:%s - cache miss, fetching from web",
+            czbooks_book_id,
+            chapter_num,
         )
 
         # Strategy: Try to get chapter URL from DB first (fastest)
@@ -1293,8 +1372,10 @@ def get_chapter_content(
 
         if not chapter_url:
             # Chapter URL not in DB - need to fetch chapter list first
-            print(
-                f"[API] Chapter {czbooks_book_id}:{chapter_num} - URL not in DB, fetching chapter list"
+            logger.debug(
+                "[API] Chapter %s:%s - URL not in DB, fetching chapter list",
+                czbooks_book_id,
+                chapter_num,
             )
 
             # Try home page first (for recent chapters)
@@ -1309,8 +1390,9 @@ def get_chapter_content(
 
             if not target:
                 # Not in home page - fetch all chapters from pagination
-                print(
-                    f"[API] Chapter {chapter_num} not in home page, fetching all chapters"
+                logger.debug(
+                    "[API] Chapter %s not in home page, fetching all chapters",
+                    chapter_num,
                 )
                 items = fetch_all_chapters_from_pagination(czbooks_book_id)
 
@@ -1334,8 +1416,11 @@ def get_chapter_content(
                 get_chapter_title_from_db(czbooks_book_id, chapter_num)
                 or f"Chapter {chapter_num}"
             )
-            print(
-                f"[API] Chapter {czbooks_book_id}:{chapter_num} - found URL in DB: {chapter_url}"
+            logger.debug(
+                "[API] Chapter %s:%s - found URL in DB: %s",
+                czbooks_book_id,
+                chapter_num,
+                chapter_url,
             )
 
         # Fetch chapter content
@@ -1405,7 +1490,7 @@ def get_chapter_url_from_db(book_id: str, chapter_num: int) -> Optional[str]:
         finally:
             session.close()
     except Exception as e:
-        print(f"[API] Error getting chapter URL from DB: {e}")
+        logger.error("[API] Error getting chapter URL from DB: %s", e)
         return None
 
 
@@ -1429,7 +1514,7 @@ def get_chapter_title_from_db(book_id: str, chapter_num: int) -> Optional[str]:
         finally:
             session.close()
     except Exception as e:
-        print(f"[API] Error getting chapter title from DB: {e}")
+        logger.error("[API] Error getting chapter title from DB: %s", e)
         return None
 
 
@@ -1500,10 +1585,14 @@ def search_comprehensive(
         if cc is not None:
             try:
                 search_query_tw = cc.convert(q)
-                print(f"[Search] Converted query: '{q}' -> '{search_query_tw}'")
+                logger.debug(
+                    "[Search] Converted query: '%s' -> '%s'", q, search_query_tw
+                )
                 search_query = search_query_tw
             except Exception as e:
-                print(f"[Search] Conversion failed: {e}, using original query")
+                logger.warning(
+                    "[Search] Conversion failed: %s, using original query", e
+                )
                 search_query = q
 
         query_lower = search_query.lower()
@@ -1661,7 +1750,7 @@ def search_comprehensive(
         }
 
     except Exception as e:
-        print(f"[Search] Error: {e}")
+        logger.exception("[Search] Error")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
@@ -1761,8 +1850,8 @@ async def authenticate_with_google(request: GoogleAuthRequest):
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
-    except Exception as e:
-        print(f"[AUTH] Google authentication failed: {e}")
+    except Exception:
+        logger.exception("[AUTH] Google authentication failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication failed",
@@ -2194,10 +2283,7 @@ async def upload_file(
         }
 
     except Exception as e:
-        print(f"[Upload] Failed to upload file: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.exception("[Upload] Failed to upload file")
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
 
@@ -3058,18 +3144,18 @@ try:
     from bus_api import bus_router
 
     app.include_router(bus_router)
-    print("[INFO] Bus API router included successfully")
+    logger.info("[INFO] Bus API router included successfully")
 except Exception as e:
-    print(f"[WARNING] Failed to include bus API router: {e}")
+    logger.warning("[WARNING] Failed to include bus API router: %s", e)
 
 # Include Octile API router
 try:
     from octile_api import octile_router
 
     app.include_router(octile_router)
-    print("[INFO] Octile API router included successfully")
+    logger.info("[INFO] Octile API router included successfully")
 except Exception as e:
-    print(f"[WARNING] Failed to include Octile API router: {e}")
+    logger.warning("[WARNING] Failed to include Octile API router: %s", e)
 
 # Include main API router
 app.include_router(api_router, prefix="/xsw/api")

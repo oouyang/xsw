@@ -20,6 +20,9 @@ from sqlalchemy.sql import text as sql_text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
@@ -386,7 +389,7 @@ class DatabaseManager:
     def create_tables(self):
         """Create all tables in the database."""
         Base.metadata.create_all(bind=self.engine)
-        print("[DB] Tables created successfully")
+        logger.info("[DB] Tables created successfully")
 
     def get_session(self):
         """Get a new database session."""
@@ -398,7 +401,7 @@ class DatabaseManager:
             conn.execute(sql_text("PRAGMA journal_mode=WAL"))
             conn.execute(sql_text("PRAGMA synchronous=NORMAL"))
             conn.execute(sql_text("PRAGMA cache_size=-64000"))  # 64MB cache
-            print("[DB] WAL mode enabled")
+            logger.info("[DB] WAL mode enabled")
 
 
 # Global database manager instance (initialized in main.py)

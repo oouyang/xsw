@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import time
 import threading
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
@@ -16,6 +17,8 @@ import uuid
 import db_models
 from db_models import Book, Chapter
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 def generate_public_id() -> str:
@@ -111,8 +114,10 @@ class CacheManager:
     def __init__(self, ttl_seconds: int = 900, max_memory_items: int = 500):
         self.ttl_seconds = ttl_seconds
         self.memory_cache = TTLCache(ttl_seconds, max_memory_items)
-        print(
-            f"[Cache] Initialized with TTL={ttl_seconds}s, max_items={max_memory_items}"
+        logger.info(
+            "[Cache] Initialized with TTL=%ss, max_items=%s",
+            ttl_seconds,
+            max_memory_items,
         )
 
     def _get_session(self) -> Session:
@@ -146,13 +151,16 @@ class CacheManager:
                 scraped_at = scraped_at.replace(tzinfo=timezone.utc)
             age = datetime.now(timezone.utc) - scraped_at
             if age.total_seconds() > self.STALE_HOURS * 3600:
-                print(
-                    f"[Cache] Book {book_id} is stale (status={book.status!r}, age={age})"
+                logger.info(
+                    "[Cache] Book %s is stale (status=%r, age=%s)",
+                    book_id,
+                    book.status,
+                    age,
                 )
                 return True
             return False
         except SQLAlchemyError as e:
-            print(f"[Cache] DB error checking staleness for {book_id}: {e}")
+            logger.error("[Cache] DB error checking staleness for %s: %s", book_id, e)
             return False
         finally:
             session.close()
@@ -194,7 +202,7 @@ class CacheManager:
                 self.memory_cache.set(cache_key, book_info)
                 return book_info
         except SQLAlchemyError as e:
-            print(f"[Cache] DB error getting book {book_id}: {e}")
+            logger.error("[Cache] DB error getting book %s: %s", book_id, e)
         finally:
             session.close()
 
@@ -273,13 +281,13 @@ class CacheManager:
             cache_key = f"book:{book_id}"
             self.memory_cache.set(cache_key, book_info)
 
-            print(f"[Cache] Stored book {book_id} to DB and memory")
+            logger.info("[Cache] Stored book %s to DB and memory", book_id)
         except SQLAlchemyError as e:
             try:
                 session.rollback()
             except Exception:
                 pass  # Ignore rollback errors when no transaction is active
-            print(f"[Cache] Error storing book {book_id}: {e}")
+            logger.error("[Cache] Error storing book %s: %s", book_id, e)
         finally:
             session.close()
 
@@ -316,7 +324,9 @@ class CacheManager:
                 self.memory_cache.set(cache_key, content)
                 return content
         except SQLAlchemyError as e:
-            print(f"[Cache] DB error getting chapter {book_id}:{chapter_num}: {e}")
+            logger.error(
+                "[Cache] DB error getting chapter %s:%s: %s", book_id, chapter_num, e
+            )
         finally:
             session.close()
 
@@ -375,13 +385,17 @@ class CacheManager:
             cache_key = f"chapter:{book_id}:{chapter_num}"
             self.memory_cache.set(cache_key, content)
 
-            print(f"[Cache] Stored chapter {book_id}:{chapter_num} to DB and memory")
+            logger.info(
+                "[Cache] Stored chapter %s:%s to DB and memory", book_id, chapter_num
+            )
         except SQLAlchemyError as e:
             try:
                 session.rollback()
             except Exception:
                 pass  # Ignore rollback errors when no transaction is active
-            print(f"[Cache] Error storing chapter {book_id}:{chapter_num}: {e}")
+            logger.error(
+                "[Cache] Error storing chapter %s:%s: %s", book_id, chapter_num, e
+            )
         finally:
             session.close()
 
@@ -406,7 +420,7 @@ class CacheManager:
                     for c in chapters
                 ]
         except SQLAlchemyError as e:
-            print(f"[Cache] DB error getting chapter list {book_id}: {e}")
+            logger.error("[Cache] DB error getting chapter list %s: %s", book_id, e)
         finally:
             session.close()
         return None
@@ -462,8 +476,11 @@ class CacheManager:
                         pending_commit = True
 
                 except SQLAlchemyError as e:
-                    print(
-                        f"[Cache] Warning: Failed to prepare chapter {book_id}:{chapter_num}: {e}"
+                    logger.warning(
+                        "[Cache] Failed to prepare chapter %s:%s: %s",
+                        book_id,
+                        chapter_num,
+                        e,
                     )
                     skipped_count += 1
                     continue
@@ -479,23 +496,32 @@ class CacheManager:
                         # Another thread already stored these chapters — not an error
                         session.rollback()
                         pending_commit = False
-                        print(
-                            f"[Cache] Batch at chapter {idx + 1} already exists (concurrent write), skipping"
+                        logger.debug(
+                            "[Cache] Batch at chapter %s already exists (concurrent write), skipping",
+                            idx + 1,
                         )
                     except SQLAlchemyError as e:
                         try:
                             session.rollback()
                         except Exception:
                             pass
-                        print(
-                            f"[Cache] Warning: Failed to commit batch at chapter {idx + 1}: {e}"
+                        logger.warning(
+                            "[Cache] Failed to commit batch at chapter %s: %s",
+                            idx + 1,
+                            e,
                         )
 
-            print(
-                f"[Cache] Stored {stored_count} new, updated {updated_count}, skipped {skipped_count} chapter refs for book {book_id}"
+            logger.info(
+                "[Cache] Stored %s new, updated %s, skipped %s chapter refs for book %s",
+                stored_count,
+                updated_count,
+                skipped_count,
+                book_id,
             )
         except Exception as e:
-            print(f"[Cache] Error storing chapter refs for book {book_id}: {e}")
+            logger.error(
+                "[Cache] Error storing chapter refs for book %s: %s", book_id, e
+            )
             try:
                 session.rollback()
             except Exception:
@@ -509,7 +535,7 @@ class CacheManager:
         """Invalidate all cache entries for a book (memory only, DB remains)."""
         self.memory_cache.invalidate(f"book:{book_id}")
         # Also invalidate chapter memory cache (DB remains as source of truth)
-        print(f"[Cache] Invalidated memory cache for book {book_id}")
+        logger.info("[Cache] Invalidated memory cache for book %s", book_id)
 
     def delete_book_chapters(self, book_id: str) -> int:
         """Delete all chapter records for a book from database."""
@@ -521,8 +547,10 @@ class CacheManager:
             session.commit()
             # Also clear memory cache
             self.memory_cache.invalidate(f"book:{book_id}")
-            print(
-                f"[Cache] Deleted {deleted_count} chapters from DB for book {book_id}"
+            logger.info(
+                "[Cache] Deleted %s chapters from DB for book %s",
+                deleted_count,
+                book_id,
             )
             return deleted_count
         except SQLAlchemyError as e:
@@ -530,7 +558,7 @@ class CacheManager:
                 session.rollback()
             except Exception:
                 pass
-            print(f"[Cache] Error deleting chapters for book {book_id}: {e}")
+            logger.error("[Cache] Error deleting chapters for book %s: %s", book_id, e)
             return 0
         finally:
             session.close()
@@ -538,7 +566,7 @@ class CacheManager:
     def clear_memory_cache(self) -> None:
         """Clear all in-memory cache."""
         self.memory_cache.clear()
-        print("[Cache] Cleared all memory cache")
+        logger.info("[Cache] Cleared all memory cache")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
