@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
       pip config set global.index-url "${INDEX_URL}"; \
     fi && \
     pip install -r requirements.txt && \
-    pip install ruff
+    pip install ruff freezegun
 
 COPY . .
 COPY --from=spa-builder /web/dist /app/dist
