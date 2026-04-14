@@ -382,11 +382,11 @@ def test_reject_solution_for_wrong_puzzle(client):
 def test_duplicate_submission_rejected(client):
     """Duplicate submission (same UUID, puzzle, time) is rejected with 409."""
     # First submission should succeed
-    resp1 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle_number=1, resolve_time=30.0))
+    resp1 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle=1, resolve_time=30.0))
     assert resp1.status_code == 201
 
     # Exact duplicate within 60s should be rejected
-    resp2 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle_number=1, resolve_time=30.0))
+    resp2 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle=1, resolve_time=30.0))
     assert resp2.status_code == 409
     assert "duplicate" in resp2.json()["detail"]
 
@@ -413,8 +413,8 @@ def test_flagging_high_volume(client):
 
         for i in range(81):
             score = OctileScore(
-                puzzle_number=1,
-                resolve_time=30.0,
+                puzzle_number=(i % 100) + 1,  # vary puzzle to avoid duplicate check
+                resolve_time=30.0 + (i % 10),  # vary time slightly
                 browser_uuid="uuid-flagtest",
                 created_at=datetime.now(timezone.utc) - timedelta(minutes=i),
             )
@@ -423,8 +423,8 @@ def test_flagging_high_volume(client):
     finally:
         session.close()
 
-    # Next submission should be flagged
-    resp = client.post("/octile/score", json=_make_score(uuid="uuid-flagtest"))
+    # Next submission should be flagged (82nd score in last hour)
+    resp = client.post("/octile/score", json=_make_score(uuid="uuid-flagtest", puzzle=200))
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
     assert resp.json()["flagged_reason"] == "FAST_SOLVES_WINDOW"
@@ -514,10 +514,10 @@ def test_flagging_fast_median_interval(client):
     session = octile_api.get_session()
     try:
         # Insert 30 scores with 5s intervals (median = 5s < 8s threshold)
-        base_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        base_time = datetime.now(timezone.utc) - timedelta(seconds=150)  # start 150s ago
         for i in range(30):
             score = OctileScore(
-                puzzle_number=1,
+                puzzle_number=(i % 100) + 1,  # vary puzzle to avoid duplicate check
                 resolve_time=20.0,  # resolve_time doesn't matter, only interval
                 browser_uuid="uuid-fast-interval",
                 created_at=base_time + timedelta(seconds=i * 5),  # 5s apart
@@ -529,7 +529,7 @@ def test_flagging_fast_median_interval(client):
 
     # Next submission should be flagged (median interval 5s < 8s over 30 solves)
     resp = client.post(
-        "/octile/score", json=_make_score(resolve_time=20.0, uuid="uuid-fast-interval")
+        "/octile/score", json=_make_score(puzzle=200, resolve_time=20.0, uuid="uuid-fast-interval")
     )
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
