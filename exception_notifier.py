@@ -46,16 +46,9 @@ class ExceptionThrottler:
         # Clean expired cache entries
         self._cleanup_cache()
 
-        # Check cache first (fast path - negative caching for cooldown only)
-        # Note: Sentinel values always miss cooldown check, falling through to DB for count increment.
-        # This ensures every occurrence is recorded in DB count, which is critical for accurate throttling.
-        with self.cache_lock:
-            if exception_hash in self.cache:
-                last_sent, count, cached_at = self.cache[exception_hash]
-                # Cache hit - check if still valid
-                if datetime.now(timezone.utc) - cached_at < self._cache_ttl:
-                    if self._is_within_cooldown(last_sent, count):
-                        return False, count
+        # NOTE: We always hit the DB to increment occurrence count
+        # Cache is not used for fast-path returns because we need accurate counts
+        # for throttling logic (count determines cooldown duration)
 
         # Query database with retry logic for SQLite lock contention
         from db_models import ExceptionLog
@@ -82,42 +75,46 @@ class ExceptionThrottler:
 
                 if not log:
                     # First occurrence - create new record
-                    # CRITICAL: Use sentinel for last_sent_at (far past) since email hasn't been sent yet
-                    # Will be updated to real timestamp by mark_sent() after email succeeds
-                    sentinel = datetime(1970, 1, 1, tzinfo=timezone.utc)
+                    # Set last_sent_at to NOW to start cooldown immediately
                     log = ExceptionLog(
                         exception_hash=exception_hash,
                         exception_type=exc_type,
                         endpoint=endpoint,
                         count=1,
-                        last_sent_at=sentinel,  # Sentinel - not actually sent yet
+                        last_sent_at=now,  # Start cooldown from first send
                         last_occurrence_at=now,
                     )
                     session.add(log)
                     session.commit()
 
                     with self.cache_lock:
-                        self.cache[exception_hash] = (sentinel, 1, now)
+                        self.cache[exception_hash] = (now, 1, now)
 
                     return True, 1
 
-                # Existing record - increment count
+                # Existing record - increment count FIRST (in-memory)
                 log.count += 1
+                count_after = log.count
                 log.last_occurrence_at = now
 
-                # Decide whether to send BEFORE commit
-                should_send = not self._is_within_cooldown(log.last_sent_at, log.count)
+                # Decide with post-increment count
+                should_send = not self._is_within_cooldown(
+                    log.last_sent_at, count_after
+                )
 
-                # CRITICAL: Only commit count increment now
-                # Do NOT update last_sent_at yet - that happens after email succeeds
+                # Start cooldown immediately if we will send
+                if should_send:
+                    log.last_sent_at = now
+
+                # Commit count increment and potentially last_sent_at update
                 session.commit()
 
                 # Update cache with current state
                 with self.cache_lock:
-                    self.cache[exception_hash] = (log.last_sent_at, log.count, now)
+                    self.cache[exception_hash] = (log.last_sent_at, count_after, now)
 
                 # Break out of retry loop on success
-                return should_send, log.count
+                return should_send, count_after
 
             except IntegrityError:
                 # Another thread created the record simultaneously
@@ -240,16 +237,17 @@ class ExceptionThrottler:
         immediately switches to 6h cooldown even if 1h hasn't passed yet.
         This is intentional to suppress spam faster.
         """
+        # Ensure last_sent is timezone-aware (SQLite may return naive datetime)
+        if last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+
+        # Cooldown duration based on occurrence count
         if count <= 3:
             cooldown = timedelta(hours=1)
         elif count <= 10:
             cooldown = timedelta(hours=6)
         else:
             cooldown = timedelta(hours=24)
-
-        # Ensure last_sent is timezone-aware (SQLite may return naive datetime)
-        if last_sent.tzinfo is None:
-            last_sent = last_sent.replace(tzinfo=timezone.utc)
 
         return datetime.now(timezone.utc) - last_sent < cooldown
 
