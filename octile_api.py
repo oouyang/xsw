@@ -1224,6 +1224,7 @@ class ScoreResponse(BaseModel):
     elo: Optional[float] = None
     display_name: Optional[str] = None
     picture: Optional[str] = None
+    total_exp: Optional[int] = None  # player's cumulative EXP (for leaderboard ranking)
 
 
 class ScoreboardResponse(BaseModel):
@@ -1569,10 +1570,18 @@ async def submit_score(request: Request):
                 ).update({LeagueMember.today_exp: LeagueMember.today_exp + exp})
                 session.commit()
 
-        # Calculate updated ELO for this player
+        # Calculate updated ELO and total_exp for this player
         resp = _score_to_response(score)
         if not flagged:
             resp.elo = calc_elo_for_player(session, body.browser_uuid)
+
+        # Calculate total_exp for leaderboard (sum of all non-flagged scores)
+        total_exp_val = (
+            session.query(func.sum(OctileScore.exp))
+            .filter(OctileScore.browser_uuid == body.browser_uuid, OctileScore.flagged == 0)
+            .scalar()
+        ) or 0
+        resp.total_exp = total_exp_val
 
         return JSONResponse(
             status_code=201,
