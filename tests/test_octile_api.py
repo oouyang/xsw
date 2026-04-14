@@ -379,15 +379,16 @@ def test_reject_solution_for_wrong_puzzle(client):
 # ---------------------------------------------------------------------------
 
 
-def test_rate_limit(client):
+def test_duplicate_submission_rejected(client):
+    """Duplicate submission (same UUID, puzzle, time) is rejected with 409."""
     # First submission should succeed
-    resp1 = client.post("/octile/score", json=_make_score(uuid="uuid-rate"))
+    resp1 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle_number=1, resolve_time=30.0))
     assert resp1.status_code == 201
 
-    # Second submission within 30s should be rate limited
-    resp2 = client.post("/octile/score", json=_make_score(uuid="uuid-rate"))
-    assert resp2.status_code == 429
-    assert "30s" in resp2.json()["detail"]
+    # Exact duplicate within 60s should be rejected
+    resp2 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle_number=1, resolve_time=30.0))
+    assert resp2.status_code == 409
+    assert "duplicate" in resp2.json()["detail"]
 
 
 def test_rate_limit_different_uuid_ok(client):
@@ -404,13 +405,13 @@ def test_rate_limit_different_uuid_ok(client):
 
 
 def test_flagging_high_volume(client):
-    """UUID with >50 scores in last hour gets flagged."""
+    """UUID with >80 scores in last hour gets flagged."""
     session = octile_api.get_session()
     try:
-        # Insert 51 scores directly to bypass rate limiting
+        # Insert 81 scores directly (threshold is 80)
         from datetime import datetime, timezone, timedelta
 
-        for i in range(51):
+        for i in range(81):
             score = OctileScore(
                 puzzle_number=1,
                 resolve_time=30.0,
@@ -424,23 +425,9 @@ def test_flagging_high_volume(client):
 
     # Next submission should be flagged
     resp = client.post("/octile/score", json=_make_score(uuid="uuid-flagtest"))
-    # It may be rate-limited since we just inserted one very recently,
-    # so let's check DB directly
-    session = octile_api.get_session()
-    try:
-        flagged = (
-            session.query(OctileScore)
-            .filter(
-                OctileScore.browser_uuid == "uuid-flagtest",
-                OctileScore.flagged == 1,
-            )
-            .count()
-        )
-        # If submission went through, it should be flagged
-        if resp.status_code == 201:
-            assert flagged >= 1
-    finally:
-        session.close()
+    assert resp.status_code == 201
+    assert resp.json()["flagged"] == 1
+    assert resp.json()["flagged_reason"] == "FAST_SOLVES_WINDOW"
 
 
 # ---------------------------------------------------------------------------
@@ -520,31 +507,33 @@ def test_verify_solution_grey2_wrong_position():
 # ---------------------------------------------------------------------------
 
 
-def test_flagging_fast_average(client):
-    """UUID with avg resolve_time < 20s over 10+ solves gets flagged."""
+def test_flagging_fast_median_interval(client):
+    """UUID with median submission interval < 8s over 30+ solves gets flagged."""
     from datetime import datetime, timezone, timedelta
 
     session = octile_api.get_session()
     try:
-        # Insert 10 fast scores (15s each) spread over time to avoid rate-limit
-        for i in range(10):
+        # Insert 30 scores with 5s intervals (median = 5s < 8s threshold)
+        base_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        for i in range(30):
             score = OctileScore(
                 puzzle_number=1,
-                resolve_time=15.0,
-                browser_uuid="uuid-fast-avg",
-                created_at=datetime.now(timezone.utc) - timedelta(hours=2, minutes=i),
+                resolve_time=20.0,  # resolve_time doesn't matter, only interval
+                browser_uuid="uuid-fast-interval",
+                created_at=base_time + timedelta(seconds=i * 5),  # 5s apart
             )
             session.add(score)
         session.commit()
     finally:
         session.close()
 
-    # Next submission should be flagged (avg 15s < 20s over 10+ solves)
+    # Next submission should be flagged (median interval 5s < 8s over 30 solves)
     resp = client.post(
-        "/octile/score", json=_make_score(resolve_time=15.0, uuid="uuid-fast-avg")
+        "/octile/score", json=_make_score(resolve_time=20.0, uuid="uuid-fast-interval")
     )
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
+    assert resp.json()["flagged_reason"] == "MEDIAN_INTERVAL_LOW"
 
 
 def test_not_flagged_normal_player(client):
