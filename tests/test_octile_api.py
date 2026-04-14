@@ -424,7 +424,7 @@ def test_flagging_high_volume(client):
         session.close()
 
     # Next submission should be flagged (82nd score in last hour)
-    resp = client.post("/octile/score", json=_make_score(uuid="uuid-flagtest", puzzle=200))
+    resp = client.post("/octile/score", json=_make_score(uuid="uuid-flagtest", puzzle=2, solution=None))
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
     assert resp.json()["flagged_reason"] == "FAST_SOLVES_WINDOW"
@@ -529,7 +529,7 @@ def test_flagging_fast_median_interval(client):
 
     # Next submission should be flagged (median interval 5s < 8s over 30 solves)
     resp = client.post(
-        "/octile/score", json=_make_score(puzzle=200, resolve_time=20.0, uuid="uuid-fast-interval")
+        "/octile/score", json=_make_score(puzzle=2, resolve_time=20.0, uuid="uuid-fast-interval", solution=None)
     )
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
