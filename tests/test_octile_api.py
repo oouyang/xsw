@@ -416,7 +416,7 @@ def test_flagging_high_volume(client):
                 puzzle_number=(i % 100) + 1,  # vary puzzle to avoid duplicate check
                 resolve_time=30.0 + (i % 10),  # vary time slightly
                 browser_uuid="uuid-flagtest",
-                created_at=datetime.now(timezone.utc) - timedelta(minutes=i),
+                created_at=datetime.now(timezone.utc) - timedelta(seconds=i * 40),  # 81*40s = 54min < 60min
             )
             session.add(score)
         session.commit()
@@ -513,23 +513,24 @@ def test_flagging_fast_median_interval(client):
 
     session = octile_api.get_session()
     try:
-        # Insert 30 scores with 5s intervals (median = 5s < 8s threshold)
-        base_time = datetime.now(timezone.utc) - timedelta(seconds=150)  # start 150s ago
-        for i in range(30):
+        # Insert 31 scores with 3s intervals (median = 3s < 8s threshold)
+        # Need 31 to ensure 30 are queried with clear intervals
+        base_time = datetime.now(timezone.utc) - timedelta(seconds=90)  # start 90s ago
+        for i in range(31):
             score = OctileScore(
                 puzzle_number=(i % 100) + 1,  # vary puzzle to avoid duplicate check
                 resolve_time=20.0,  # resolve_time doesn't matter, only interval
                 browser_uuid="uuid-fast-interval",
-                created_at=base_time + timedelta(seconds=i * 5),  # 5s apart
+                created_at=base_time + timedelta(seconds=i * 3),  # 3s apart
             )
             session.add(score)
         session.commit()
     finally:
         session.close()
 
-    # Next submission should be flagged (median interval 5s < 8s over 30 solves)
+    # Next submission should be flagged (31 existing scores, median interval 3s < 8s)
     resp = client.post(
-        "/octile/score", json=_make_score(puzzle=2, resolve_time=20.0, uuid="uuid-fast-interval", solution=None)
+        "/octile/score", json=_make_score(puzzle=200, resolve_time=20.0, uuid="uuid-fast-interval", solution=None)
     )
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
