@@ -683,6 +683,7 @@ class OctileScore(OctileBase):
         String, nullable=True
     )  # base-92 encoded move log (2 chars per placement)
     flagged = Column(Integer, default=0)  # 0=normal, 1=flagged for review
+    flagged_reason = Column(String, nullable=True)  # e.g., "FAST_SOLVES_WINDOW", "MEDIAN_INTERVAL_LOW"
 
     # Server-calculated rewards (authoritative, not client-provided)
     coins = Column(Integer, default=0)  # legacy, kept for backward compat
@@ -1105,6 +1106,8 @@ def _migrate_db():
         # Phase: is_verified → verified_at migration
         "ALTER TABLE octile_users ADD COLUMN verified_at DATETIME",
         "ALTER TABLE octile_magic_links ADD COLUMN lang TEXT",
+        # Anti-cheat transparency: track why a score was flagged
+        "ALTER TABLE octile_scores ADD COLUMN flagged_reason TEXT",
     ]
     with _engine.connect() as conn:
         for sql in migrations:
@@ -1213,6 +1216,7 @@ class ScoreResponse(BaseModel):
     created_at: str
     timestamp_utc: str = ""  # legacy alias for created_at (old clients read this)
     flagged: int = 0
+    flagged_reason: Optional[str] = None
     coins: int = 0  # legacy, kept for backward compat
     exp: int = 0
     diamonds: int = 0
@@ -1334,8 +1338,8 @@ def _get_player_uuid(request: Request, fallback: Optional[str] = None) -> str:
 
 
 def _check_rate_limit(session: Session, browser_uuid: str) -> bool:
-    """Return True if the UUID has submitted within the last 30 seconds."""
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=30)
+    """Return True if the UUID has submitted within the last 10 seconds."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=10)
     recent = (
         session.query(OctileScore)
         .filter(
@@ -1347,11 +1351,14 @@ def _check_rate_limit(session: Session, browser_uuid: str) -> bool:
     return recent is not None
 
 
-def _check_anomalies(session: Session, browser_uuid: str) -> bool:
-    """Return True if this UUID shows suspicious patterns (flag, don't reject)."""
+def _check_anomalies(session: Session, browser_uuid: str) -> tuple[bool, Optional[str]]:
+    """Return (flagged, reason) if this UUID shows suspicious patterns.
+
+    Design principle: Flag data, don't reject requests. Let leaderboard layer decide visibility.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
 
-    # Check 1: More than 50 scores in the last hour
+    # Check 1: More than 80 scores in the last hour (likely automated)
     hour_count = (
         session.query(func.count(OctileScore.id))
         .filter(
@@ -1360,22 +1367,30 @@ def _check_anomalies(session: Session, browser_uuid: str) -> bool:
         )
         .scalar()
     )
-    if hour_count > 50:
-        return True
+    if hour_count > 80:
+        return (True, "FAST_SOLVES_WINDOW")
 
-    # Check 2: Average resolve_time < 20s over 10+ solves
-    stats = (
-        session.query(
-            func.count(OctileScore.id).label("cnt"),
-            func.avg(OctileScore.resolve_time).label("avg_time"),
-        )
+    # Check 2: Median submission interval < 8s over 30+ solves (likely script)
+    # Human players need time to read puzzle, think, and tap - realistic minimum ~15s/puzzle
+    recent_scores = (
+        session.query(OctileScore.created_at)
         .filter(OctileScore.browser_uuid == browser_uuid)
-        .first()
+        .order_by(OctileScore.created_at.desc())
+        .limit(30)
+        .all()
     )
-    if stats and stats.cnt >= 10 and stats.avg_time < 20:
-        return True
+    if len(recent_scores) >= 30:
+        timestamps = [s.created_at for s in recent_scores]
+        intervals = [
+            (timestamps[i] - timestamps[i + 1]).total_seconds()
+            for i in range(len(timestamps) - 1)
+        ]
+        intervals_sorted = sorted(intervals)
+        median_interval = intervals_sorted[len(intervals_sorted) // 2]
+        if median_interval < 8:
+            return (True, "MEDIAN_INTERVAL_LOW")
 
-    return False
+    return (False, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1474,14 +1489,7 @@ async def submit_score(request: Request):
 
     session = get_session()
     try:
-        # --- Rate limiting ---
-        if _check_rate_limit(session, body.browser_uuid):
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "too many submissions, try again in 30s"},
-            )
-
-        # --- Duplicate submission check ---
+        # --- Duplicate submission check (HTTP layer) ---
         one_min_ago = datetime.now(timezone.utc) - timedelta(seconds=60)
         dupe = (
             session.query(OctileScore)
@@ -1499,8 +1507,10 @@ async def submit_score(request: Request):
                 content={"detail": "duplicate submission", "id": dupe.id},
             )
 
-        # --- Anomaly detection (Layer 4) ---
-        flagged = 1 if _check_anomalies(session, body.browser_uuid) else 0
+        # --- Anomaly detection (Game Integrity layer) ---
+        # Flag data, don't reject. Always accept submission (200 OK).
+        is_flagged, flagged_reason = _check_anomalies(session, body.browser_uuid)
+        flagged = 1 if is_flagged else 0
 
         # Parse legacy timestamp if provided, default to server time
         timestamp = datetime.now(timezone.utc)
@@ -1529,6 +1539,7 @@ async def submit_score(request: Request):
             solution=body.solution,
             moves=body.moves,
             flagged=flagged,
+            flagged_reason=flagged_reason,
             coins=exp,  # legacy coins = exp for backward compat
             exp=exp,
             diamonds=diamonds,
