@@ -382,11 +382,15 @@ def test_reject_solution_for_wrong_puzzle(client):
 def test_duplicate_submission_rejected(client):
     """Duplicate submission (same UUID, puzzle, time) is rejected with 409."""
     # First submission should succeed
-    resp1 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle=1, resolve_time=30.0))
+    resp1 = client.post(
+        "/octile/score", json=_make_score(uuid="uuid-dup", puzzle=1, resolve_time=30.0)
+    )
     assert resp1.status_code == 201
 
     # Exact duplicate within 60s should be rejected
-    resp2 = client.post("/octile/score", json=_make_score(uuid="uuid-dup", puzzle=1, resolve_time=30.0))
+    resp2 = client.post(
+        "/octile/score", json=_make_score(uuid="uuid-dup", puzzle=1, resolve_time=30.0)
+    )
     assert resp2.status_code == 409
     assert "duplicate" in resp2.json()["detail"]
 
@@ -416,7 +420,8 @@ def test_flagging_high_volume(client):
                 puzzle_number=(i % 100) + 1,  # vary puzzle to avoid duplicate check
                 resolve_time=30.0 + (i % 10),  # vary time slightly
                 browser_uuid="uuid-flagtest",
-                created_at=datetime.now(timezone.utc) - timedelta(seconds=i * 40),  # 81*40s = 54min < 60min
+                created_at=datetime.now(timezone.utc)
+                - timedelta(seconds=i * 40),  # 81*40s = 54min < 60min
             )
             session.add(score)
         session.commit()
@@ -424,7 +429,9 @@ def test_flagging_high_volume(client):
         session.close()
 
     # Next submission should be flagged (82nd score in last hour)
-    resp = client.post("/octile/score", json=_make_score(uuid="uuid-flagtest", puzzle=2, solution=None))
+    resp = client.post(
+        "/octile/score", json=_make_score(uuid="uuid-flagtest", puzzle=2, solution=None)
+    )
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
     assert resp.json()["flagged_reason"] == "FAST_SOLVES_WINDOW"
@@ -530,7 +537,10 @@ def test_flagging_fast_median_interval(client):
 
     # Next submission should be flagged (31 existing scores, median interval 3s < 8s)
     resp = client.post(
-        "/octile/score", json=_make_score(puzzle=200, resolve_time=20.0, uuid="uuid-fast-interval", solution=None)
+        "/octile/score",
+        json=_make_score(
+            puzzle=200, resolve_time=20.0, uuid="uuid-fast-interval", solution=None
+        ),
     )
     assert resp.status_code == 201
     assert resp.json()["flagged"] == 1
@@ -2049,7 +2059,12 @@ def test_ordering_id_matches_release():
 
     from octile_api import _get_ordering_id
 
-    release_path = Path(__file__).resolve().parent.parent.parent / "octile" / "packs" / "release.json"
+    release_path = (
+        Path(__file__).resolve().parent.parent.parent
+        / "octile"
+        / "packs"
+        / "release.json"
+    )
     if not release_path.exists():
         pytest.skip("release.json not found (pack not generated)")
 
@@ -2080,3 +2095,564 @@ def test_calc_elo_change():
     # High player, B grade on hard → should lose ELO
     change = calc_elo_change(2000, 3, "B", 200)
     assert change < 0
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/version
+# ---------------------------------------------------------------------------
+
+
+def test_version_endpoint(client):
+    resp = client.get("/octile/version")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["apiVersion"] == 1
+    assert "data_version" in data
+    assert "data_hash" in data
+    assert data["puzzle_count"] == PUZZLE_COUNT
+    assert data["total_puzzles"] == TOTAL_PUZZLE_COUNT
+    assert data["encoding"] == "base92-3char"
+    assert "8-char-compact" in data["solution_formats"]
+    assert "128-char-legacy" in data["solution_formats"]
+    assert "ordering_id" in data
+    assert "ordering_version" in data
+
+
+def test_version_data_hash_stable(client):
+    """Hash should be consistent across calls."""
+    r1 = client.get("/octile/version").json()
+    r2 = client.get("/octile/version").json()
+    assert r1["data_hash"] == r2["data_hash"]
+
+
+# ---------------------------------------------------------------------------
+# POST /octile/sudoku/score
+# ---------------------------------------------------------------------------
+
+
+def _make_sudoku_score(
+    difficulty="EASY", resolve_time=60.0, moves=40, uuid="sudoku-uuid"
+):
+    return {
+        "difficulty": difficulty,
+        "resolve_time": resolve_time,
+        "moves": moves,
+        "browser_uuid": uuid,
+    }
+
+
+def test_sudoku_submit_success(client):
+    resp = client.post("/octile/sudoku/score", json=_make_sudoku_score())
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["difficulty"] == "EASY"
+    assert data["resolve_time"] == 60.0
+    assert data["moves"] == 40
+    assert data["flagged"] == 0
+
+
+def test_sudoku_submit_all_difficulties(client):
+    for diff in ("EASY", "MEDIUM", "HARD"):
+        resp = client.post(
+            "/octile/sudoku/score",
+            json=_make_sudoku_score(difficulty=diff, uuid=f"sudoku-{diff}"),
+        )
+        assert resp.status_code == 201
+        assert resp.json()["difficulty"] == diff
+
+
+def test_sudoku_reject_invalid_difficulty(client):
+    resp = client.post(
+        "/octile/sudoku/score",
+        json=_make_sudoku_score(difficulty="INSANE"),
+    )
+    assert resp.status_code == 400
+    assert "difficulty" in resp.json()["detail"]
+
+
+def test_sudoku_reject_too_fast(client):
+    resp = client.post(
+        "/octile/sudoku/score",
+        json=_make_sudoku_score(resolve_time=5.0),
+    )
+    assert resp.status_code == 400
+
+
+def test_sudoku_reject_too_slow(client):
+    resp = client.post(
+        "/octile/sudoku/score",
+        json=_make_sudoku_score(resolve_time=100000.0),
+    )
+    assert resp.status_code == 400
+
+
+def test_sudoku_reject_negative_moves(client):
+    resp = client.post(
+        "/octile/sudoku/score",
+        json=_make_sudoku_score(moves=-1),
+    )
+    assert resp.status_code == 400
+
+
+def test_sudoku_flags_fast_solve(client):
+    """Resolve time below EASY threshold (30s) should be flagged."""
+    resp = client.post(
+        "/octile/sudoku/score",
+        json=_make_sudoku_score(resolve_time=15.0, uuid="sudoku-fast"),
+    )
+    assert resp.status_code == 201
+    assert resp.json()["flagged"] == 1
+    assert "FAST_SOLVE" in resp.json()["flagged_reason"]
+
+
+def test_sudoku_flags_low_moves(client):
+    """Fewer moves than empty cells should be flagged."""
+    payload = _make_sudoku_score(uuid="sudoku-low-moves")
+    payload["clues"] = 30
+    payload["moves"] = 10  # 81-30=51 needed, only 10 given
+    resp = client.post("/octile/sudoku/score", json=payload)
+    assert resp.status_code == 201
+    assert resp.json()["flagged"] == 1
+    assert "LOW_MOVES" in resp.json()["flagged_reason"]
+
+
+def test_sudoku_idempotent_submission(client):
+    """Same submission_id should return existing score, not create duplicate."""
+    payload = _make_sudoku_score(uuid="sudoku-idempotent")
+    payload["submission_id"] = "unique-sub-123"
+    resp1 = client.post("/octile/sudoku/score", json=payload)
+    assert resp1.status_code == 201
+    id1 = resp1.json()["id"]
+
+    resp2 = client.post("/octile/sudoku/score", json=payload)
+    assert resp2.status_code == 200  # existing, not 201
+    assert resp2.json()["id"] == id1
+
+
+def test_sudoku_submit_with_extras(client):
+    """Optional fields (mistakes, hints_used, clues) are stored."""
+    payload = _make_sudoku_score(uuid="sudoku-extras")
+    payload["mistakes"] = 3
+    payload["hints_used"] = 2
+    payload["clues"] = 35
+    resp = client.post("/octile/sudoku/score", json=payload)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["mistakes"] == 3
+    assert data["hints_used"] == 2
+
+
+def test_sudoku_missing_fields(client):
+    resp = client.post("/octile/sudoku/score", json={"difficulty": "EASY"})
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/analytics
+# ---------------------------------------------------------------------------
+
+
+def test_analytics_empty(client):
+    resp = client.get("/octile/analytics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_players"] == 0
+    assert data["total_scores"] == 0
+    assert data["players_with_ua"] == 0
+
+
+def test_analytics_with_scores(client):
+    """Analytics should reflect submitted scores with user agent info."""
+    client.post(
+        "/octile/score",
+        json=_make_score(uuid="analytics-uuid"),
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0"},
+    )
+    resp = client.get("/octile/analytics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_players"] >= 1
+    assert data["total_scores"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# POST /octile/league/join
+# ---------------------------------------------------------------------------
+
+
+def test_league_join(client):
+    token = _get_auth_token(client, email="league-join@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.post("/octile/league/join", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["tier"] == 0
+    assert data["tier_name"] == "Bronze"
+    assert "team_id" in data
+
+
+def test_league_join_twice(client):
+    token = _get_auth_token(client, email="league-twice@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    client.post("/octile/league/join", headers=headers)
+    resp = client.post("/octile/league/join", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "already_joined"
+
+
+def test_league_join_requires_auth(client):
+    resp = client.post("/octile/league/join")
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/league/my-team
+# ---------------------------------------------------------------------------
+
+
+def test_league_my_team_not_joined(client):
+    token = _get_auth_token(client, email="no-team@example.com")
+    resp = client.get(
+        "/octile/league/my-team", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "not_joined"
+
+
+def test_league_my_team_after_join(client):
+    token = _get_auth_token(client, email="team-after@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    client.post("/octile/league/join", headers=headers)
+    resp = client.get("/octile/league/my-team", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["tier"] == 0
+    assert data["tier_name"] == "Bronze"
+    assert "members" in data
+    assert len(data["members"]) >= 1
+    assert data["my_position"] >= 1
+
+
+def test_league_my_team_requires_auth(client):
+    resp = client.get("/octile/league/my-team")
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/league/history
+# ---------------------------------------------------------------------------
+
+
+def test_league_history_empty(client):
+    token = _get_auth_token(client, email="hist-empty@example.com")
+    resp = client.get(
+        "/octile/league/history", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["events"] == []
+
+
+def test_league_history_after_join(client):
+    token = _get_auth_token(client, email="hist-join@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    client.post("/octile/league/join", headers=headers)
+    resp = client.get("/octile/league/history", headers=headers)
+    assert resp.status_code == 200
+    events = resp.json()["events"]
+    assert len(events) >= 1
+    assert events[0]["event"] == "join"
+
+
+def test_league_history_requires_auth(client):
+    resp = client.get("/octile/league/history")
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/daily-challenge/puzzle
+# ---------------------------------------------------------------------------
+
+
+def test_daily_challenge_puzzle(client):
+    resp = client.get("/octile/daily-challenge/puzzle?level=easy&date=2026-04-22")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["level"] == "easy"
+    assert data["date"] == "2026-04-22"
+    assert "puzzle_number" in data
+    assert "slot" in data
+    assert len(data["cells"]) == 6
+    assert all(0 <= c <= 63 for c in data["cells"])
+
+
+def test_daily_challenge_all_levels(client):
+    for level in ("easy", "medium", "hard", "hell"):
+        resp = client.get(
+            f"/octile/daily-challenge/puzzle?level={level}&date=2026-04-22"
+        )
+        assert resp.status_code == 200
+        assert resp.json()["level"] == level
+
+
+def test_daily_challenge_invalid_level(client):
+    resp = client.get("/octile/daily-challenge/puzzle?level=insane&date=2026-04-22")
+    assert resp.status_code == 400
+
+
+def test_daily_challenge_invalid_date(client):
+    resp = client.get("/octile/daily-challenge/puzzle?level=easy&date=not-a-date")
+    assert resp.status_code == 400
+
+
+def test_daily_challenge_deterministic(client):
+    """Same date+level should always return the same puzzle."""
+    r1 = client.get("/octile/daily-challenge/puzzle?level=easy&date=2026-04-22").json()
+    r2 = client.get("/octile/daily-challenge/puzzle?level=easy&date=2026-04-22").json()
+    assert r1["puzzle_number"] == r2["puzzle_number"]
+    assert r1["cells"] == r2["cells"]
+
+
+def test_daily_challenge_different_dates(client):
+    """Different dates should (almost certainly) yield different puzzles."""
+    r1 = client.get("/octile/daily-challenge/puzzle?level=easy&date=2026-04-22").json()
+    r2 = client.get("/octile/daily-challenge/puzzle?level=easy&date=2026-04-23").json()
+    # Extremely unlikely to collide
+    assert r1["puzzle_number"] != r2["puzzle_number"]
+
+
+# ---------------------------------------------------------------------------
+# GET /octile/daily-challenge/scoreboard
+# ---------------------------------------------------------------------------
+
+
+def test_daily_challenge_scoreboard_empty(client):
+    resp = client.get("/octile/daily-challenge/scoreboard?level=easy&date=2026-04-22")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["scores"] == []
+    assert data["date"] == "2026-04-22"
+    assert data["level"] == "easy"
+
+
+def test_daily_challenge_scoreboard_invalid_level(client):
+    resp = client.get("/octile/daily-challenge/scoreboard?level=insane&date=2026-04-22")
+    assert resp.status_code == 400
+
+
+def test_daily_challenge_scoreboard_invalid_date(client):
+    resp = client.get("/octile/daily-challenge/scoreboard?level=easy&date=bad")
+    assert resp.status_code == 400
+
+
+def test_daily_challenge_scoreboard_invalid_sort(client):
+    resp = client.get(
+        "/octile/daily-challenge/scoreboard?level=easy&date=2026-04-22&sort=invalid"
+    )
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# POST /octile/feedback
+# ---------------------------------------------------------------------------
+
+
+def test_feedback_no_email_sender(client, monkeypatch):
+    """Feedback returns 503 when email sender is not configured."""
+    monkeypatch.setattr(octile_api, "_octile_email_sender", None)
+    # Force re-evaluation by making _get_email_sender return None
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: None)
+    resp = client.post(
+        "/octile/feedback",
+        json={"type": "bug", "message": "Something is broken"},
+    )
+    assert resp.status_code == 503
+
+
+def test_feedback_message_too_short(client, monkeypatch):
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: None)
+    resp = client.post(
+        "/octile/feedback",
+        json={"type": "bug", "message": "ab"},
+    )
+    assert resp.status_code == 400
+    assert "too short" in resp.json()["detail"]
+
+
+def test_feedback_message_too_long(client, monkeypatch):
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: None)
+    resp = client.post(
+        "/octile/feedback",
+        json={"type": "bug", "message": "x" * 5001},
+    )
+    assert resp.status_code == 400
+    assert "too long" in resp.json()["detail"]
+
+
+def test_feedback_invalid_type(client, monkeypatch):
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: None)
+    resp = client.post(
+        "/octile/feedback",
+        json={"type": "spam", "message": "Hello there friend"},
+    )
+    assert resp.status_code == 400
+
+
+def test_feedback_success(client, monkeypatch):
+    """Feedback succeeds with mocked email sender."""
+
+    class FakeSender:
+        def send_email(self, **kwargs):
+            return {"status": "success"}
+
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: FakeSender())
+    resp = client.post(
+        "/octile/feedback",
+        json={
+            "type": "feature",
+            "message": "Please add dark mode support",
+            "device": "Pixel 8",
+            "platform": "android",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# DELETE /octile/auth/account
+# ---------------------------------------------------------------------------
+
+
+def test_auth_delete_account(client):
+    token = _get_auth_token(client, email="delete-me@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Verify account exists
+    resp = client.get("/octile/auth/me", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["email"] == "delete-me@example.com"
+
+    # Delete account
+    resp = client.delete("/octile/auth/account", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] is True
+
+    # Account should no longer exist — /auth/me still decodes the JWT
+    # but user data is gone from DB. Login should fail.
+    resp = client.post(
+        "/octile/auth/login",
+        json={"email": "delete-me@example.com", "password": "syncpass123"},
+    )
+    assert resp.status_code == 401
+
+
+def test_auth_delete_account_requires_auth(client):
+    resp = client.delete("/octile/auth/account")
+    assert resp.status_code == 401
+
+
+def test_auth_delete_cleans_up_league(client):
+    """Deleting account should also remove league membership."""
+    token = _get_auth_token(client, email="delete-league@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Join league first
+    client.post("/octile/league/join", headers=headers)
+    resp = client.get("/octile/league/my-team", headers=headers)
+    assert resp.json()["status"] == "ok"
+
+    # Delete account
+    resp = client.delete("/octile/auth/account", headers=headers)
+    assert resp.json()["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# POST /octile/auth/magic-link + GET status
+# ---------------------------------------------------------------------------
+
+
+def test_magic_link_request_no_email_sender(client, monkeypatch):
+    """Magic link returns 503 when email sender not configured."""
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: None)
+    resp = client.post(
+        "/octile/auth/magic-link",
+        json={"email": "magic@example.com"},
+    )
+    assert resp.status_code == 503
+
+
+def test_magic_link_invalid_email(client):
+    resp = client.post(
+        "/octile/auth/magic-link",
+        json={"email": "not-an-email"},
+    )
+    assert resp.status_code == 400
+
+
+def test_magic_link_request_success(client, monkeypatch):
+    """Magic link request succeeds with mocked email sender."""
+
+    class FakeSender:
+        def send_email(self, *args, **kwargs):
+            return {"status": "success"}
+
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: FakeSender())
+    resp = client.post(
+        "/octile/auth/magic-link",
+        json={"email": "magic-ok@example.com", "display_name": "Magic User"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "request_id" in data
+
+
+def test_magic_link_status_nonexistent(client):
+    """Polling a nonexistent request_id returns expired."""
+    resp = client.get("/octile/auth/magic-link/status?id=nonexistent")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "expired"
+
+
+def test_magic_link_status_pending(client, monkeypatch):
+    """After requesting a magic link, status should be pending."""
+
+    class FakeSender:
+        def send_email(self, *args, **kwargs):
+            return {"status": "success"}
+
+    monkeypatch.setattr(octile_api, "_get_email_sender", lambda: FakeSender())
+    resp = client.post(
+        "/octile/auth/magic-link",
+        json={"email": "pending-status@example.com"},
+    )
+    request_id = resp.json()["request_id"]
+
+    resp = client.get(f"/octile/auth/magic-link/status?id={request_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Score submission returns total_exp
+# ---------------------------------------------------------------------------
+
+
+def test_submit_score_returns_total_exp(client):
+    """Score submission response should include total_exp field."""
+    resp = client.post(
+        "/octile/score",
+        json={
+            "puzzle_number": 1,
+            "resolve_time": 30.0,
+            "browser_uuid": "total-exp-uuid",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert "total_exp" in data
+    assert data["total_exp"] >= data["exp"]
