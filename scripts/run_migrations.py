@@ -9,7 +9,6 @@ This script runs all SQL migrations in migrations/ directory in order.
 Safe to run multiple times (idempotent).
 """
 
-import os
 import sys
 import sqlite3
 from pathlib import Path
@@ -17,7 +16,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from octile_api import get_db_path, get_session
+from octile_api import get_db_path
 
 
 def run_migrations():
@@ -35,11 +34,10 @@ def run_migrations():
 
     # Acquire lock to prevent concurrent migrations
     import fcntl
-    import time
 
     lock_fd = None
     try:
-        lock_fd = open(lock_file, 'w')
+        lock_fd = open(lock_file, "w")
         # Try to acquire exclusive lock (non-blocking)
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         print("🔒 Migration lock acquired")
@@ -89,12 +87,16 @@ def run_migrations():
                 return False
 
         # Verify game_scores table exists
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='game_scores'")
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='game_scores'"
+        )
         if cursor.fetchone():
             print("✅ Verification: game_scores table exists")
 
             # Count indexes
-            cursor.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='game_scores'")
+            cursor.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='game_scores'"
+            )
             index_count = cursor.fetchone()[0]
             print(f"✅ Verification: {index_count} indexes created")
         else:
@@ -116,7 +118,7 @@ def run_migrations():
             # Remove lock file (optional, for cleanliness)
             try:
                 lock_file.unlink()
-            except:
+            except OSError:
                 pass
             print("🔓 Migration lock released")
 
