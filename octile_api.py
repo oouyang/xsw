@@ -68,6 +68,8 @@ Still accepted for backward compatibility.
 """
 
 import logging
+
+logger = logging.getLogger(__name__)
 import hashlib
 import struct
 import hmac
@@ -94,12 +96,14 @@ from sqlalchemy import (
     Text,
     DateTime,
     Index,
+    JSON,
     and_,
     func,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import text as sql_text
+from sqlalchemy.exc import IntegrityError
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
@@ -799,6 +803,68 @@ class OctileProgress(OctileBase):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class GameScore(OctileBase):
+    """Unified score table for all Octile Universe games."""
+
+    __tablename__ = "game_scores"
+
+    # Primary key
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Game identifier
+    game_id = Column(String, nullable=False, index=True)  # 'octile', 'sudoku', '2048', etc.
+
+    # Player identity (shared across games)
+    browser_uuid = Column(String, nullable=False, index=True)
+    user_id = Column(Integer, nullable=True, index=True)  # FK to OctileUser
+
+    # Common metrics (all games track these)
+    score_value = Column(Float, nullable=False)  # Primary metric (time/points/etc)
+    time_seconds = Column(Float, nullable=True)  # Duration (nullable for score-based games)
+
+    # Game-specific data (JSONB for flexibility)
+    game_data = Column(JSON, nullable=False)  # Stores game-specific fields
+
+    # Metadata
+    platform = Column(String, nullable=True)  # 'web', 'android', 'ios'
+    ota_version = Column(Integer, nullable=True)
+    submission_id = Column(String, unique=True, index=True)  # Client-generated UUID
+
+    # Anti-cheat & verification
+    solution = Column(String, nullable=True)  # Game-specific solution encoding
+    moves_data = Column(String, nullable=True)  # Game-specific move log
+    flagged = Column(Integer, default=0)
+    flagged_reason = Column(String, nullable=True)
+
+    # Rewards (server-authoritative)
+    exp = Column(Integer, default=0)
+    diamonds = Column(Integer, default=0)
+    coins = Column(Integer, default=0)  # legacy
+
+    # Client info (extracted by worker)
+    client_ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+
+    # Timestamps
+    client_timestamp = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    __table_args__ = (
+        Index("idx_game_scores_game_id", "game_id"),
+        Index("idx_game_scores_uuid", "browser_uuid"),
+        Index("idx_game_scores_game_uuid", "game_id", "browser_uuid"),
+        Index("idx_game_scores_game_score", "game_id", "score_value"),
+        Index("idx_game_scores_userid", "user_id"),
+        Index("idx_game_scores_created", "created_at"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<GameScore(game={self.game_id}, score={self.score_value}, "
+            f"uuid='{self.browser_uuid}')>"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Team League models
 # ---------------------------------------------------------------------------
@@ -1062,12 +1128,17 @@ _engine = None
 _SessionLocal = None
 
 
+def get_db_path() -> str:
+    """Get the path to the Octile database file."""
+    return os.getenv("OCTILE_DB_PATH", "data/octile.db")
+
+
 def init_db(db_url: str = None):
     """Initialize the Octile scoreboard database (separate SQLite file)."""
     global _engine, _SessionLocal
 
     if db_url is None:
-        db_path = os.getenv("OCTILE_DB_PATH", "data/octile.db")
+        db_path = get_db_path()
         db_url = f"sqlite:///{db_path}"
 
     _engine = create_engine(
@@ -1233,6 +1304,34 @@ class ScoreboardResponse(BaseModel):
     scores: list[ScoreResponse]
 
 
+# Unified score submission schemas
+class GameScoreSubmitRequest(BaseModel):
+    game_id: str  # 'octile', 'sudoku', '2048', etc.
+    browser_uuid: str
+    submission_id: str  # Client-generated UUID for idempotency
+    score_value: float  # Primary metric (time/points)
+    time_seconds: Optional[float] = None  # Duration (nullable for score-based games)
+    platform: Optional[str] = None  # 'web', 'android', 'ios'
+    ota_version: Optional[int] = None
+    game_data: dict  # Game-specific fields (flexible JSONB)
+    solution: Optional[str] = None  # Anti-cheat solution encoding
+    moves_data: Optional[str] = None  # Anti-cheat move log
+    client_timestamp: Optional[str] = None  # ISO format
+
+
+class GameScoreResponse(BaseModel):
+    id: int
+    game_id: str
+    score_value: float
+    time_seconds: Optional[float] = None
+    exp: int = 0
+    diamonds: int = 0
+    coins: int = 0  # legacy
+    flagged: int = 0
+    flagged_reason: Optional[str] = None
+    created_at: str
+
+
 class PuzzleStats(BaseModel):
     puzzle_number: int
     total_scores: int
@@ -1297,14 +1396,21 @@ _WORKER_HMAC_MAX_AGE = 300  # reject signatures older than 5 minutes
 
 
 def _verify_worker_signature(request: Request, body_bytes: bytes) -> bool:
-    """Verify HMAC signature from Cloudflare Worker. Returns True if valid."""
+    """Verify HMAC signature from Cloudflare Worker. Returns True if valid.
+
+    Security: When WORKER_HMAC_SECRET is configured, REJECTS unsigned requests.
+    This prevents direct backend bypass attacks.
+    """
     if not _WORKER_HMAC_SECRET:
-        return True  # not configured, skip verification
+        return True  # not configured, skip verification (dev/test mode)
 
     signature = request.headers.get("X-Worker-Signature")
     timestamp = request.headers.get("X-Worker-Timestamp")
     if not signature or not timestamp:
-        return True  # no signature headers = direct request, allow through
+        # SECURITY FIX: Reject unsigned requests when secret is configured
+        # Prevents attackers from bypassing worker by hitting backend directly
+        logger.warning("Unsigned request rejected (missing worker signature)")
+        return False
 
     # Reject stale signatures
     try:
@@ -1395,6 +1501,125 @@ def _check_anomalies(session: Session, browser_uuid: str) -> tuple[bool, Optiona
 
 
 # ---------------------------------------------------------------------------
+# Game-specific validators
+# ---------------------------------------------------------------------------
+class GameValidator:
+    """Factory for game-specific validation logic."""
+
+    @staticmethod
+    def validate_octile(game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate Octile puzzle submission."""
+        puzzle_num = game_data.get("puzzle_number")
+        if not puzzle_num or not (1 <= puzzle_num <= TOTAL_PUZZLE_COUNT):
+            return False, "Invalid puzzle_number"
+
+        if not (10 <= score_value <= 86400):
+            return False, "Invalid resolve_time (10s-24h range)"
+
+        data_version = game_data.get("data_version")
+        if data_version and data_version != OCTILE_DATA_VERSION:
+            return False, f"Outdated data_version (current: {OCTILE_DATA_VERSION})"
+
+        return True, ""
+
+    @staticmethod
+    def validate_sudoku(game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate Sudoku submission."""
+        difficulty = game_data.get("difficulty")
+        if difficulty not in ["easy", "medium", "hard", "expert"]:
+            return False, "Invalid difficulty level"
+
+        moves = game_data.get("moves")
+        if moves is not None and (not isinstance(moves, int) or moves < 0):
+            return False, "Invalid moves count"
+
+        mistakes = game_data.get("mistakes")
+        if mistakes is not None and (not isinstance(mistakes, int) or mistakes < 0):
+            return False, "Invalid mistakes count"
+
+        if not (5 <= score_value <= 7200):  # 5s to 2 hours
+            return False, "Invalid solve time"
+
+        return True, ""
+
+    @staticmethod
+    def validate_2048(game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate 2048 submission."""
+        max_tile = game_data.get("max_tile")
+        if not max_tile or max_tile < 2:
+            return False, "Invalid max_tile"
+
+        # Validate max_tile is power of 2
+        if (max_tile & (max_tile - 1)) != 0:
+            return False, "max_tile must be power of 2"
+
+        final_score = game_data.get("final_score")
+        if not final_score or final_score < 0:
+            return False, "Invalid final_score"
+
+        if score_value != final_score:
+            return False, "score_value must match final_score"
+
+        moves = game_data.get("moves")
+        if moves is not None and (not isinstance(moves, int) or moves < 0):
+            return False, "Invalid moves count"
+
+        return True, ""
+
+    @staticmethod
+    def validate(game_id: str, game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate game submission using game-specific rules."""
+        validators = {
+            "octile": GameValidator.validate_octile,
+            "sudoku": GameValidator.validate_sudoku,
+            "2048": GameValidator.validate_2048,
+        }
+
+        validator = validators.get(game_id)
+        if not validator:
+            return False, f"Unsupported game_id: {game_id}"
+
+        return validator(game_data, score_value)
+
+
+def calc_game_rewards(game_id: str, game_data: dict, score_value: float) -> dict:
+    """Calculate rewards (EXP, diamonds) for a game submission."""
+    if game_id == "octile":
+        puzzle_num = game_data.get("puzzle_number")
+        try:
+            difficulty = get_puzzle_difficulty(puzzle_num)
+            exp = calc_exp(difficulty, score_value)
+            return {"exp": exp, "diamonds": 1, "coins": exp}
+        except Exception:
+            return {"exp": 0, "diamonds": 0, "coins": 0}
+
+    elif game_id == "sudoku":
+        # Simple EXP formula: base 50 + time bonus
+        difficulty_mult = {"easy": 1.0, "medium": 1.5, "hard": 2.5, "expert": 4.0}
+        mult = difficulty_mult.get(game_data.get("difficulty"), 1.0)
+        base_exp = int(50 * mult)
+
+        # Bonus for fast solve (under 3 min = 180s)
+        if score_value < 180:
+            base_exp = int(base_exp * 1.5)
+
+        return {"exp": base_exp, "diamonds": 0, "coins": base_exp}
+
+    elif game_id == "2048":
+        # EXP based on max tile achieved
+        max_tile = game_data.get("max_tile", 0)
+        tile_to_exp = {
+            128: 10, 256: 25, 512: 50, 1024: 100,
+            2048: 250, 4096: 500, 8192: 1000, 16384: 2000
+        }
+        exp = tile_to_exp.get(max_tile, 5)
+        return {"exp": exp, "diamonds": 0, "coins": exp}
+
+    # Unknown game: no rewards
+    return {"exp": 0, "diamonds": 0, "coins": 0}
+
+
+# ---------------------------------------------------------------------------
 # Router and endpoints
 # ---------------------------------------------------------------------------
 octile_router = APIRouter(prefix="/octile")
@@ -1419,6 +1644,293 @@ def get_octile_version():
         "ordering_id": _get_ordering_id(),
         "ordering_version": ORDERING_VERSION,
     }
+
+
+@octile_router.post("/scores")
+async def submit_game_score(request: Request):
+    """Unified score submission endpoint for all Octile Universe games."""
+
+    # Extract correlation ID for request tracing
+    request_id = request.headers.get("X-Request-ID", "unknown")
+
+    # Payload size limit: 100KB (prevent oversized solution/moves_data)
+    MAX_BODY_SIZE = 100 * 1024  # 100KB
+    raw_body = await request.body()
+
+    if len(raw_body) > MAX_BODY_SIZE:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "detail": f"Payload too large (max {MAX_BODY_SIZE // 1024}KB)",
+                "error_code": "payload_too_large",
+            },
+        )
+
+    # CRITICAL SECURITY: Verify worker signature (prevents direct backend bypass)
+    if not _verify_worker_signature(request, raw_body):
+        logger.warning(
+            "Rejected unsigned/invalid request",
+            extra={"request_id": request_id, "path": "/scores"},
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Invalid or missing worker signature. Requests must go through worker.",
+                "error_code": "missing_worker_signature",
+            },
+        )
+
+    try:
+        body = GameScoreSubmitRequest.model_validate_json(raw_body)
+    except Exception as e:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": f"Invalid request body: {str(e)}",
+                "error_code": "invalid_request_body",
+            },
+        )
+
+    # Validate solution/moves_data length (additional safety layer)
+    if body.solution and len(body.solution) > 10000:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": "solution field too long (max 10000 chars)",
+                "error_code": "solution_too_long",
+            },
+        )
+
+    if body.moves_data and len(body.moves_data) > 50000:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": "moves_data field too long (max 50000 chars)",
+                "error_code": "moves_data_too_long",
+            },
+        )
+
+    # Security: NEVER trust client-provided browser_uuid
+    # Only accept server-issued UUID from X-Player-UUID header (set by worker)
+    player_uuid = request.headers.get("X-Player-UUID")
+    if not player_uuid:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": "Missing X-Player-UUID header. Requests must go through worker.",
+                "error_code": "missing_player_uuid",
+            },
+        )
+
+    # Override client body UUID with server-issued UUID (prevent impersonation)
+    body.browser_uuid = player_uuid
+
+    # Validate game-specific data
+    valid, error_msg = GameValidator.validate(body.game_id, body.game_data, body.score_value)
+    if not valid:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": error_msg,
+                "error_code": "invalid_game_data",
+            },
+        )
+
+    # Get authenticated user if JWT present
+    user_id = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        try:
+            payload = jwt.decode(token, OCTILE_JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("user_id")
+        except Exception:
+            pass
+
+    # Check for duplicate submission (idempotency via submission_id)
+    session = get_session()
+    try:
+        # Rate limiting: prevent abuse/exp farming
+        # Max 1 submission per (game_id + principal_id) every 3 seconds
+        # Principal = user_id (if authenticated) OR browser_uuid (if anonymous)
+        # This prevents cross-device abuse for authenticated users
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=3)
+
+        if user_id:
+            # Authenticated: rate limit by user_id (prevents cross-device abuse)
+            recent_count = (
+                session.query(func.count(GameScore.id))
+                .filter(
+                    GameScore.user_id == user_id,
+                    GameScore.game_id == body.game_id,
+                    GameScore.created_at > cutoff,
+                )
+                .scalar()
+            )
+        else:
+            # Anonymous: rate limit by browser_uuid (device-level)
+            recent_count = (
+                session.query(func.count(GameScore.id))
+                .filter(
+                    GameScore.browser_uuid == body.browser_uuid,
+                    GameScore.game_id == body.game_id,
+                    GameScore.created_at > cutoff,
+                )
+                .scalar()
+            )
+
+        if recent_count > 0:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Rate limit: max 1 submission per 3 seconds per game",
+                    "error_code": "rate_limited",
+                },
+            )
+
+        # Check for existing submission (idempotency)
+        existing = (
+            session.query(GameScore)
+            .filter(GameScore.submission_id == body.submission_id)
+            .first()
+        )
+        if existing:
+            # Return existing score (idempotent)
+            return JSONResponse(
+                status_code=200,
+                content=GameScoreResponse(
+                    id=existing.id,
+                    game_id=existing.game_id,
+                    score_value=existing.score_value,
+                    time_seconds=existing.time_seconds,
+                    exp=existing.exp or 0,
+                    diamonds=existing.diamonds or 0,
+                    coins=existing.coins or 0,
+                    flagged=existing.flagged or 0,
+                    flagged_reason=existing.flagged_reason,
+                    created_at=existing.created_at.isoformat() if existing.created_at else "",
+                ).model_dump(),
+            )
+
+        # Calculate rewards
+        rewards = calc_game_rewards(body.game_id, body.game_data, body.score_value)
+
+        # Extract client info
+        client_info = _extract_client_info(request)
+
+        # Parse client timestamp
+        client_ts = None
+        if body.client_timestamp:
+            try:
+                client_ts = _parse_timestamp(body.client_timestamp)
+            except Exception:
+                pass
+
+        # user_id already extracted earlier for rate limiting
+        # Create score record
+        score = GameScore(
+            game_id=body.game_id,
+            browser_uuid=body.browser_uuid,
+            user_id=user_id,
+            score_value=body.score_value,
+            time_seconds=body.time_seconds,
+            game_data=body.game_data,
+            platform=body.platform,
+            ota_version=body.ota_version,
+            submission_id=body.submission_id,
+            solution=body.solution,
+            moves_data=body.moves_data,
+            client_timestamp=client_ts,
+            client_ip=client_info["ip"],
+            user_agent=client_info["user_agent"],
+            exp=rewards["exp"],
+            diamonds=rewards["diamonds"],
+            coins=rewards["coins"],
+            flagged=0,
+        )
+
+        session.add(score)
+        try:
+            session.commit()
+            session.refresh(score)
+        except IntegrityError as e:
+            # Concurrent insert with same submission_id - return existing record
+            session.rollback()
+            logger.warning(
+                "Duplicate submission_id detected",
+                extra={
+                    "request_id": request_id,
+                    "submission_id": body.submission_id,
+                    "game_id": body.game_id,
+                    "browser_uuid": body.browser_uuid,
+                },
+            )
+            existing = (
+                session.query(GameScore)
+                .filter(GameScore.submission_id == body.submission_id)
+                .first()
+            )
+            if existing:
+                return JSONResponse(
+                    status_code=200,
+                    content=GameScoreResponse(
+                        id=existing.id,
+                        game_id=existing.game_id,
+                        score_value=existing.score_value,
+                        time_seconds=existing.time_seconds,
+                        exp=existing.exp or 0,
+                        diamonds=existing.diamonds or 0,
+                        coins=existing.coins or 0,
+                        flagged=existing.flagged or 0,
+                        flagged_reason=existing.flagged_reason,
+                        created_at=existing.created_at.isoformat() if existing.created_at else "",
+                    ).model_dump(),
+                )
+            # If still not found, re-raise
+            logger.error(
+                "IntegrityError but no existing record found",
+                extra={
+                    "request_id": request_id,
+                    "submission_id": body.submission_id,
+                },
+            )
+            raise
+
+        # Return response
+        return JSONResponse(
+            status_code=201,
+            content=GameScoreResponse(
+                id=score.id,
+                game_id=score.game_id,
+                score_value=score.score_value,
+                time_seconds=score.time_seconds,
+                exp=score.exp or 0,
+                diamonds=score.diamonds or 0,
+                coins=score.coins or 0,
+                flagged=score.flagged or 0,
+                flagged_reason=score.flagged_reason,
+                created_at=score.created_at.isoformat() if score.created_at else "",
+            ).model_dump(),
+        )
+
+    except Exception as e:
+        session.rollback()
+        logger.error(
+            "Score submission failed",
+            exc_info=True,
+            extra={
+                "request_id": request_id,
+                "game_id": body.game_id if 'body' in locals() else None,
+                "browser_uuid": body.browser_uuid if 'body' in locals() else None,
+                "error": str(e),
+            },
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+        )
+    finally:
+        session.close()
 
 
 @octile_router.post("/score")
