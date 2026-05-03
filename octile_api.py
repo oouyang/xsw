@@ -687,7 +687,9 @@ class OctileScore(OctileBase):
         String, nullable=True
     )  # base-92 encoded move log (2 chars per placement)
     flagged = Column(Integer, default=0)  # 0=normal, 1=flagged for review
-    flagged_reason = Column(String, nullable=True)  # e.g., "FAST_SOLVES_WINDOW", "MEDIAN_INTERVAL_LOW"
+    flagged_reason = Column(
+        String, nullable=True
+    )  # e.g., "FAST_SOLVES_WINDOW", "MEDIAN_INTERVAL_LOW"
 
     # Server-calculated rewards (authoritative, not client-provided)
     coins = Column(Integer, default=0)  # legacy, kept for backward compat
@@ -812,7 +814,9 @@ class GameScore(OctileBase):
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     # Game identifier
-    game_id = Column(String, nullable=False, index=True)  # 'octile', 'sudoku', '2048', etc.
+    game_id = Column(
+        String, nullable=False, index=True
+    )  # 'octile', 'sudoku', '2048', etc.
 
     # Player identity (shared across games)
     browser_uuid = Column(String, nullable=False, index=True)
@@ -820,7 +824,9 @@ class GameScore(OctileBase):
 
     # Common metrics (all games track these)
     score_value = Column(Float, nullable=False)  # Primary metric (time/points/etc)
-    time_seconds = Column(Float, nullable=True)  # Duration (nullable for score-based games)
+    time_seconds = Column(
+        Float, nullable=True
+    )  # Duration (nullable for score-based games)
 
     # Game-specific data (JSONB for flexibility)
     game_data = Column(JSON, nullable=False)  # Stores game-specific fields
@@ -847,7 +853,9 @@ class GameScore(OctileBase):
 
     # Timestamps
     client_timestamp = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
 
     __table_args__ = (
         Index("idx_game_scores_game_id", "game_id"),
@@ -1339,6 +1347,29 @@ class PuzzleStats(BaseModel):
     best_time: float
 
 
+class SudokuScoreRequest(BaseModel):
+    difficulty: str
+    resolve_time: float
+    moves: int
+    browser_uuid: str
+    submission_id: Optional[str] = None
+    mistakes: Optional[int] = None
+    hints_used: Optional[int] = None
+    clues: Optional[int] = None
+
+
+class SudokuScoreResponse(BaseModel):
+    id: int
+    difficulty: str
+    resolve_time: float
+    moves: int
+    flagged: int = 0
+    flagged_reason: Optional[str] = None
+    mistakes: Optional[int] = None
+    hints_used: Optional[int] = None
+    created_at: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1357,6 +1388,7 @@ def _score_to_response(score: OctileScore) -> ScoreResponse:
         created_at=created,
         timestamp_utc=created,  # legacy alias so old clients can sort by this
         flagged=score.flagged or 0,
+        flagged_reason=score.flagged_reason,
         coins=score.coins or 0,
         exp=score.exp or 0,
         diamonds=score.diamonds or 0,
@@ -1500,6 +1532,20 @@ def _check_anomalies(session: Session, browser_uuid: str) -> tuple[bool, Optiona
     return (False, None)
 
 
+_SUDOKU_FAST_THRESHOLDS = {"EASY": 30, "MEDIUM": 60, "HARD": 90}
+
+
+def _check_sudoku_anomalies(
+    difficulty: str, resolve_time: float, moves: int, clues: Optional[int]
+) -> tuple[int, Optional[str]]:
+    threshold = _SUDOKU_FAST_THRESHOLDS.get(difficulty, 30)
+    if resolve_time < threshold:
+        return 1, "FAST_SOLVE"
+    if clues is not None and moves < (81 - clues):
+        return 1, "LOW_MOVES"
+    return 0, None
+
+
 # ---------------------------------------------------------------------------
 # Game-specific validators
 # ---------------------------------------------------------------------------
@@ -1609,8 +1655,14 @@ def calc_game_rewards(game_id: str, game_data: dict, score_value: float) -> dict
         # EXP based on max tile achieved
         max_tile = game_data.get("max_tile", 0)
         tile_to_exp = {
-            128: 10, 256: 25, 512: 50, 1024: 100,
-            2048: 250, 4096: 500, 8192: 1000, 16384: 2000
+            128: 10,
+            256: 25,
+            512: 50,
+            1024: 100,
+            2048: 250,
+            4096: 500,
+            8192: 1000,
+            16384: 2000,
         }
         exp = tile_to_exp.get(max_tile, 5)
         return {"exp": exp, "diamonds": 0, "coins": exp}
@@ -1726,7 +1778,9 @@ async def submit_game_score(request: Request):
     body.browser_uuid = player_uuid
 
     # Validate game-specific data
-    valid, error_msg = GameValidator.validate(body.game_id, body.game_data, body.score_value)
+    valid, error_msg = GameValidator.validate(
+        body.game_id, body.game_data, body.score_value
+    )
     if not valid:
         return JSONResponse(
             status_code=400,
@@ -1808,7 +1862,9 @@ async def submit_game_score(request: Request):
                     coins=existing.coins or 0,
                     flagged=existing.flagged or 0,
                     flagged_reason=existing.flagged_reason,
-                    created_at=existing.created_at.isoformat() if existing.created_at else "",
+                    created_at=existing.created_at.isoformat()
+                    if existing.created_at
+                    else "",
                 ).model_dump(),
             )
 
@@ -1841,7 +1897,7 @@ async def submit_game_score(request: Request):
             solution=body.solution,
             moves_data=body.moves_data,
             client_timestamp=client_ts,
-            client_ip=client_info["ip"],
+            client_ip=client_info["client_ip"],
             user_agent=client_info["user_agent"],
             exp=rewards["exp"],
             diamonds=rewards["diamonds"],
@@ -1853,7 +1909,7 @@ async def submit_game_score(request: Request):
         try:
             session.commit()
             session.refresh(score)
-        except IntegrityError as e:
+        except IntegrityError:
             # Concurrent insert with same submission_id - return existing record
             session.rollback()
             logger.warning(
@@ -1883,7 +1939,9 @@ async def submit_game_score(request: Request):
                         coins=existing.coins or 0,
                         flagged=existing.flagged or 0,
                         flagged_reason=existing.flagged_reason,
-                        created_at=existing.created_at.isoformat() if existing.created_at else "",
+                        created_at=existing.created_at.isoformat()
+                        if existing.created_at
+                        else "",
                     ).model_dump(),
                 )
             # If still not found, re-raise
@@ -1920,8 +1978,8 @@ async def submit_game_score(request: Request):
             exc_info=True,
             extra={
                 "request_id": request_id,
-                "game_id": body.game_id if 'body' in locals() else None,
-                "browser_uuid": body.browser_uuid if 'body' in locals() else None,
+                "game_id": body.game_id if "body" in locals() else None,
+                "browser_uuid": body.browser_uuid if "body" in locals() else None,
                 "error": str(e),
             },
         )
@@ -2090,7 +2148,9 @@ async def submit_score(request: Request):
         # Calculate total_exp for leaderboard (sum of all non-flagged scores)
         total_exp_val = (
             session.query(func.sum(OctileScore.exp))
-            .filter(OctileScore.browser_uuid == body.browser_uuid, OctileScore.flagged == 0)
+            .filter(
+                OctileScore.browser_uuid == body.browser_uuid, OctileScore.flagged == 0
+            )
             .scalar()
         ) or 0
         resp.total_exp = total_exp_val
@@ -2098,6 +2158,119 @@ async def submit_score(request: Request):
         return JSONResponse(
             status_code=201,
             content=resp.model_dump(),
+        )
+    finally:
+        session.close()
+
+
+@octile_router.post("/sudoku/score")
+async def submit_sudoku_score(request: Request):
+    """Submit a Sudoku puzzle solve score."""
+    raw_body = await request.body()
+    try:
+        body = SudokuScoreRequest.model_validate_json(raw_body)
+    except Exception:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "invalid request body"},
+        )
+
+    if body.difficulty not in ("EASY", "MEDIUM", "HARD"):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"invalid difficulty: {body.difficulty}"},
+        )
+
+    if body.resolve_time < 10:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "resolve_time too fast (minimum 10s)"},
+        )
+
+    if body.resolve_time > 7200:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "resolve_time too large (maximum 2h)"},
+        )
+
+    if body.moves < 0:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "moves must be >= 0"},
+        )
+
+    client_info = _extract_client_info(request)
+    session = get_session()
+    try:
+        if body.submission_id:
+            existing = (
+                session.query(GameScore)
+                .filter(GameScore.submission_id == body.submission_id)
+                .first()
+            )
+            if existing:
+                gd = existing.game_data or {}
+                return JSONResponse(
+                    status_code=200,
+                    content=SudokuScoreResponse(
+                        id=existing.id,
+                        difficulty=gd.get("difficulty", ""),
+                        resolve_time=existing.score_value,
+                        moves=gd.get("moves", 0),
+                        flagged=existing.flagged or 0,
+                        flagged_reason=existing.flagged_reason,
+                        mistakes=gd.get("mistakes"),
+                        hints_used=gd.get("hints_used"),
+                        created_at=existing.created_at.isoformat()
+                        if existing.created_at
+                        else "",
+                    ).model_dump(),
+                )
+
+        flagged, flagged_reason = _check_sudoku_anomalies(
+            body.difficulty, body.resolve_time, body.moves, body.clues
+        )
+
+        game_data = {
+            "difficulty": body.difficulty,
+            "moves": body.moves,
+        }
+        if body.mistakes is not None:
+            game_data["mistakes"] = body.mistakes
+        if body.hints_used is not None:
+            game_data["hints_used"] = body.hints_used
+        if body.clues is not None:
+            game_data["clues"] = body.clues
+
+        score = GameScore(
+            game_id="sudoku",
+            browser_uuid=body.browser_uuid,
+            score_value=body.resolve_time,
+            time_seconds=body.resolve_time,
+            game_data=game_data,
+            submission_id=body.submission_id,
+            flagged=flagged,
+            flagged_reason=flagged_reason,
+            client_ip=client_info["client_ip"],
+            user_agent=client_info["user_agent"],
+        )
+        session.add(score)
+        session.commit()
+        session.refresh(score)
+
+        return JSONResponse(
+            status_code=201,
+            content=SudokuScoreResponse(
+                id=score.id,
+                difficulty=body.difficulty,
+                resolve_time=body.resolve_time,
+                moves=body.moves,
+                flagged=flagged,
+                flagged_reason=flagged_reason,
+                mistakes=body.mistakes,
+                hints_used=body.hints_used,
+                created_at=score.created_at.isoformat() if score.created_at else "",
+            ).model_dump(),
         )
     finally:
         session.close()
