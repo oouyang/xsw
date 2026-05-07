@@ -4206,23 +4206,63 @@ def _parse_ua(ua: str) -> dict:
     return {"platform": platform, "os": os_name, "browser": browser}
 
 
-@octile_router.get("/analytics")
-def get_analytics():
-    """Return user distribution by platform, OS, and browser."""
+@octile_router.get("/analytics/games")
+def get_available_games():
+    """Return list of distinct game_ids in database."""
     session = get_session()
     try:
-        # Get distinct (browser_uuid, user_agent) pairs — latest UA per user from game_scores
+        games = (
+            session.query(GameScore.game_id, func.count(GameScore.id).label("score_count"))
+            .filter(
+                GameScore.game_id.isnot(None),
+                GameScore.game_id != ""
+            )
+            .group_by(GameScore.game_id)
+            .order_by(GameScore.game_id.asc())
+            .all()
+        )
+        return {
+            "games": [{"game_id": g.game_id, "score_count": g.score_count} for g in games]
+        }
+    finally:
+        session.close()
+
+
+@octile_router.get("/analytics")
+def get_analytics(game_id: Optional[str] = None):
+    """Return user distribution by platform, OS, and browser.
+
+    Args:
+        game_id: Filter by game (e.g., 'octile', 'sudoku').
+                 If None or 'all', aggregate across all games.
+    """
+    session = get_session()
+    try:
+        # Normalize game_id (strip whitespace, lowercase 'ALL')
+        if game_id:
+            game_id = game_id.strip()
+            if game_id.upper() == 'ALL':
+                game_id = 'all'
+
+        # Build base query with optional game_id filter
+        base_filter = []
+        if game_id and game_id != 'all':
+            base_filter.append(GameScore.game_id == game_id)
+
+        # User agent subquery (limit to recent 90 days to prevent large result sets)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=90)
+        subq_filters = base_filter + [
+            GameScore.user_agent.isnot(None),
+            GameScore.user_agent != "",
+            GameScore.created_at >= cutoff_date
+        ]
         subq = (
             session.query(
                 GameScore.browser_uuid,
                 GameScore.user_agent,
                 func.max(GameScore.created_at).label("last_seen"),
             )
-            .filter(
-                GameScore.game_id == 'octile',
-                GameScore.user_agent.isnot(None),
-                GameScore.user_agent != ""
-            )
+            .filter(*subq_filters)
             .group_by(GameScore.browser_uuid)
             .all()
         )
@@ -4254,14 +4294,20 @@ def get_analytics():
             return sorted(d.items(), key=lambda x: -x[1])
 
         # Total unique players (including those without UA) from game_scores
-        total_players = session.query(
+        total_query = session.query(
             func.count(func.distinct(GameScore.browser_uuid))
-        ).filter(GameScore.game_id == 'octile').scalar()
-        total_scores = session.query(func.count(GameScore.id)).filter(
-            GameScore.game_id == 'octile'
-        ).scalar()
+        )
+        if base_filter:
+            total_query = total_query.filter(*base_filter)
+        total_players = total_query.scalar()
+
+        total_scores_query = session.query(func.count(GameScore.id))
+        if base_filter:
+            total_scores_query = total_scores_query.filter(*base_filter)
+        total_scores = total_scores_query.scalar()
 
         return {
+            "game_id": game_id or "all",
             "total_players": total_players,
             "total_scores": total_scores,
             "players_with_ua": len(subq),

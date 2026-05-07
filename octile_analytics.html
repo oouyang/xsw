@@ -48,6 +48,12 @@
     <h1>Octile Analytics</h1>
     <div class="subtitle" id="updated"></div>
   </div>
+  <div>
+    <label for="game-select" style="color:#94a3b8;font-size:0.82rem;margin-right:8px;">Game:</label>
+    <select id="game-select" onchange="load()" style="background:#334155;color:#e2e8f0;border:none;padding:6px 12px;border-radius:6px;font-size:0.82rem;cursor:pointer;">
+      <option value="all">All Games</option>
+    </select>
+  </div>
   <button class="refresh-btn" onclick="load()">Refresh</button>
 </div>
 
@@ -55,6 +61,17 @@
 
 <script>
 const COLORS = ['#38bdf8','#a78bfa','#fb923c','#4ade80','#f472b6','#facc15','#34d399','#f87171','#818cf8','#94a3b8'];
+let availableGames = [];
+let initializedFromUrl = false;
+
+// Calculate API base path (more robust)
+function getApiBase() {
+  // Remove /analytics/dashboard from path
+  const path = window.location.pathname;
+  const idx = path.indexOf('/analytics/dashboard');
+  // Fallback: strip last path segment (avoid /dashboard/analytics double-nesting)
+  return idx >= 0 ? path.substring(0, idx) : path.replace(/\/$/, '').replace(/\/[^/]*$/, '');
+}
 
 function pillClass(p) {
   if (p === 'Android') return 'pill-android';
@@ -105,14 +122,81 @@ function render(d) {
       </table>
     </div>`;
   document.getElementById('content').innerHTML = html;
-  document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  const gameLabel = d.game_id === 'all' ? 'All Games' : d.game_id;
+  document.getElementById('updated').textContent = `${gameLabel} • Updated ${new Date().toLocaleTimeString()}`;
 }
 
 async function load() {
   try {
     document.getElementById('content').innerHTML = '<div class="loading">Loading...</div>';
-    const base = window.location.pathname.replace('/analytics/dashboard', '');
-    const resp = await fetch(base + '/analytics');
+    const base = getApiBase();
+
+    // Load available games if not loaded
+    if (availableGames.length === 0) {
+      try {
+        const gamesResp = await fetch(base + '/analytics/games');
+        if (gamesResp.ok) {
+          const gamesData = await gamesResp.json();
+          availableGames = gamesData.games;
+
+          // Calculate total for "All Games" option
+          const totalScores = gamesData.games.reduce((sum, g) => sum + g.score_count, 0);
+
+          // Populate select dropdown (clear old options first)
+          const select = document.getElementById('game-select');
+          select.querySelectorAll('option:not([value="all"])').forEach(o => o.remove());
+
+          // Update "All Games" with total
+          const allOption = select.querySelector('option[value="all"]');
+          if (allOption && totalScores > 0) {
+            allOption.textContent = `All Games (${totalScores.toLocaleString()})`;
+          }
+
+          // Add individual games
+          gamesData.games.forEach(g => {
+            const opt = document.createElement('option');
+            opt.value = g.game_id;
+            opt.textContent = `${g.game_id} (${g.score_count.toLocaleString()})`;
+            select.appendChild(opt);
+          });
+        }
+      } catch (err) {
+        // Optional: Show N/A if games endpoint fails
+        // const allOption = document.getElementById('game-select').querySelector('option[value="all"]');
+        // if (allOption) allOption.textContent = 'All Games (N/A)';
+        console.warn('Failed to load games list:', err);
+      }
+    }
+
+    // Initialize from URL only once (independent of games load success)
+    // IMPORTANT: Only apply URL game_id on first load to avoid overwriting
+    // user selection during subsequent onchange-triggered reloads
+    if (!initializedFromUrl) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlGameId = urlParams.get('game_id');
+      const select = document.getElementById('game-select');
+      if (urlGameId && select.querySelector(`option[value="${urlGameId}"]`)) {
+        select.value = urlGameId;
+      }
+      initializedFromUrl = true;
+    }
+
+    // Get selected game_id
+    const select = document.getElementById('game-select');
+    const selectedGame = select.value;
+    const url = base + '/analytics' + (selectedGame !== 'all' ? `?game_id=${selectedGame}` : '');
+
+    // Update URL without reload (preserve other query params)
+    const params = new URLSearchParams(window.location.search);
+    if (selectedGame !== 'all') {
+      params.set('game_id', selectedGame);
+    } else {
+      params.delete('game_id');
+    }
+    const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    history.replaceState(null, '', newUrl);
+
+    const resp = await fetch(url);
     if (!resp.ok) throw new Error(resp.status);
     const data = await resp.json();
     render(data);
