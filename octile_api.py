@@ -2255,11 +2255,12 @@ async def submit_score(request: Request):
         if auth_user_id and not flagged and exp > 0:
             # League rate limit: skip league EXP if 3+ scores under 15s in last 5 min
             recent_fast = (
-                session.query(func.count(OctileScore.id))
+                session.query(func.count(GameScore.id))
                 .filter(
-                    OctileScore.user_id == auth_user_id,
-                    OctileScore.resolve_time < 15,
-                    OctileScore.created_at
+                    GameScore.game_id == 'octile',
+                    GameScore.user_id == auth_user_id,
+                    GameScore.time_seconds < 15,
+                    GameScore.created_at
                     >= datetime.now(timezone.utc) - timedelta(minutes=5),
                 )
                 .scalar()
@@ -2277,9 +2278,11 @@ async def submit_score(request: Request):
 
         # Calculate total_exp for leaderboard (sum of all non-flagged scores)
         total_exp_val = (
-            session.query(func.sum(OctileScore.exp))
+            session.query(func.sum(GameScore.exp))
             .filter(
-                OctileScore.browser_uuid == body.browser_uuid, OctileScore.flagged == 0
+                GameScore.game_id == 'octile',
+                GameScore.browser_uuid == body.browser_uuid,
+                GameScore.flagged == 0
             )
             .scalar()
         ) or 0
@@ -3505,7 +3508,12 @@ def auth_delete_account(user: dict = Depends(require_octile_auth)):
         session.query(LeagueDailyExp).filter(LeagueDailyExp.user_id == user_id).delete()
         session.query(LeagueHistory).filter(LeagueHistory.user_id == user_id).delete()
         session.query(LeagueMember).filter(LeagueMember.user_id == user_id).delete()
+        # Delete from both score tables (migration period)
         session.query(OctileScore).filter(OctileScore.user_id == user_id).delete()
+        session.query(GameScore).filter(
+            GameScore.game_id == 'octile',
+            GameScore.user_id == user_id
+        ).delete()
         session.query(OctileProgress).filter(OctileProgress.user_id == user_id).delete()
         session.query(OctileMagicLink).filter(
             OctileMagicLink.user_id == user_id
@@ -3969,10 +3977,14 @@ def sync_pull(user: dict = Depends(require_octile_auth)):
         # Compute authoritative EXP/diamonds from score records
         score_totals = (
             session.query(
-                func.sum(OctileScore.exp).label("total_exp"),
-                func.sum(OctileScore.diamonds).label("total_diamonds"),
+                func.sum(GameScore.exp).label("total_exp"),
+                func.sum(GameScore.diamonds).label("total_diamonds"),
             )
-            .filter(OctileScore.user_id == user_id, OctileScore.flagged == 0)
+            .filter(
+                GameScore.game_id == 'octile',
+                GameScore.user_id == user_id,
+                GameScore.flagged == 0
+            )
             .first()
         )
         score_exp = (score_totals.total_exp or 0) if score_totals else 0
@@ -4021,18 +4033,23 @@ def get_player_stats(uuid: str):
     """Get aggregated stats for a player from server-side score data."""
     session = get_session()
     try:
-        # Overall stats
+        # Define puzzle_number extraction
+        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
+
+        # Overall stats from game_scores
         overall = (
             session.query(
-                func.sum(OctileScore.exp).label("total_exp"),
-                func.sum(OctileScore.diamonds).label("total_diamonds"),
-                func.count(func.distinct(OctileScore.puzzle_number)).label(
-                    "puzzles_solved"
-                ),
-                func.avg(OctileScore.resolve_time).label("avg_time"),
-                func.count(OctileScore.id).label("total_solves"),
+                func.sum(GameScore.exp).label("total_exp"),
+                func.sum(GameScore.diamonds).label("total_diamonds"),
+                func.count(func.distinct(puzzle_expr)).label("puzzles_solved"),
+                func.avg(GameScore.time_seconds).label("avg_time"),
+                func.count(GameScore.id).label("total_solves"),
             )
-            .filter(OctileScore.browser_uuid == uuid, OctileScore.flagged == 0)
+            .filter(
+                GameScore.game_id == 'octile',
+                GameScore.browser_uuid == uuid,
+                GameScore.flagged == 0
+            )
             .first()
         )
 
@@ -4040,18 +4057,20 @@ def get_player_stats(uuid: str):
             return {"status": "empty"}
 
         # Per-difficulty breakdown
-        by_diff_rows = (
-            session.query(
-                OctileScore.puzzle_number,
-                OctileScore.resolve_time,
-                OctileScore.exp,
-            )
-            .filter(OctileScore.browser_uuid == uuid, OctileScore.flagged == 0)
-            .all()
-        )
+        by_diff_rows = session.query(GameScore).filter(
+            GameScore.game_id == 'octile',
+            GameScore.browser_uuid == uuid,
+            GameScore.flagged == 0
+        ).all()
 
         by_difficulty = {}
-        for pn, rt, xp in by_diff_rows:
+        for gs in by_diff_rows:
+            # Extract puzzle_number from game_data (defensive parsing)
+            game_data = json.loads(gs.game_data) if isinstance(gs.game_data, str) else (gs.game_data or {})
+            pn = game_data.get('puzzle_number', 0)
+            rt = gs.time_seconds or 0
+            xp = gs.exp or 0
+
             try:
                 d = get_puzzle_difficulty(pn)
             except Exception:
@@ -4071,7 +4090,11 @@ def get_player_stats(uuid: str):
 
         # Grade distribution (computed from scores)
         grades = {"S": 0, "A": 0, "B": 0}
-        for pn, rt, _ in by_diff_rows:
+        for gs in by_diff_rows:
+            game_data = json.loads(gs.game_data) if isinstance(gs.game_data, str) else (gs.game_data or {})
+            pn = game_data.get('puzzle_number', 0)
+            rt = gs.time_seconds or 0
+
             try:
                 d = get_puzzle_difficulty(pn)
             except Exception:
@@ -4188,15 +4211,19 @@ def get_analytics():
     """Return user distribution by platform, OS, and browser."""
     session = get_session()
     try:
-        # Get distinct (browser_uuid, user_agent) pairs — latest UA per user
+        # Get distinct (browser_uuid, user_agent) pairs — latest UA per user from game_scores
         subq = (
             session.query(
-                OctileScore.browser_uuid,
-                OctileScore.user_agent,
-                func.max(OctileScore.created_at).label("last_seen"),
+                GameScore.browser_uuid,
+                GameScore.user_agent,
+                func.max(GameScore.created_at).label("last_seen"),
             )
-            .filter(OctileScore.user_agent.isnot(None), OctileScore.user_agent != "")
-            .group_by(OctileScore.browser_uuid)
+            .filter(
+                GameScore.game_id == 'octile',
+                GameScore.user_agent.isnot(None),
+                GameScore.user_agent != ""
+            )
+            .group_by(GameScore.browser_uuid)
             .all()
         )
 
@@ -4226,11 +4253,13 @@ def get_analytics():
         def _sorted(d):
             return sorted(d.items(), key=lambda x: -x[1])
 
-        # Total unique players (including those without UA)
+        # Total unique players (including those without UA) from game_scores
         total_players = session.query(
-            func.count(func.distinct(OctileScore.browser_uuid))
+            func.count(func.distinct(GameScore.browser_uuid))
+        ).filter(GameScore.game_id == 'octile').scalar()
+        total_scores = session.query(func.count(GameScore.id)).filter(
+            GameScore.game_id == 'octile'
         ).scalar()
-        total_scores = session.query(func.count(OctileScore.id)).scalar()
 
         return {
             "total_players": total_players,
