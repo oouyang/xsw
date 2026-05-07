@@ -1562,9 +1562,17 @@ class GameValidator:
         if not (10 <= score_value <= 86400):
             return False, "Invalid resolve_time (10s-24h range)"
 
+        # data_version check: Log warning but ACCEPT older versions (backwards compatibility)
+        # Only reject if critical breaking change is introduced
         data_version = game_data.get("data_version")
         if data_version and data_version != OCTILE_DATA_VERSION:
-            return False, f"Outdated data_version (current: {OCTILE_DATA_VERSION})"
+            # Log version mismatch but allow submission
+            logger.info(
+                f"Score submitted with older data_version: {data_version} (current: {OCTILE_DATA_VERSION})",
+                extra={"puzzle_number": puzzle_num, "data_version": data_version}
+            )
+            # ACCEPT for now - only reject if breaking change required
+            # return False, f"Outdated data_version (current: {OCTILE_DATA_VERSION})"
 
         return True, ""
 
@@ -1745,6 +1753,10 @@ async def submit_game_score(request: Request):
 
     # Validate solution/moves_data length (additional safety layer)
     if body.solution and len(body.solution) > 10000:
+        logger.warning(
+            f"Score rejected: solution too long ({len(body.solution)} chars)",
+            extra={"request_id": request_id, "game_id": body.game_id}
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -1754,6 +1766,10 @@ async def submit_game_score(request: Request):
         )
 
     if body.moves_data and len(body.moves_data) > 50000:
+        logger.warning(
+            f"Score rejected: moves_data too long ({len(body.moves_data)} chars)",
+            extra={"request_id": request_id, "game_id": body.game_id}
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -1766,6 +1782,15 @@ async def submit_game_score(request: Request):
     # Only accept server-issued UUID from X-Player-UUID header (set by worker)
     player_uuid = request.headers.get("X-Player-UUID")
     if not player_uuid:
+        logger.warning(
+            "Score rejected: missing X-Player-UUID header",
+            extra={
+                "request_id": request_id,
+                "game_id": body.game_id,
+                "client_uuid": body.browser_uuid[:8] if body.browser_uuid else None,
+                "has_worker_sig": bool(request.headers.get("X-Worker-Signature")),
+            }
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -1782,6 +1807,19 @@ async def submit_game_score(request: Request):
         body.game_id, body.game_data, body.score_value
     )
     if not valid:
+        # Enhanced logging for debugging 400 errors
+        logger.warning(
+            f"Score validation failed: {error_msg}",
+            extra={
+                "request_id": request_id,
+                "game_id": body.game_id,
+                "puzzle_number": body.game_data.get("puzzle_number") if body.game_id == "octile" else None,
+                "data_version": body.game_data.get("data_version"),
+                "expected_version": OCTILE_DATA_VERSION,
+                "score_value": body.score_value,
+                "browser_uuid": body.browser_uuid[:8] if body.browser_uuid else None,
+            },
+        )
         return JSONResponse(
             status_code=400,
             content={
