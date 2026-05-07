@@ -99,6 +99,7 @@ from sqlalchemy import (
     JSON,
     and_,
     func,
+    cast,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -1396,6 +1397,48 @@ def _score_to_response(score: OctileScore) -> ScoreResponse:
     )
 
 
+def _game_score_to_score_response(gs: GameScore) -> ScoreResponse:
+    """Convert GameScore (unified table) to ScoreResponse for Octile."""
+    # Defensive JSON parsing (SQLite may store game_data as TEXT)
+    if isinstance(gs.game_data, str):
+        try:
+            game_data = json.loads(gs.game_data)
+        except (json.JSONDecodeError, TypeError):
+            game_data = {}
+    else:
+        game_data = gs.game_data or {}
+
+    puzzle_number = game_data.get("puzzle_number", 0)
+    time_seconds = gs.time_seconds or 0  # Defensive: treat NULL as 0
+
+    try:
+        difficulty = get_puzzle_difficulty(puzzle_number)
+        grade = calc_skill_grade(difficulty, time_seconds)
+    except Exception:
+        grade = "B"
+
+    created = gs.created_at.isoformat() if gs.created_at else ""
+
+    return ScoreResponse(
+        id=gs.id,
+        puzzle_number=puzzle_number,
+        resolve_time=time_seconds,
+        browser_uuid=gs.browser_uuid,
+        created_at=created,
+        timestamp_utc=gs.client_timestamp.isoformat() if gs.client_timestamp else created,
+        flagged=gs.flagged or 0,
+        flagged_reason=gs.flagged_reason,
+        coins=gs.coins or 0,
+        exp=gs.exp or 0,
+        diamonds=gs.diamonds or 0,
+        grade=grade,
+        display_name=None,
+        picture=None,
+        total_exp=None,
+        elo=None,
+    )
+
+
 def _parse_timestamp(ts_str: str) -> datetime:
     """Parse ISO 8601 timestamp, handling Z suffix."""
     if ts_str.endswith("Z"):
@@ -2328,44 +2371,78 @@ def get_scoreboard(
 
     session = get_session()
     try:
-        if best:
-            # Subquery: best (min) resolve_time per (browser_uuid, puzzle_number)
-            subq = session.query(
-                OctileScore.browser_uuid,
-                OctileScore.puzzle_number,
-                func.min(OctileScore.resolve_time).label("best_time"),
-            ).group_by(OctileScore.browser_uuid, OctileScore.puzzle_number)
-            if puzzle is not None:
-                subq = subq.filter(OctileScore.puzzle_number == puzzle)
-            if uuid is not None:
-                subq = subq.filter(OctileScore.browser_uuid == uuid)
-            subq = subq.subquery()
+        # Define puzzle_number extraction once (type-consistent casting)
+        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
 
-            query = session.query(OctileScore).join(
+        if best:
+            # Subquery: best time per (browser_uuid, puzzle_number) from game_scores
+            subq = session.query(
+                GameScore.browser_uuid.label("browser_uuid"),
+                puzzle_expr.label("puzzle_number"),
+                func.min(GameScore.time_seconds).label("best_time"),
+            ).filter(GameScore.game_id == 'octile')
+
+            if puzzle is not None:
+                subq = subq.filter(puzzle_expr == puzzle)
+            if uuid is not None:
+                subq = subq.filter(GameScore.browser_uuid == uuid)
+
+            subq = subq.group_by(GameScore.browser_uuid, puzzle_expr).subquery()
+
+            # Join back to get all records with best_time (may have ties)
+            query = session.query(GameScore).join(
                 subq,
                 and_(
-                    OctileScore.browser_uuid == subq.c.browser_uuid,
-                    OctileScore.puzzle_number == subq.c.puzzle_number,
-                    OctileScore.resolve_time == subq.c.best_time,
+                    GameScore.browser_uuid == subq.c.browser_uuid,
+                    puzzle_expr == subq.c.puzzle_number,
+                    GameScore.time_seconds == subq.c.best_time,
                 ),
-            )
+            ).filter(GameScore.game_id == 'octile')
+
+            # Total = subquery count (before tie-break pagination)
+            total = session.query(subq).count()
+
+            # Pull all candidates for deduplication
+            scores_raw = query.order_by(GameScore.time_seconds.asc(), GameScore.id.asc()).all()
+
+            # Python-side dedup: keep MIN(id) per (browser_uuid, puzzle_number)
+            best_map = {}
+            for s in scores_raw:
+                # Defensive JSON parsing (same as adapter)
+                if isinstance(s.game_data, str):
+                    try:
+                        game_data = json.loads(s.game_data)
+                    except Exception:
+                        game_data = {}
+                else:
+                    game_data = s.game_data or {}
+
+                pn = game_data.get("puzzle_number", 0)
+                key = (s.browser_uuid, pn)
+                if key not in best_map or s.id < best_map[key].id:
+                    best_map[key] = s
+
+            scores = list(best_map.values())
+            scores.sort(key=lambda x: (x.time_seconds or 0, x.id))  # Defensive NULL handling
+            scores = scores[offset:offset + limit]
         else:
-            query = session.query(OctileScore)
+            # Non-best query: all scores from game_scores
+            query = session.query(GameScore).filter(GameScore.game_id == 'octile')
             if puzzle is not None:
-                query = query.filter(OctileScore.puzzle_number == puzzle)
+                query = query.filter(puzzle_expr == puzzle)
             if uuid is not None:
-                query = query.filter(OctileScore.browser_uuid == uuid)
+                query = query.filter(GameScore.browser_uuid == uuid)
 
-        total = query.count()
-        scores = (
-            query.order_by(OctileScore.resolve_time.asc())
-            .offset(offset)
-            .limit(limit)
-            .all()
-        )
+            total = query.count()
+            scores = (
+                query.order_by(GameScore.time_seconds.asc(), GameScore.id.asc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
 
-        # Look up display names via user_id (multi-device) or browser_uuid (legacy)
-        resp_scores = [_score_to_response(s) for s in scores]
+        # Convert GameScore → ScoreResponse
+        resp_scores = [_game_score_to_score_response(s) for s in scores]
         # Collect user_ids and browser_uuids from scores
         score_user_ids = list({s.user_id for s in scores if s.user_id})
         score_uuids = list({s.browser_uuid for s in scores})
@@ -2394,6 +2471,13 @@ def get_scoreboard(
             if u:
                 s.display_name = u.display_name
                 s.picture = u.picture
+
+        # Temporary debug logging to verify migration
+        migrated_count = sum(1 for s in scores if hasattr(s, "legacy_score_id") and s.legacy_score_id)
+        logger.info(
+            "[DEBUG] scoreboard query from game_scores",
+            extra={"count": len(resp_scores), "migrated_rows": migrated_count, "uuid": uuid}
+        )
 
         return ScoreboardResponse(
             puzzle_number=puzzle,
@@ -2425,10 +2509,13 @@ def get_leaderboard(limit: int = 50):
             if u.browser_uuid:
                 uuid_to_user_id[u.browser_uuid] = u.id
 
-        # Also map from scores that have user_id set
+        # Also map from scores that have user_id set (now from GameScore)
         linked_scores = (
-            session.query(OctileScore.browser_uuid, OctileScore.user_id)
-            .filter(OctileScore.user_id.isnot(None))
+            session.query(GameScore.browser_uuid, GameScore.user_id)
+            .filter(
+                GameScore.game_id == 'octile',
+                GameScore.user_id.isnot(None)
+            )
             .distinct()
             .all()
         )
@@ -2436,19 +2523,58 @@ def get_leaderboard(limit: int = 50):
             if row.browser_uuid:
                 uuid_to_user_id[row.browser_uuid] = row.user_id
 
-        # Single query: all non-flagged scores grouped by browser_uuid
-        all_rows = (
+        # Define puzzle_expr once for consistent type casting
+        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
+
+        # Query basic stats (without puzzle count in SQL - avoid SQLite version issues)
+        stats_rows = (
             session.query(
-                OctileScore.browser_uuid,
-                func.sum(OctileScore.exp).label("total_exp"),
-                func.sum(OctileScore.diamonds).label("total_diamonds"),
-                func.count(func.distinct(OctileScore.puzzle_number)).label("puzzles"),
-                func.avg(OctileScore.resolve_time).label("avg_time"),
+                GameScore.browser_uuid,
+                func.sum(GameScore.exp).label("total_exp"),
+                func.sum(GameScore.diamonds).label("total_diamonds"),
+                func.sum(GameScore.time_seconds).label("time_sum"),
+                func.count(GameScore.id).label("score_count"),
             )
-            .filter(OctileScore.flagged == 0)
-            .group_by(OctileScore.browser_uuid)
+            .filter(
+                GameScore.game_id == 'octile',
+                GameScore.flagged == 0
+            )
+            .group_by(GameScore.browser_uuid)
             .all()
         )
+
+        # Batch query for distinct puzzles (all UUIDs in one query)
+        all_uuids = [r.browser_uuid for r in stats_rows]
+        puzzle_data = (
+            session.query(
+                GameScore.browser_uuid,
+                puzzle_expr.label("puzzle_number"),
+            )
+            .filter(
+                GameScore.game_id == 'octile',
+                GameScore.browser_uuid.in_(all_uuids),
+                GameScore.flagged == 0
+            )
+            .distinct()
+            .all()
+        )
+
+        # Count distinct puzzles per UUID in Python (SQLite-safe)
+        from collections import defaultdict
+        puzzle_counts = defaultdict(set)
+        for row in puzzle_data:
+            puzzle_counts[row.browser_uuid].add(row.puzzle_number)
+
+        # Build all_rows with Python-computed puzzle count
+        all_rows = []
+        for r in stats_rows:
+            all_rows.append(type('Row', (), {
+                'browser_uuid': r.browser_uuid,
+                'total_exp': r.total_exp,
+                'total_diamonds': r.total_diamonds,
+                'puzzles': len(puzzle_counts.get(r.browser_uuid, set())),
+                'avg_time': r.time_sum / r.score_count if r.score_count > 0 else 0,
+            })())
 
         # Merge rows: authenticated users may have multiple browser_uuids
         user_agg: dict = {}  # user_id -> aggregated stats
