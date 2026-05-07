@@ -1207,10 +1207,18 @@ def _migrate_db():
     global _engine
     engine = _engine
 
+    if engine is None:
+        print("[Octile Migration] ERROR: Engine is None, cannot run migrations")
+        return
+
     # Get existing columns in game_scores table
-    with engine.connect() as conn:
-        result = conn.execute(sql_text("PRAGMA table_info(game_scores)"))
-        existing_columns = {row[1] for row in result}  # row[1] is column name
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(sql_text("PRAGMA table_info(game_scores)"))
+            existing_columns = {row[1] for row in result}  # row[1] is column name
+    except Exception as e:
+        print(f"[Octile Migration] ERROR: Failed to read table schema: {e}")
+        return
 
     # Define column migrations: (column_name, DDL_statement)
     # These need PRAGMA check before execution
@@ -1239,16 +1247,20 @@ def _migrate_db():
 
     # Run migrations with one transaction per statement (avoid global rollback)
     if migrations_to_run:
+        print(f"[Octile Migration] Running {len(migrations_to_run)} migrations...")
         for stmt in migrations_to_run:
             try:
                 with engine.begin() as conn:
                     conn.execute(sql_text(stmt))
+                    print(f"[Octile Migration] ✓ {stmt[:60]}...")
                     # Auto-commit on exit (per statement)
             except Exception as e:
-                print(f"Migration warning: {stmt[:50]}... failed: {e}")
+                print(f"[Octile Migration] ✗ {stmt[:60]}... failed: {e}")
                 # Continue with other migrations even if one fails
                 # (duplicate column errors are expected on re-run, but other errors
                 # may indicate real problems - check logs carefully)
+    else:
+        print("[Octile Migration] No migrations needed, all columns exist")
 
 
 def _backfill_rewards():
