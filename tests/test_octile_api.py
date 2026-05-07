@@ -11,6 +11,7 @@ os.environ["OCTILE_DB_PATH"] = ":memory:"
 import octile_api
 from octile_api import (
     OctileScore,
+    GameScore,
     P92,
     P92_MAP,
     _PIECE_ENC,
@@ -745,6 +746,7 @@ def test_scoreboard_best_mode(client):
     try:
         from datetime import datetime, timezone, timedelta
 
+        # Write to legacy table
         score = OctileScore(
             puzzle_number=1,
             resolve_time=10.0,
@@ -752,6 +754,21 @@ def test_scoreboard_best_mode(client):
             created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
         )
         session.add(score)
+        session.commit()
+        session.refresh(score)
+
+        # ALSO write to game_scores (migration)
+        game_score = GameScore(
+            game_id="octile",
+            browser_uuid="u1",
+            submission_id=str(uuid.uuid4()),
+            time_seconds=10.0,
+            score_value=10.0,
+            game_data={"puzzle_number": 1, "resolve_time": 10.0},
+            legacy_score_id=score.id,
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+        session.add(game_score)
         session.commit()
     finally:
         session.close()
@@ -771,6 +788,7 @@ def test_scoreboard_all_mode(client):
     try:
         from datetime import datetime, timezone, timedelta
 
+        # Write to legacy table
         score = OctileScore(
             puzzle_number=1,
             resolve_time=10.0,
@@ -778,6 +796,21 @@ def test_scoreboard_all_mode(client):
             created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
         )
         session.add(score)
+        session.commit()
+        session.refresh(score)
+
+        # ALSO write to game_scores (migration)
+        game_score = GameScore(
+            game_id="octile",
+            browser_uuid="u1",
+            submission_id=str(uuid.uuid4()),
+            time_seconds=10.0,
+            score_value=10.0,
+            game_data={"puzzle_number": 1, "resolve_time": 10.0},
+            legacy_score_id=score.id,
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+        session.add(game_score)
         session.commit()
     finally:
         session.close()

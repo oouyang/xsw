@@ -78,6 +78,7 @@ import os
 import re as _re
 import secrets
 import time as _time
+import uuid
 from collections import defaultdict
 from functools import lru_cache
 from datetime import datetime, timezone, timedelta
@@ -216,22 +217,27 @@ def calc_elo_change(
 def calc_elo_for_player(session, browser_uuid: str) -> float:
     """Recalculate ELO from scratch by replaying all scores in order."""
     scores = (
-        session.query(
-            OctileScore.puzzle_number, OctileScore.resolve_time, OctileScore.flagged
+        session.query(GameScore)
+        .filter(
+            GameScore.game_id == 'octile',
+            GameScore.browser_uuid == browser_uuid,
+            GameScore.flagged == 0
         )
-        .filter(OctileScore.browser_uuid == browser_uuid)
-        .order_by(OctileScore.created_at.asc())
+        .order_by(GameScore.created_at.asc())
         .all()
     )
+
     elo = float(ELO_INITIAL)
-    for i, (puzzle_num, resolve_time, flagged) in enumerate(scores):
-        if flagged:
-            continue
+    for i, gs in enumerate(scores):
+        # Extract puzzle_number from game_data
+        game_data = json.loads(gs.game_data) if isinstance(gs.game_data, str) else (gs.game_data or {})
+        puzzle_num = game_data.get('puzzle_number', 0)
+
         try:
             difficulty = get_puzzle_difficulty(puzzle_num)
         except Exception:
             continue
-        grade = calc_skill_grade(difficulty, resolve_time)
+        grade = calc_skill_grade(difficulty, gs.time_seconds or 0)
         elo += calc_elo_change(elo, difficulty, grade, i)
     return round(elo, 1)
 
@@ -858,6 +864,9 @@ class GameScore(OctileBase):
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
 
+    # Migration tracking (for data migrated from legacy tables)
+    legacy_score_id = Column(Integer, nullable=True, index=True)
+
     __table_args__ = (
         Index("idx_game_scores_game_id", "game_id"),
         Index("idx_game_scores_uuid", "browser_uuid"),
@@ -1074,24 +1083,36 @@ def _backfill_scores_for_user(session, user_id: int, browser_uuid: str):
     """
     if not browser_uuid:
         return
-    # Check if any other user already has scores on this browser_uuid
+    # Check if any other user already has scores on this browser_uuid (check game_scores)
     other_user = (
-        session.query(OctileScore.user_id)
+        session.query(GameScore.user_id)
         .filter(
-            OctileScore.browser_uuid == browser_uuid,
-            OctileScore.user_id.isnot(None),
-            OctileScore.user_id != user_id,
+            GameScore.game_id == 'octile',
+            GameScore.browser_uuid == browser_uuid,
+            GameScore.user_id.isnot(None),
+            GameScore.user_id != user_id,
         )
         .first()
     )
     if other_user:
         # Another user claimed this device — don't steal their scores
         return
-    session.query(OctileScore).filter(
+
+    # Update game_scores (unified table)
+    updated_game = session.query(GameScore).filter(
+        GameScore.game_id == 'octile',
+        GameScore.browser_uuid == browser_uuid,
+        GameScore.user_id.is_(None),
+    ).update({"user_id": user_id})
+
+    # Also update legacy table (for consistency during migration)
+    updated_legacy = session.query(OctileScore).filter(
         OctileScore.browser_uuid == browser_uuid,
         OctileScore.user_id.is_(None),
     ).update({"user_id": user_id})
+
     session.commit()
+    logger.info(f"[Backfill] Linked {updated_game} game_scores + {updated_legacy} octile_scores to user {user_id}")
 
 
 # OTP rate limiting: track attempts per email
@@ -2183,6 +2204,7 @@ async def submit_score(request: Request):
         # Link to authenticated user if JWT present
         auth_user_id = _get_optional_user_id(request)
 
+        # Write to legacy table (for rollback safety)
         score = OctileScore(
             puzzle_number=body.puzzle_number,
             resolve_time=body.resolve_time,
@@ -2201,6 +2223,33 @@ async def submit_score(request: Request):
         session.add(score)
         session.commit()
         session.refresh(score)
+
+        # ALSO write to unified game_scores table (migration)
+        game_score = GameScore(
+            game_id="octile",
+            browser_uuid=body.browser_uuid,
+            submission_id=str(uuid.uuid4()),
+            time_seconds=body.resolve_time,
+            score_value=body.resolve_time,
+            game_data={
+                "puzzle_number": body.puzzle_number,
+                "solution": body.solution,
+                "moves": body.moves,
+                "resolve_time": body.resolve_time,
+            },
+            solution=body.solution,
+            exp=exp,
+            coins=exp,
+            diamonds=diamonds,
+            flagged=flagged,
+            flagged_reason=flagged_reason,
+            client_timestamp=timestamp,
+            user_id=auth_user_id,
+            legacy_score_id=score.id,
+            **client_info,
+        )
+        session.add(game_score)
+        session.commit()
 
         # Atomic league EXP update (with speed-hack protection)
         if auth_user_id and not flagged and exp > 0:
@@ -2653,17 +2702,19 @@ def get_puzzles():
     """List puzzles that have scores, with stats."""
     session = get_session()
     try:
+        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
         rows = (
             session.query(
-                OctileScore.puzzle_number,
-                func.count(OctileScore.id).label("total_scores"),
-                func.count(func.distinct(OctileScore.browser_uuid)).label(
+                puzzle_expr.label("puzzle_number"),
+                func.count(GameScore.id).label("total_scores"),
+                func.count(func.distinct(GameScore.browser_uuid)).label(
                     "unique_players"
                 ),
-                func.min(OctileScore.resolve_time).label("best_time"),
+                func.min(GameScore.time_seconds).label("best_time"),
             )
-            .group_by(OctileScore.puzzle_number)
-            .order_by(OctileScore.puzzle_number.asc())
+            .filter(GameScore.game_id == 'octile')
+            .group_by(puzzle_expr)
+            .order_by(puzzle_expr.asc())
             .all()
         )
         return [
