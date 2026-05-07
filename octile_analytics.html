@@ -106,16 +106,20 @@ function render(d) {
       <div class="chart-card"><h2>Platform</h2>${barChart(d.platform, total)}</div>
       <div class="chart-card"><h2>Operating System</h2>${barChart(d.os, total)}</div>
       <div class="chart-card"><h2>Browser</h2>${barChart(d.browser, total)}</div>
+      <div class="chart-card"><h2>Country</h2>${barChart(d.country || [], total)}</div>
+      <div class="chart-card"><h2>City (Top 10)</h2>${barChart((d.city || []).slice(0, 10), total)}</div>
     </div>
     <div class="table-card">
       <h2>Players (${d.players.length})</h2>
       <table>
-        <tr><th>UUID</th><th>Platform</th><th>OS</th><th>Browser</th><th>Last Seen</th><th>User Agent</th></tr>
+        <tr><th>UUID</th><th>Platform</th><th>OS</th><th>Browser</th><th>Country</th><th>City</th><th>Last Seen</th><th>User Agent</th></tr>
         ${d.players.map(p => `<tr>
           <td><code>${p.uuid}</code></td>
           <td><span class="pill ${pillClass(p.platform)}">${p.platform}</span></td>
           <td>${p.os}</td>
           <td>${p.browser}</td>
+          <td>${p.country || '-'}</td>
+          <td>${p.city || '-'}</td>
           <td>${p.last_seen ? new Date(p.last_seen).toLocaleDateString() : ''}</td>
           <td class="ua" title="${p.ua}">${p.ua}</td>
         </tr>`).join('')}

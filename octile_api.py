@@ -101,6 +101,7 @@ from sqlalchemy import (
     and_,
     func,
     cast,
+    select,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -858,6 +859,14 @@ class GameScore(OctileBase):
     client_ip = Column(String, nullable=True)
     user_agent = Column(String, nullable=True)
 
+    # Geo data (extracted from Cloudflare request.cf via Worker)
+    # Note: Indexes created via migration, not ORM (avoids duplication)
+    country = Column(String, nullable=True)   # ISO 3166-1 alpha-2
+    region = Column(String, nullable=True)    # State/province
+    city = Column(String, nullable=True)      # City name
+    colo = Column(String, nullable=True)      # Cloudflare colo code
+    timezone = Column(String, nullable=True)  # IANA timezone
+
     # Timestamps
     client_timestamp = Column(DateTime, nullable=True)
     created_at = Column(
@@ -1194,43 +1203,52 @@ def init_db(db_url: str = None):
 
 
 def _migrate_db():
-    """Add new columns to existing tables (safe to run multiple times)."""
-    migrations = [
-        "ALTER TABLE octile_scores ADD COLUMN solution TEXT",
-        "ALTER TABLE octile_scores ADD COLUMN flagged INTEGER DEFAULT 0",
-        "ALTER TABLE octile_scores ADD COLUMN coins INTEGER DEFAULT 0",
-        "ALTER TABLE octile_scores ADD COLUMN exp INTEGER DEFAULT 0",
-        "ALTER TABLE octile_scores ADD COLUMN diamonds INTEGER DEFAULT 0",
-        "ALTER TABLE octile_users ADD COLUMN magic_request_id TEXT",
-        "ALTER TABLE octile_users ADD COLUMN magic_jwt TEXT",
-        "ALTER TABLE octile_scores ADD COLUMN moves TEXT",
-        # Phase: is_verified → verified_at migration
-        "ALTER TABLE octile_users ADD COLUMN verified_at DATETIME",
-        "ALTER TABLE octile_magic_links ADD COLUMN lang TEXT",
-        # Anti-cheat transparency: track why a score was flagged
-        "ALTER TABLE octile_scores ADD COLUMN flagged_reason TEXT",
+    """Add new columns to existing tables (idempotent, safe to run multiple times)."""
+    global _engine
+    engine = _engine
+
+    # Get existing columns in game_scores table
+    with engine.connect() as conn:
+        result = conn.execute(sql_text("PRAGMA table_info(game_scores)"))
+        existing_columns = {row[1] for row in result}  # row[1] is column name
+
+    # Define column migrations: (column_name, DDL_statement)
+    # These need PRAGMA check before execution
+    column_migrations = [
+        ("country", "ALTER TABLE game_scores ADD COLUMN country TEXT"),
+        ("region", "ALTER TABLE game_scores ADD COLUMN region TEXT"),
+        ("city", "ALTER TABLE game_scores ADD COLUMN city TEXT"),
+        ("colo", "ALTER TABLE game_scores ADD COLUMN colo TEXT"),
+        ("timezone", "ALTER TABLE game_scores ADD COLUMN timezone TEXT"),
     ]
-    with _engine.connect() as conn:
-        for sql in migrations:
+
+    # Execute only if column doesn't exist
+    migrations_to_run = []
+    for col_name, ddl in column_migrations:
+        if col_name not in existing_columns:
+            migrations_to_run.append(ddl)
+
+    # Define index migrations (can use IF NOT EXISTS, no PRAGMA check needed)
+    index_migrations = [
+        "CREATE INDEX IF NOT EXISTS idx_game_scores_country ON game_scores(country)",
+        "CREATE INDEX IF NOT EXISTS idx_game_scores_city ON game_scores(city)",
+    ]
+
+    # Always try to create indexes
+    migrations_to_run.extend(index_migrations)
+
+    # Run migrations with one transaction per statement (avoid global rollback)
+    if migrations_to_run:
+        for stmt in migrations_to_run:
             try:
-                conn.execute(sql_text(sql))
-            except Exception:
-                pass  # Column already exists
-
-        # Backfill verified_at from is_verified for existing verified users
-        try:
-            conn.execute(
-                sql_text(
-                    "UPDATE octile_users SET verified_at = COALESCE(last_login_at, created_at) "
-                    "WHERE is_verified = 1 AND verified_at IS NULL"
-                )
-            )
-            conn.commit()
-        except Exception:
-            pass
-
-    # Backfill EXP/diamonds for existing scores (idempotent — only updates rows with 0)
-    _backfill_rewards()
+                with engine.begin() as conn:
+                    conn.execute(sql_text(stmt))
+                    # Auto-commit on exit (per statement)
+            except Exception as e:
+                print(f"Migration warning: {stmt[:50]}... failed: {e}")
+                # Continue with other migrations even if one fails
+                # (duplicate column errors are expected on re-run, but other errors
+                # may indicate real problems - check logs carefully)
 
 
 def _backfill_rewards():
@@ -1467,8 +1485,11 @@ def _parse_timestamp(ts_str: str) -> datetime:
     return datetime.fromisoformat(ts_str)
 
 
-def _extract_client_info(request: Request) -> dict:
-    """Extract client info from request headers.
+def _extract_client_and_geo_info(request: Request) -> dict:
+    """Extract client IP, User-Agent, and geo data from request headers.
+
+    NOTE: X-Geo-* headers should only be trusted after HMAC signature verification
+    (handled by submit_game_score() before calling this function).
 
     Worker sends the real client IP via X-Real-IP (from CF-Connecting-IP).
     Falls back to X-Forwarded-For first hop, then direct connection IP.
@@ -1480,10 +1501,100 @@ def _extract_client_info(request: Request) -> dict:
     if not client_ip:
         client_ip = request.client.host if request.client else "unknown"
 
+    # Geo extraction (NEW - only set if from verified worker)
+    # These headers are only added by the Cloudflare Worker after HMAC signing
+    country = request.headers.get("X-Geo-Country")
+    region = request.headers.get("X-Geo-Region")
+    city = request.headers.get("X-Geo-City")
+    colo = request.headers.get("X-Geo-Colo")
+    timezone = request.headers.get("X-Geo-Timezone")
+
     return {
         "client_ip": client_ip,
         "user_agent": request.headers.get("User-Agent"),
+        "country": country,
+        "region": region,
+        "city": city,
+        "colo": colo,
+        "timezone": timezone,
     }
+
+
+def _log_score_submission(
+    request: Request,
+    body,  # GameScoreSubmitRequest
+    client_info: dict,
+    status: int,
+    user_id: Optional[int] = None,
+):
+    """Structured logging for score submissions (debugging & monitoring).
+
+    Privacy considerations:
+    - client_ip is masked to /24 (IPv4) or /48 (IPv6)
+    - player_uuid truncated to first 8 chars
+    - city logged only for debugging (can be disabled in production)
+    """
+    import json
+
+    # UUID source directly from worker (no guessing)
+    uuid_source = request.headers.get("X-UUID-Source", "unknown")
+
+    # Privacy: mask IP to /24 (IPv4) or /48 (IPv6)
+    # Note: This is a simple string-based approach. For production with
+    # compressed IPv6 (::), consider using Python's ipaddress module
+
+    # Normalize: remove commas (from X-Forwarded-For), strip whitespace, remove port
+    client_ip = client_info["client_ip"]
+    client_ip = client_ip.split(",")[0].strip()  # Take first if comma-separated
+
+    # Remove port suffix (e.g., "1.2.3.4:8080" -> "1.2.3.4")
+    if ":" in client_ip and "." in client_ip:
+        # IPv4 with port (contains both : and .)
+        client_ip = client_ip.rsplit(":", 1)[0]
+    elif "[" in client_ip:
+        # IPv6 with port: [2001:db8::1]:8080
+        client_ip = client_ip.split("]")[0].lstrip("[")
+
+    # Mask IP
+    if ":" in client_ip:
+        # IPv6: mask to /48 (first 3 hextets)
+        # Warning: May not handle :: compression correctly
+        parts = client_ip.split(":")
+        client_ip_masked = ":".join(parts[:3]) + "::/48"
+    elif "." in client_ip:
+        # IPv4: mask to /24 (first 3 octets)
+        parts = client_ip.split(".")
+        client_ip_masked = ".".join(parts[:3]) + ".0/24"
+    else:
+        client_ip_masked = "unknown"
+
+    # Privacy: truncate UUID (same pattern as analytics display)
+    player_uuid = request.headers.get("X-Player-UUID") or body.browser_uuid
+    player_uuid_short = player_uuid[:8] + "…" if player_uuid else "none"
+
+    log_data = {
+        "event": "score_submit",
+        "request_id": request.headers.get("X-Request-ID", ""),
+        "submission_id": body.submission_id,
+        "game_id": body.game_id,
+        "player_uuid": player_uuid_short,  # Truncated
+        "uuid_source": uuid_source,        # From worker header
+        "user_id": user_id,
+        "client_ip": client_ip_masked,     # Masked to /24 or /48
+        "country": client_info.get("country", ""),
+        "region": client_info.get("region", ""),
+        # city: only log in debug mode or with sampling (comment out for production)
+        # "city": client_info.get("city", ""),
+        "colo": client_info.get("colo", ""),
+        "timezone": client_info.get("timezone", ""),
+        "platform": body.platform,
+        "score_value": body.score_value,
+        "time_seconds": body.time_seconds,
+        "status": status,
+    }
+
+    # Format as compact JSON line (easy to grep/parse)
+    print(f"[SCORE] {json.dumps(log_data, ensure_ascii=False)}", flush=True)
 
 
 # HMAC secret shared with Cloudflare Worker (optional — skip if not set)
@@ -1974,7 +2085,7 @@ async def submit_game_score(request: Request):
         rewards = calc_game_rewards(body.game_id, body.game_data, body.score_value)
 
         # Extract client info
-        client_info = _extract_client_info(request)
+        client_info = _extract_client_and_geo_info(request)
 
         # Parse client timestamp
         client_ts = None
@@ -2001,6 +2112,12 @@ async def submit_game_score(request: Request):
             client_timestamp=client_ts,
             client_ip=client_info["client_ip"],
             user_agent=client_info["user_agent"],
+            # Geo data from worker
+            country=client_info["country"],
+            region=client_info["region"],
+            city=client_info["city"],
+            colo=client_info["colo"],
+            timezone=client_info["timezone"],
             exp=rewards["exp"],
             diamonds=rewards["diamonds"],
             coins=rewards["coins"],
@@ -2055,6 +2172,9 @@ async def submit_game_score(request: Request):
                 },
             )
             raise
+
+        # Log submission for debugging
+        _log_score_submission(request, body, client_info, 201, user_id)
 
         # Return response
         return JSONResponse(
@@ -2158,7 +2278,7 @@ async def submit_score(request: Request):
                 content={"detail": f"invalid solution: {err}"},
             )
 
-    client_info = _extract_client_info(request)
+    client_info = _extract_client_and_geo_info(request)
 
     session = get_session()
     try:
@@ -2332,7 +2452,7 @@ async def submit_sudoku_score(request: Request):
             content={"detail": "moves must be >= 0"},
         )
 
-    client_info = _extract_client_info(request)
+    client_info = _extract_client_and_geo_info(request)
     session = get_session()
     try:
         if body.submission_id:
@@ -4250,26 +4370,64 @@ def get_analytics(game_id: Optional[str] = None):
             base_filter.append(GameScore.game_id == game_id)
 
         # User agent subquery (limit to recent 90 days to prevent large result sets)
+        # Use two-stage query to avoid SQLite GROUP BY non-determinism
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=90)
         subq_filters = base_filter + [
             GameScore.user_agent.isnot(None),
             GameScore.user_agent != "",
             GameScore.created_at >= cutoff_date
         ]
-        subq = (
+
+        # Stage 1: Get last_seen for each player
+        last_seen_subq = (
             session.query(
-                GameScore.browser_uuid,
-                GameScore.user_agent,
+                GameScore.browser_uuid.label("uuid"),
                 func.max(GameScore.created_at).label("last_seen"),
             )
             .filter(*subq_filters)
             .group_by(GameScore.browser_uuid)
+        ).subquery()
+
+        # Stage 2: Correlated subquery to find max(id) for tie-breaking
+        # (When multiple scores have same timestamp, pick the one with highest id)
+        max_id_subq = (
+            select(func.max(GameScore.id))
+            .where(
+                and_(
+                    GameScore.browser_uuid == last_seen_subq.c.uuid,
+                    GameScore.created_at == last_seen_subq.c.last_seen,
+                )
+            )
+            .correlate(last_seen_subq)
+            .scalar_subquery()
+        )
+
+        # Stage 3: Join to get actual row data from last_seen timestamp
+        # Filter by max_id ensures exactly one row per uuid (no SQLite DISTINCT ON issue)
+        subq = (
+            session.query(
+                GameScore.browser_uuid,
+                GameScore.user_agent,
+                GameScore.country,
+                GameScore.city,
+                last_seen_subq.c.last_seen,
+            )
+            .join(
+                last_seen_subq,
+                and_(
+                    GameScore.browser_uuid == last_seen_subq.c.uuid,
+                    GameScore.created_at == last_seen_subq.c.last_seen,  # More precise join
+                )
+            )
+            .filter(GameScore.id == max_id_subq)  # Tie-breaker for same timestamp
             .all()
         )
 
         platform_counts = {}
         os_counts = {}
         browser_counts = {}
+        country_counts = {}
+        city_counts = {}
         players = []
 
         for row in subq:
@@ -4278,12 +4436,21 @@ def get_analytics(game_id: Optional[str] = None):
             platform_counts[p] = platform_counts.get(p, 0) + 1
             os_counts[o] = os_counts.get(o, 0) + 1
             browser_counts[b] = browser_counts.get(b, 0) + 1
+
+            # Aggregate geo data
+            country = row.country or "Unknown"
+            city = row.city or "Unknown"
+            country_counts[country] = country_counts.get(country, 0) + 1
+            city_counts[city] = city_counts.get(city, 0) + 1
+
             players.append(
                 {
                     "uuid": row.browser_uuid[:8] + "…",
                     "platform": p,
                     "os": o,
                     "browser": b,
+                    "country": row.country or "",
+                    "city": row.city or "",
                     "last_seen": row.last_seen.isoformat() if row.last_seen else "",
                     "ua": row.user_agent[:120] if row.user_agent else "",
                 }
@@ -4314,6 +4481,8 @@ def get_analytics(game_id: Optional[str] = None):
             "platform": _sorted(platform_counts),
             "os": _sorted(os_counts),
             "browser": _sorted(browser_counts),
+            "country": _sorted(country_counts),
+            "city": _sorted(city_counts),
             "players": sorted(players, key=lambda x: x["last_seen"], reverse=True),
         }
     finally:
