@@ -2325,6 +2325,7 @@ async def submit_score(request: Request):
         auth_user_id = _get_optional_user_id(request)
 
         # Write to legacy table (for rollback safety)
+        # Note: OctileScore only has client_ip and user_agent, not geo fields
         score = OctileScore(
             puzzle_number=body.puzzle_number,
             resolve_time=body.resolve_time,
@@ -2338,7 +2339,8 @@ async def submit_score(request: Request):
             exp=exp,
             diamonds=diamonds,
             user_id=auth_user_id,
-            **client_info,
+            client_ip=client_info["client_ip"],
+            user_agent=client_info["user_agent"],
         )
         session.add(score)
         session.commit()
