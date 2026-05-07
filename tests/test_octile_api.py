@@ -1,6 +1,7 @@
 """Tests for the Octile scoreboard API."""
 
 import os
+import uuid
 
 import pytest
 
@@ -658,9 +659,26 @@ def test_hmac_rejects_stale_timestamp(client, monkeypatch):
 
 
 def _insert_scores(client, scores):
-    """Helper: submit multiple scores via API."""
+    """Helper: submit multiple scores via unified API (game_scores table)."""
     for s in scores:
-        resp = client.post("/octile/score", json=s)
+        # Transform legacy format to unified format
+        unified_payload = {
+            "game_id": "octile",
+            "browser_uuid": s["browser_uuid"],
+            "submission_id": str(uuid.uuid4()),
+            "score_value": s["resolve_time"],
+            "time_seconds": s["resolve_time"],
+            "game_data": {
+                "puzzle_number": s["puzzle_number"],
+                "solution": s.get("solution"),
+                "resolve_time": s["resolve_time"],
+            },
+            "solution": s.get("solution"),
+            "platform": "test",
+        }
+        # Add X-Player-UUID header (required by unified endpoint)
+        headers = {"X-Player-UUID": s["browser_uuid"]}
+        resp = client.post("/octile/scores", json=unified_payload, headers=headers)
         assert resp.status_code == 201
 
 
