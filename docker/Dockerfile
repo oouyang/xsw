@@ -58,4 +58,4 @@ RUN mkdir -p /app/data /app/dist/ubike && \
     sed -i s/http/https/g /etc/apk/repositories 
 
 EXPOSE 8000
-CMD ["uvicorn", "main_optimized:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main_optimized:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
