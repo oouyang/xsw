@@ -1766,7 +1766,7 @@ class GameValidator:
     @staticmethod
     def validate_sudoku(game_data: dict, score_value: float) -> tuple[bool, str]:
         """Validate Sudoku submission."""
-        difficulty = game_data.get("difficulty")
+        difficulty = game_data.get("difficulty", "").lower()
         if difficulty not in ["easy", "medium", "hard", "expert"]:
             return False, "Invalid difficulty level"
 
