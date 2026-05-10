@@ -2707,3 +2707,210 @@ def test_submit_score_returns_total_exp(client):
     data = resp.json()
     assert "total_exp" in data
     assert data["total_exp"] >= data["exp"]
+
+
+# ---------------------------------------------------------------------------
+# Contract validation unit tests (Phase 1: enum + range)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_mine_uppercase_difficulty():
+    """Mine normalizes UPPERCASE difficulty."""
+    from octile_api import GameValidator
+
+    game_data = {"difficulty": "EASY", "mines": 10, "rows": 9, "cols": 9}
+    valid, err = GameValidator.validate("mine", game_data, 120.5)
+    assert valid, f"Expected valid, got error: {err}"
+
+
+def test_validate_mine_lowercase_difficulty():
+    """Mine accepts lowercase difficulty."""
+    from octile_api import GameValidator
+
+    game_data = {"difficulty": "easy", "mines": 10, "rows": 9, "cols": 9}
+    valid, err = GameValidator.validate("mine", game_data, 120.5)
+    assert valid, f"Expected valid, got error: {err}"
+
+
+def test_validate_mine_mixed_case_difficulty():
+    """Mine normalizes MixedCase difficulty."""
+    from octile_api import GameValidator
+
+    game_data = {"difficulty": "HaRd", "mines": 99, "rows": 30, "cols": 16}
+    valid, err = GameValidator.validate("mine", game_data, 300.0)
+    assert valid, f"Expected valid, got error: {err}"
+
+
+def test_validate_mine_whitespace_difficulty():
+    """Mine normalizes whitespace in difficulty."""
+    from octile_api import GameValidator
+
+    game_data = {"difficulty": " medium ", "mines": 40, "rows": 16, "cols": 16}
+    valid, err = GameValidator.validate("mine", game_data, 200.0)
+    assert valid, f"Expected valid, got error: {err}"
+
+
+def test_validate_mine_invalid_difficulty():
+    """Mine rejects invalid difficulty with sorted allowed list."""
+    from octile_api import GameValidator
+
+    game_data = {"difficulty": "INSANE", "mines": 10, "rows": 9, "cols": 9}
+    valid, err = GameValidator.validate("mine", game_data, 120.5)
+    assert not valid
+    assert "Invalid difficulty: 'insane'" in err
+    # Check for sorted list (stable output)
+    assert "['easy', 'hard', 'medium']" in err
+
+
+def test_validate_mine_missing_difficulty_allowed():
+    """Mine allows missing difficulty (lenient in Phase 1)."""
+    from octile_api import GameValidator
+
+    game_data = {"mines": 10, "rows": 9, "cols": 9}  # No difficulty
+    valid, err = GameValidator.validate("mine", game_data, 120.5)
+    assert valid, f"Expected valid (missing difficulty allowed), got error: {err}"
+
+
+def test_validate_mine_garbage_difficulty_type():
+    """Mine rejects garbage difficulty type (int/list/etc)."""
+    from octile_api import GameValidator
+
+    # Test int type
+    game_data = {"difficulty": 123, "mines": 10, "rows": 9, "cols": 9}
+    valid, err = GameValidator.validate("mine", game_data, 120.5)
+    assert not valid
+    assert "Invalid difficulty type" in err
+
+    # Test list type
+    game_data = {"difficulty": ["easy"], "mines": 10, "rows": 9, "cols": 9}
+    valid, err = GameValidator.validate("mine", game_data, 120.5)
+    assert not valid
+    assert "Invalid difficulty type" in err
+
+
+def test_validate_game_data_not_dict():
+    """Validator rejects non-dict game_data (prevent 500)."""
+    from octile_api import GameValidator
+
+    # Test null
+    valid, err = GameValidator.validate("mine", None, 120.5)
+    assert not valid
+    assert "Invalid game_data" in err
+
+    # Test string
+    valid, err = GameValidator.validate("mine", "not a dict", 120.5)
+    assert not valid
+    assert "Invalid game_data" in err
+
+
+def test_validate_map_valid():
+    """Map accepts valid submission."""
+    from octile_api import GameValidator
+
+    game_data = {"moves": 45, "preset": 0, "regions": 30}
+    valid, err = GameValidator.validate("map", game_data, 245.3)
+    assert valid, f"Expected valid, got error: {err}"
+
+
+def test_validate_mj5_valid():
+    """MJ5 accepts valid submission."""
+    from octile_api import GameValidator
+
+    game_data = {"moves": 42, "zen_mode": False}
+    valid, err = GameValidator.validate("mj5", game_data, 42)
+    assert valid, f"Expected valid, got error: {err}"
+
+
+def test_validate_mj5_score_mismatch():
+    """MJ5 rejects score_value != moves."""
+    from octile_api import GameValidator
+
+    game_data = {"moves": 42, "zen_mode": False}
+    valid, err = GameValidator.validate("mj5", game_data, 100)  # Wrong score_value
+    assert not valid
+    assert "score_value must match moves" in err
+
+
+def test_validate_sudoku_case_variations():
+    """Sudoku normalizes all case variations."""
+    from octile_api import GameValidator
+
+    for difficulty in ["HARD", "hard", "HaRd", " hard ", " EXPERT "]:
+        game_data = {"difficulty": difficulty, "moves": 150, "mistakes": 2}
+        valid, err = GameValidator.validate("sudoku", game_data, 180.0)
+        assert valid, f"Expected valid for '{difficulty}', got error: {err}"
+
+
+def test_validate_sudoku_invalid_difficulty():
+    """Sudoku rejects invalid difficulty with sorted list."""
+    from octile_api import GameValidator
+
+    game_data = {"difficulty": "impossible", "moves": 150, "mistakes": 2}
+    valid, err = GameValidator.validate("sudoku", game_data, 180.0)
+    assert not valid
+    assert "Invalid difficulty: 'impossible'" in err
+    # Check for sorted list
+    assert "['easy', 'expert', 'hard', 'medium']" in err
+
+
+def test_validate_unsupported_game():
+    """Generic validator rejects unsupported game_id."""
+    from octile_api import GameValidator
+
+    valid, err = GameValidator.validate("unknown_game", {}, 100.0)
+    assert not valid
+    assert "Unsupported game_id: 'unknown_game'" in err
+    assert "Supported:" in err
+
+
+def test_validate_score_out_of_range():
+    """Generic validator rejects score out of range."""
+    from octile_api import GameValidator
+
+    # Sudoku score_range is [5, 7200]
+    game_data = {"difficulty": "easy", "moves": 100, "mistakes": 0}
+    valid, err = GameValidator.validate("sudoku", game_data, 10000)  # Too high
+    assert not valid
+    assert "Invalid score: 10000" in err
+    assert "Range: [5, 7200]" in err
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (full API route, minimal coverage)
+# ---------------------------------------------------------------------------
+
+
+def test_mine_submission_integration(client):
+    """Mine score submission via full API (integration test)."""
+    payload = {
+        "game_id": "mine",
+        "browser_uuid": "test-uuid",
+        "score_value": 120.5,
+        "game_data": {"difficulty": "EASY", "mines": 10, "rows": 9, "cols": 9},
+    }
+    res = client.post("/octile/scores", json=payload)
+    assert res.status_code == 201
+
+
+def test_map_submission_integration(client):
+    """Map score submission via full API (integration test)."""
+    payload = {
+        "game_id": "map",
+        "browser_uuid": "test-uuid",
+        "score_value": 245.3,
+        "game_data": {"moves": 45, "preset": 0, "regions": 30},
+    }
+    res = client.post("/octile/scores", json=payload)
+    assert res.status_code == 201
+
+
+def test_mj5_submission_integration(client):
+    """MJ5 score submission via full API (integration test)."""
+    payload = {
+        "game_id": "mj5",
+        "browser_uuid": "test-uuid",
+        "score_value": 42,
+        "game_data": {"moves": 42, "zen_mode": False},
+    }
+    res = client.post("/octile/scores", json=payload)
+    assert res.status_code == 201

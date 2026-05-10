@@ -271,6 +271,18 @@ def _get_difficulty_data() -> dict:
     return _DIFFICULTY_DATA
 
 
+# Load game contracts (fail-open: empty dict if file missing)
+GAME_CONTRACTS = {}
+try:
+    contract_path = os.path.join(os.path.dirname(__file__), "game_contracts.json")
+    with open(contract_path) as f:
+        GAME_CONTRACTS = json.load(f)["games"]
+        logger.info(f"Loaded game contracts for {len(GAME_CONTRACTS)} games")
+except Exception as e:
+    logger.warning(f"Failed to load game_contracts.json: {e} (fallback to hardcoded validators)")
+    # FAIL-OPEN: Continue with hardcoded validators if contract missing
+
+
 def get_puzzle_difficulty(puzzle_number: int) -> int:
     """Get difficulty level (1-4) for a 1-based puzzle number."""
     base, _ = _decompose_puzzle_number(puzzle_number)
@@ -1733,6 +1745,76 @@ def _check_sudoku_anomalies(
     return 0, None
 
 
+def _norm_enum(v: object) -> tuple[str, bool]:
+    """Normalize enum value: strip whitespace, lowercase.
+
+    Returns (normalized_value, is_valid_type).
+    - is_valid_type=False means value exists but is not a string (garbage).
+    - normalized_value="" with is_valid_type=True means value is missing (OK).
+    """
+    if v is None:
+        return "", True  # Missing is OK
+    if not isinstance(v, str):
+        return "", False  # Exists but wrong type (garbage)
+    return v.strip().lower(), True
+
+
+def _validate_generic_contract(game_id: str, game_data: dict, score_value: float) -> tuple[bool, str]:
+    """Generic validator using contract schema (Phase 1: enum + range only).
+
+    Validates:
+    - game_data is dict (prevent 500)
+    - score_range (if applicable to this game)
+    - difficulty enum (if game uses difficulty AND client sent difficulty)
+    - difficulty type (reject garbage types like int/list)
+
+    Does NOT validate:
+    - required_fields (Phase 2)
+    - field_types for other fields (Phase 2)
+
+    Returns (True, "") if valid, (False, error_msg) otherwise.
+    """
+    # Prevent 500: ensure game_data is dict
+    if not isinstance(game_data, dict):
+        return False, "Invalid game_data (must be object)"
+
+    contract = GAME_CONTRACTS.get(game_id)
+    if not contract:
+        # No contract: allow (fail-open for games without contract)
+        return True, ""
+
+    # Validate score_range (skip for games with uncertain semantics)
+    score_range = contract.get("score_range")
+    if score_range:
+        # Conservative: only validate if range is meaningful
+        # Skip validation for games where score_value semantics are uncertain
+        if game_id not in ["mj5"]:  # mj5 uses moves, not time - uncertain
+            if not (score_range[0] <= score_value <= score_range[1]):
+                return False, f"Invalid score: {score_value}. Range: {score_range}"
+
+    # Validate difficulty enum (if game uses difficulty)
+    difficulties = contract.get("difficulties", [])
+    if difficulties:
+        difficulty_raw = game_data.get("difficulty")
+
+        # Check if difficulty exists and is garbage type
+        if "difficulty" in game_data and difficulty_raw is not None:
+            difficulty_norm, is_valid_type = _norm_enum(difficulty_raw)
+
+            if not is_valid_type:
+                # Exists but wrong type (e.g., difficulty: 123)
+                return False, f"Invalid difficulty type: {type(difficulty_raw).__name__} (expected string)"
+
+            # Valid type, check enum
+            if difficulty_norm and difficulty_norm not in difficulties:
+                # Use sorted list for stable error message (not set)
+                allowed_list = sorted(difficulties)
+                return False, f"Invalid difficulty: '{difficulty_norm}'. Allowed: {allowed_list}"
+        # else: difficulty missing or null → allow (lenient for Phase 1)
+
+    return True, ""
+
+
 # ---------------------------------------------------------------------------
 # Game-specific validators
 # ---------------------------------------------------------------------------
@@ -1765,11 +1847,12 @@ class GameValidator:
 
     @staticmethod
     def validate_sudoku(game_data: dict, score_value: float) -> tuple[bool, str]:
-        """Validate Sudoku submission."""
-        difficulty = game_data.get("difficulty", "").lower()
-        if difficulty not in ["easy", "medium", "hard", "expert"]:
-            return False, "Invalid difficulty level"
+        """Validate Sudoku submission (game-specific checks only).
 
+        Note: Generic contract validation (enum, range) is done in GameValidator.validate().
+        This validator only does game-specific checks beyond the contract.
+        """
+        # Game-specific validation (beyond contract)
         moves = game_data.get("moves")
         if moves is not None and (not isinstance(moves, int) or moves < 0):
             return False, "Invalid moves count"
@@ -1777,9 +1860,6 @@ class GameValidator:
         mistakes = game_data.get("mistakes")
         if mistakes is not None and (not isinstance(mistakes, int) or mistakes < 0):
             return False, "Invalid mistakes count"
-
-        if not (5 <= score_value <= 7200):  # 5s to 2 hours
-            return False, "Invalid solve time"
 
         return True, ""
 
@@ -1808,18 +1888,83 @@ class GameValidator:
         return True, ""
 
     @staticmethod
+    def validate_mine(game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate Minesweeper submission (game-specific checks only)."""
+        # Game-specific: validate grid dimensions (lenient, allow missing)
+        rows = game_data.get("rows")
+        cols = game_data.get("cols")
+        if rows is not None and cols is not None:
+            if not isinstance(rows, int) or not isinstance(cols, int) or rows < 1 or cols < 1:
+                return False, "Invalid grid dimensions"
+
+            # Sanity check: mines < total cells (if mines provided)
+            mines = game_data.get("mines")
+            if mines is not None and isinstance(mines, int) and mines >= rows * cols:
+                return False, "Mines count exceeds grid size"
+
+        return True, ""
+
+    @staticmethod
+    def validate_map(game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate Map Coloring submission (game-specific checks only)."""
+        # Game-specific: validate moves are non-negative (if provided)
+        moves = game_data.get("moves")
+        if moves is not None and (not isinstance(moves, int) or moves < 0):
+            return False, "Invalid moves count"
+
+        # Validate regions count (if provided)
+        regions = game_data.get("regions")
+        if regions is not None and (not isinstance(regions, int) or regions < 1):
+            return False, "Invalid regions count"
+
+        return True, ""
+
+    @staticmethod
+    def validate_mj5(game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate Mahjong 5 submission (game-specific checks only)."""
+        # Game-specific: zen_mode type check (if provided)
+        zen_mode = game_data.get("zen_mode")
+        if zen_mode is not None and not isinstance(zen_mode, bool):
+            return False, "Invalid zen_mode (must be boolean)"
+
+        # score_value should match moves (if moves provided)
+        moves = game_data.get("moves")
+        if moves is not None and score_value != moves:
+            return False, "score_value must match moves"
+
+        return True, ""
+
+    @staticmethod
     def validate(game_id: str, game_data: dict, score_value: float) -> tuple[bool, str]:
-        """Validate game submission using game-specific rules."""
+        """Validate game submission (single validation entry point).
+
+        Flow:
+        1. Check game_id is supported (hardcoded validators map)
+        2. Run generic contract validation (enum + range)
+        3. Run game-specific validator (if exists)
+        """
+        # Step 1: Check game_id is supported by hardcoded validators
         validators = {
             "octile": GameValidator.validate_octile,
             "sudoku": GameValidator.validate_sudoku,
             "2048": GameValidator.validate_2048,
+            "mine": GameValidator.validate_mine,
+            "map": GameValidator.validate_map,
+            "mj5": GameValidator.validate_mj5,
         }
 
         validator = validators.get(game_id)
         if not validator:
-            return False, f"Unsupported game_id: {game_id}"
+            supported = sorted(validators.keys())
+            return False, f"Unsupported game_id: '{game_id}'. Supported: {supported}"
 
+        # Step 2: Run generic contract validation (enum + range)
+        # Note: This is the ONLY place we call _validate_generic_contract
+        valid, err = _validate_generic_contract(game_id, game_data, score_value)
+        if not valid:
+            return False, err
+
+        # Step 3: Run game-specific validator
         return validator(game_data, score_value)
 
 
@@ -1994,18 +2139,22 @@ async def submit_game_score(request: Request):
         body.game_id, body.game_data, body.score_value
     )
     if not valid:
-        # Enhanced logging for debugging 400 errors
+        # Structured validation failure logging (for observability)
+        # Safe access: game_data might not be dict (already handled by validator)
+        difficulty_raw = body.game_data.get("difficulty") if isinstance(body.game_data, dict) else None
+        if difficulty_raw is not None:
+            difficulty_norm, _ = _norm_enum(difficulty_raw)
+        else:
+            difficulty_norm = None
+
+        # Safe access: submission_id from request body
+        submission_id = getattr(body, "submission_id", None)
+
         logger.warning(
-            f"Score validation failed: {error_msg}",
-            extra={
-                "request_id": request_id,
-                "game_id": body.game_id,
-                "puzzle_number": body.game_data.get("puzzle_number") if body.game_id == "octile" else None,
-                "data_version": body.game_data.get("data_version"),
-                "expected_version": OCTILE_DATA_VERSION,
-                "score_value": body.score_value,
-                "browser_uuid": body.browser_uuid[:8] if body.browser_uuid else None,
-            },
+            f"[VALIDATION_FAIL] game_id={body.game_id} "
+            f"difficulty_raw={difficulty_raw} difficulty_norm={difficulty_norm} "
+            f"score={body.score_value} error={error_msg} "
+            f"submission_id={submission_id}"
         )
         return JSONResponse(
             status_code=400,

@@ -1,0 +1,35 @@
+{
+  "version": "1.0.0",
+  "games": {
+    "sudoku": {
+      "difficulties": ["easy", "medium", "hard", "expert"],
+      "score_semantics": "lower_is_better",
+      "score_range": [5, 7200]
+    },
+    "mine": {
+      "difficulties": ["easy", "medium", "hard"],
+      "score_semantics": "lower_is_better",
+      "score_range": [1, 86400]
+    },
+    "map": {
+      "difficulties": ["easy", "normal", "hard", "unreasonable"],
+      "score_semantics": "lower_is_better",
+      "score_range": [1, 86400]
+    },
+    "mj5": {
+      "difficulties": [],
+      "score_semantics": "lower_is_better",
+      "score_range": [1, 1000000000]
+    },
+    "2048": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 999999999]
+    },
+    "octile": {
+      "difficulties": ["easy", "medium", "hard", "hell"],
+      "score_semantics": "lower_is_better",
+      "score_range": [10, 86400]
+    }
+  }
+}
