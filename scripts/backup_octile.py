@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-Backup Octile database to timestamped SQLite copy and/or JSON dump.
+Backup all Octile tables to timestamped SQLite copy and/or JSON dump.
+
+Backs up:
+- User accounts (octile_users, octile_magic_links)
+- Player progress (octile_progress)
+- Legacy scores (octile_scores)
+- Unified scores (game_scores - all games)
+- League system (league_teams, league_members, league_daily_exp, league_history)
+
 Optionally zip and email the backup to octileapp@googlegroups.com.
 
 Usage:
@@ -58,7 +66,22 @@ def backup_json(db_path, out_dir, timestamp):
     """Export all Octile tables to a JSON file."""
     conn = sqlite3.connect(db_path)
 
-    tables = ["octile_scores", "octile_users", "octile_progress"]
+    # All octile-related tables (ordered by dependency)
+    tables = [
+        # Core user & auth tables
+        "octile_users",
+        "octile_magic_links",
+        "octile_progress",
+        # Legacy scores (kept for backward compatibility)
+        "octile_scores",
+        # Unified scores (all games: octile, sudoku, 2048, mine, map, mj5)
+        "game_scores",
+        # League system
+        "league_teams",
+        "league_members",
+        "league_daily_exp",
+        "league_history",
+    ]
     data = {"exported_at": timestamp, "db_path": db_path}
 
     total_rows = 0
@@ -175,7 +198,7 @@ def send_backup_email(zip_path, timestamp):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Backup Octile database (scores, users, progress)",
+        description="Backup all Octile tables (users, scores, progress, magic links, game_scores, leagues)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
