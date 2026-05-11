@@ -2879,9 +2879,6 @@ def test_validate_score_out_of_range():
 # Integration tests (full API route, minimal coverage)
 # ---------------------------------------------------------------------------
 
-import pytest
-import uuid
-
 
 def test_mine_submission_integration(client, monkeypatch):
     """Mine score submission via full API (integration test)."""
