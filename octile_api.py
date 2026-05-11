@@ -5438,36 +5438,43 @@ def get_daily_challenge_scoreboard(
         target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         next_date = target_date + timedelta(days=1)
 
-        # Subquery: min resolve_time per player for this puzzle on this date
+        # Subquery: min score_value per player for this puzzle on this date
+        # Use unified GameScore table (not legacy OctileScore)
         best_sub = (
             session.query(
-                OctileScore.browser_uuid,
-                func.min(OctileScore.resolve_time).label("best_time"),
+                GameScore.browser_uuid,
+                func.min(GameScore.score_value).label("best_time"),
             )
             .filter(
-                OctileScore.puzzle_number == puzzle_number,
-                OctileScore.created_at >= target_date,
-                OctileScore.created_at < next_date,
-                OctileScore.flagged == 0,
+                GameScore.game_id == "octile",
+                GameScore.game_data["puzzle_number"].astext.cast(Integer)
+                == puzzle_number,
+                GameScore.created_at >= target_date,
+                GameScore.created_at < next_date,
+                GameScore.flagged == 0,
             )
-            .group_by(OctileScore.browser_uuid)
+            .group_by(GameScore.browser_uuid)
             .subquery()
         )
 
         rows = (
-            session.query(OctileScore)
+            session.query(GameScore)
             .join(
                 best_sub,
-                (OctileScore.browser_uuid == best_sub.c.browser_uuid)
-                & (OctileScore.resolve_time == best_sub.c.best_time)
-                & (OctileScore.puzzle_number == puzzle_number),
+                (GameScore.browser_uuid == best_sub.c.browser_uuid)
+                & (GameScore.score_value == best_sub.c.best_time)
+                & (
+                    GameScore.game_data["puzzle_number"].astext.cast(Integer)
+                    == puzzle_number
+                ),
             )
             .filter(
-                OctileScore.created_at >= target_date,
-                OctileScore.created_at < next_date,
-                OctileScore.flagged == 0,
+                GameScore.game_id == "octile",
+                GameScore.created_at >= target_date,
+                GameScore.created_at < next_date,
+                GameScore.flagged == 0,
             )
-            .order_by(OctileScore.resolve_time.asc())
+            .order_by(GameScore.score_value.asc())
             .limit(100 if sort == "elo" else limit)
             .all()
         )
@@ -5488,13 +5495,14 @@ def get_daily_challenge_scoreboard(
                 elo = calc_elo_for_player(session, r.browser_uuid)
                 if elo < 2000:
                     continue
-                grade = calc_skill_grade(difficulty, r.resolve_time)
-                # Count player's total solves for K-factor
+                grade = calc_skill_grade(difficulty, r.score_value)
+                # Count player's total solves for K-factor (unified table)
                 solve_count = (
-                    session.query(func.count(OctileScore.id))
+                    session.query(func.count(GameScore.id))
                     .filter(
-                        OctileScore.browser_uuid == r.browser_uuid,
-                        OctileScore.flagged == 0,
+                        GameScore.game_id == "octile",
+                        GameScore.browser_uuid == r.browser_uuid,
+                        GameScore.flagged == 0,
                     )
                     .scalar()
                     or 0
@@ -5504,7 +5512,7 @@ def get_daily_challenge_scoreboard(
                 elo_entries.append(
                     {
                         "browser_uuid": r.browser_uuid,
-                        "resolve_time": r.resolve_time,
+                        "resolve_time": r.score_value,  # Renamed for backward compat
                         "display_name": user.display_name if user else None,
                         "picture": user.picture if user else None,
                         "grade": grade,
@@ -5527,10 +5535,10 @@ def get_daily_challenge_scoreboard(
             scores.append(
                 {
                     "browser_uuid": r.browser_uuid,
-                    "resolve_time": r.resolve_time,
+                    "resolve_time": r.score_value,  # Renamed for backward compat
                     "display_name": user.display_name if user else None,
                     "picture": user.picture if user else None,
-                    "grade": calc_skill_grade(difficulty, r.resolve_time),
+                    "grade": calc_skill_grade(difficulty, r.score_value),
                 }
             )
 
