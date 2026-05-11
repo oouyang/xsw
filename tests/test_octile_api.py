@@ -2880,51 +2880,58 @@ def test_validate_score_out_of_range():
 # ---------------------------------------------------------------------------
 
 import pytest
+import uuid
 
 
-@pytest.mark.skip(reason="Integration test requires HMAC + full Pydantic schema")
-def test_mine_submission_integration(client):
+def test_mine_submission_integration(client, monkeypatch):
     """Mine score submission via full API (integration test)."""
+    # Bypass HMAC check for integration test
+    monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", "")
+
     payload = {
         "game_id": "mine",
-        "browser_uuid": "test-uuid",
-        "submission_id": "test-submission-mine",
+        "browser_uuid": "test-mine-uuid",
+        "submission_id": str(uuid.uuid4()),
         "score_value": 120.5,
-        "platform": "web",
-        "client_timestamp": "2026-05-11T00:00:00Z",
+        "platform": "test",
         "game_data": {"difficulty": "EASY", "mines": 10, "rows": 9, "cols": 9},
     }
-    res = client.post("/octile/scores", json=payload)
+    headers = {"X-Player-UUID": "test-mine-uuid"}
+    res = client.post("/octile/scores", json=payload, headers=headers)
     assert res.status_code == 201
 
 
-@pytest.mark.skip(reason="Integration test requires HMAC + full Pydantic schema")
-def test_map_submission_integration(client):
+def test_map_submission_integration(client, monkeypatch):
     """Map score submission via full API (integration test)."""
+    # Bypass HMAC check for integration test
+    monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", "")
+
     payload = {
         "game_id": "map",
-        "browser_uuid": "test-uuid",
-        "submission_id": "test-submission-map",
+        "browser_uuid": "test-map-uuid",
+        "submission_id": str(uuid.uuid4()),
         "score_value": 245.3,
-        "platform": "web",
-        "client_timestamp": "2026-05-11T00:00:00Z",
+        "platform": "test",
         "game_data": {"moves": 45, "preset": 0, "regions": 30},
     }
-    res = client.post("/octile/scores", json=payload)
+    headers = {"X-Player-UUID": "test-map-uuid"}
+    res = client.post("/octile/scores", json=payload, headers=headers)
     assert res.status_code == 201
 
 
-@pytest.mark.skip(reason="Integration test requires HMAC + full Pydantic schema")
-def test_mj5_submission_integration(client):
+def test_mj5_submission_integration(client, monkeypatch):
     """MJ5 score submission via full API (integration test)."""
+    # Bypass HMAC check for integration test
+    monkeypatch.setattr(octile_api, "_WORKER_HMAC_SECRET", "")
+
     payload = {
         "game_id": "mj5",
-        "browser_uuid": "test-uuid",
-        "submission_id": "test-submission-mj5",
+        "browser_uuid": "test-mj5-uuid",
+        "submission_id": str(uuid.uuid4()),
         "score_value": 42,
-        "platform": "web",
-        "client_timestamp": "2026-05-11T00:00:00Z",
+        "platform": "test",
         "game_data": {"moves": 42, "zen_mode": False},
     }
-    res = client.post("/octile/scores", json=payload)
+    headers = {"X-Player-UUID": "test-mj5-uuid"}
+    res = client.post("/octile/scores", json=payload, headers=headers)
     assert res.status_code == 201
