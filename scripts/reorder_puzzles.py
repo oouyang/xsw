@@ -30,7 +30,9 @@ CHAPTER_SIZES = {1: 100, 2: 100, 3: 125, 4: 65}
 LEVEL_NAMES = {1: "easy", 2: "medium", 3: "hard", 4: "hell"}
 
 
-def compute_composite_score(attempts_norm, solutions_norm, pocket_score=0, is_hell=False):
+def compute_composite_score(
+    attempts_norm, solutions_norm, pocket_score=0, is_hell=False
+):
     """Composite difficulty score: higher = harder."""
     score = 0.7 * attempts_norm + 0.3 * (1.0 - solutions_norm)
     if is_hell:
@@ -61,7 +63,7 @@ def step_ladder_reorder(puzzles_sorted):
 
     intro = puzzles_sorted[:p20]
     grind = puzzles_sorted[p20:p80]
-    peak = puzzles_sorted[p95:]       # top 5% = hardest
+    peak = puzzles_sorted[p95:]  # top 5% = hardest
     cooldown = puzzles_sorted[p80:p95]  # 80-95th percentile
 
     # Assemble: intro -> grind -> peak -> cooldown
@@ -106,7 +108,7 @@ def main():
     for level in range(1, 5):
         level_name = LEVEL_NAMES[level]
         chapter_size = CHAPTER_SIZES[level]
-        is_hell = (level == 4)
+        is_hell = level == 4
 
         # Collect puzzles for this level
         level_puzzles = []
@@ -129,8 +131,9 @@ def main():
         for i in level_puzzles:
             att_norm = (attempts[i] - att_min) / att_range
             sol_norm = (solutions[i] - sol_min) / sol_range
-            score = compute_composite_score(att_norm, sol_norm,
-                                            pocket_scores[i], is_hell)
+            score = compute_composite_score(
+                att_norm, sol_norm, pocket_scores[i], is_hell
+            )
             scored.append((i, score, themes[i]))
 
         # Group by theme (with merging)
@@ -156,20 +159,24 @@ def main():
 
             # Split into chapters and apply step-ladder to each
             for ch_start in range(0, len(theme_puzzles), chapter_size):
-                chapter = theme_puzzles[ch_start:ch_start + chapter_size]
+                chapter = theme_puzzles[ch_start : ch_start + chapter_size]
                 reordered = step_ladder_reorder(chapter)
                 level_order.extend(reordered)
 
         ordering[str(level)] = level_order
 
         # Print stats
-        print(f"\n{level_name.upper()} (level {level}): {len(level_order)} puzzles, "
-              f"chapter_size={chapter_size}")
+        print(
+            f"\n{level_name.upper()} (level {level}): {len(level_order)} puzzles, "
+            f"chapter_size={chapter_size}"
+        )
         for theme in THEME_ORDER:
             count = theme_stats[theme]
             chapters = (count + chapter_size - 1) // chapter_size if count > 0 else 0
             pct = count / len(level_order) * 100
-            print(f"  {theme:>10}: {count:5d} puzzles ({pct:5.1f}%), {chapters} chapters")
+            print(
+                f"  {theme:>10}: {count:5d} puzzles ({pct:5.1f}%), {chapters} chapters"
+            )
 
         # Verify step-ladder: check first full chapter
         if len(level_order) >= chapter_size:
@@ -181,8 +188,10 @@ def main():
             grind_avg = sum(attempts[i] for i in ch[p20:p80]) / (p80 - p20)
             peak_avg = sum(attempts[i] for i in ch[p95:]) / max(len(ch) - p95, 1)
             cool_avg = sum(attempts[i] for i in ch[p80:p95]) / max(p95 - p80, 1)
-            print(f"  Chapter 1 step-ladder: intro={intro_avg:.0f} < grind={grind_avg:.0f} "
-                  f"< peak={peak_avg:.0f} > cooldown={cool_avg:.0f}")
+            print(
+                f"  Chapter 1 step-ladder: intro={intro_avg:.0f} < grind={grind_avg:.0f} "
+                f"< peak={peak_avg:.0f} > cooldown={cool_avg:.0f}"
+            )
 
     # Verify integrity
     print("\n--- Integrity checks ---")
@@ -192,9 +201,13 @@ def main():
         assert len(order) == expected, f"Level {level}: {len(order)} != {expected}"
         assert len(set(order)) == len(order), f"Level {level}: duplicates found"
         for idx in order:
-            assert levels[idx] == level, f"Puzzle {idx} is level {levels[idx]}, expected {level}"
-        print(f"  Level {level} ({LEVEL_NAMES[level]}): {len(order)} puzzles, no duplicates, "
-              f"all correct level")
+            assert levels[idx] == level, (
+                f"Puzzle {idx} is level {levels[idx]}, expected {level}"
+            )
+        print(
+            f"  Level {level} ({LEVEL_NAMES[level]}): {len(order)} puzzles, no duplicates, "
+            f"all correct level"
+        )
 
     # Verify union
     all_ordered = set()

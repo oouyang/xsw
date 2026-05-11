@@ -91,6 +91,7 @@ def decode_puzzle_cells(index):
 # Theme classification
 # ---------------------------------------------------------------------------
 
+
 def is_edge_cell(cell):
     """Check if cell is on the board perimeter (row 0/7 or col 0/7)."""
     r, c = divmod(cell, 8)
@@ -195,6 +196,7 @@ def classify_theme(grey_cells):
 # Solution counting (backtracking solver)
 # ---------------------------------------------------------------------------
 
+
 def count_solutions(board, pieces_remaining, cap=100):
     """Count solutions via backtracking. board is 64-element list (0=free, 1=occupied).
     Returns count capped at `cap`."""
@@ -215,7 +217,7 @@ def count_solutions(board, pieces_remaining, cap=100):
     fr, fc = divmod(first_free, 8)
 
     for pi, orientations in enumerate(pieces_remaining):
-        remaining = pieces_remaining[:pi] + pieces_remaining[pi + 1:]
+        remaining = pieces_remaining[:pi] + pieces_remaining[pi + 1 :]
         for rows, cols in orientations:
             # Try all positions where this piece could cover first_free
             for pr in range(rows):
@@ -265,6 +267,7 @@ def solve_puzzle_count(puzzle_index):
 # Pocket analysis (Hell only)
 # ---------------------------------------------------------------------------
 
+
 def compute_pocket_score(grey_cells):
     """Count connected regions of free cells whose size doesn't match any piece size."""
     grey_set = set(grey_cells)
@@ -287,6 +290,7 @@ def compute_pocket_score(grey_cells):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def analyze_batch(indices):
     """Analyze a batch of puzzle indices. Returns list of (index, solution_count)."""
     results = []
@@ -300,8 +304,10 @@ def main():
     start_time = time.time()
 
     # Load difficulty data for pocket analysis (Hell = level 4)
-    data_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "difficulty_levels.json")
+    data_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "difficulty_levels.json",
+    )
     with open(data_path) as f:
         diff_data = json.load(f)
     levels = diff_data["levels"]
@@ -347,7 +353,9 @@ def main():
     num_workers = min(multiprocessing.cpu_count(), 8)
     chunk_size = 50
     all_indices = list(range(PUZZLE_COUNT))
-    chunks = [all_indices[i:i + chunk_size] for i in range(0, len(all_indices), chunk_size)]
+    chunks = [
+        all_indices[i : i + chunk_size] for i in range(0, len(all_indices), chunk_size)
+    ]
 
     completed = 0
     with multiprocessing.Pool(num_workers) as pool:
@@ -359,16 +367,22 @@ def main():
                 elapsed = time.time() - start_time
                 rate = completed / elapsed if elapsed > 0 else 0
                 eta = (PUZZLE_COUNT - completed) / rate if rate > 0 else 0
-                print(f"  {completed}/{PUZZLE_COUNT} solved ({rate:.0f}/s, ETA {eta:.0f}s)")
+                print(
+                    f"  {completed}/{PUZZLE_COUNT} solved ({rate:.0f}/s, ETA {eta:.0f}s)"
+                )
 
     # Verify all solutions >= 1
     zero_solutions = sum(1 for s in solutions if s == 0)
     if zero_solutions:
         print(f"  WARNING: {zero_solutions} puzzles have 0 solutions!")
-    print(f"  Solution distribution: min={min(solutions)}, max={max(solutions)}, "
-          f"median={sorted(solutions)[PUZZLE_COUNT // 2]}")
+    print(
+        f"  Solution distribution: min={min(solutions)}, max={max(solutions)}, "
+        f"median={sorted(solutions)[PUZZLE_COUNT // 2]}"
+    )
     single_solution = sum(1 for s in solutions if s == 1)
-    print(f"  Single-solution puzzles: {single_solution} ({single_solution / PUZZLE_COUNT * 100:.1f}%)")
+    print(
+        f"  Single-solution puzzles: {single_solution} ({single_solution / PUZZLE_COUNT * 100:.1f}%)"
+    )
 
     # Step 3: Pocket analysis (Hell only)
     print("Step 3/3: Pocket analysis (Hell level)...")
@@ -382,8 +396,10 @@ def main():
     print(f"  Analyzed {hell_count} Hell puzzles")
     hell_pockets = [pocket_scores[i] for i in range(PUZZLE_COUNT) if levels[i] == 4]
     if hell_pockets:
-        print(f"  Pocket scores: min={min(hell_pockets)}, max={max(hell_pockets)}, "
-              f"avg={sum(hell_pockets) / len(hell_pockets):.2f}")
+        print(
+            f"  Pocket scores: min={min(hell_pockets)}, max={max(hell_pockets)}, "
+            f"avg={sum(hell_pockets) / len(hell_pockets):.2f}"
+        )
 
     # Output
     output = {
@@ -394,8 +410,10 @@ def main():
         "pocket_scores": pocket_scores,
     }
 
-    output_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "puzzle_analysis.json")
+    output_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "puzzle_analysis.json",
+    )
     with open(output_path, "w") as f:
         json.dump(output, f)
 

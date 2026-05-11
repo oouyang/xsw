@@ -8,6 +8,7 @@ Outputs:
 The public key goes into config.json and 03a-pack.js.
 The private key is used by generate-pack.py and stored as a GitHub Actions secret.
 """
+
 import base64
 import os
 import sys

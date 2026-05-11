@@ -220,9 +220,9 @@ def calc_elo_for_player(session, browser_uuid: str) -> float:
     scores = (
         session.query(GameScore)
         .filter(
-            GameScore.game_id == 'octile',
+            GameScore.game_id == "octile",
             GameScore.browser_uuid == browser_uuid,
-            GameScore.flagged == 0
+            GameScore.flagged == 0,
         )
         .order_by(GameScore.created_at.asc())
         .all()
@@ -231,8 +231,12 @@ def calc_elo_for_player(session, browser_uuid: str) -> float:
     elo = float(ELO_INITIAL)
     for i, gs in enumerate(scores):
         # Extract puzzle_number from game_data
-        game_data = json.loads(gs.game_data) if isinstance(gs.game_data, str) else (gs.game_data or {})
-        puzzle_num = game_data.get('puzzle_number', 0)
+        game_data = (
+            json.loads(gs.game_data)
+            if isinstance(gs.game_data, str)
+            else (gs.game_data or {})
+        )
+        puzzle_num = game_data.get("puzzle_number", 0)
 
         try:
             difficulty = get_puzzle_difficulty(puzzle_num)
@@ -279,7 +283,9 @@ try:
         GAME_CONTRACTS = json.load(f)["games"]
         logger.info(f"Loaded game contracts for {len(GAME_CONTRACTS)} games")
 except Exception as e:
-    logger.warning(f"Failed to load game_contracts.json: {e} (fallback to hardcoded validators)")
+    logger.warning(
+        f"Failed to load game_contracts.json: {e} (fallback to hardcoded validators)"
+    )
     # FAIL-OPEN: Continue with hardcoded validators if contract missing
 
 
@@ -873,10 +879,10 @@ class GameScore(OctileBase):
 
     # Geo data (extracted from Cloudflare request.cf via Worker)
     # Note: Indexes created via migration, not ORM (avoids duplication)
-    country = Column(String, nullable=True)   # ISO 3166-1 alpha-2
-    region = Column(String, nullable=True)    # State/province
-    city = Column(String, nullable=True)      # City name
-    colo = Column(String, nullable=True)      # Cloudflare colo code
+    country = Column(String, nullable=True)  # ISO 3166-1 alpha-2
+    region = Column(String, nullable=True)  # State/province
+    city = Column(String, nullable=True)  # City name
+    colo = Column(String, nullable=True)  # Cloudflare colo code
     timezone = Column(String, nullable=True)  # IANA timezone
 
     # Timestamps
@@ -1108,7 +1114,7 @@ def _backfill_scores_for_user(session, user_id: int, browser_uuid: str):
     other_user = (
         session.query(GameScore.user_id)
         .filter(
-            GameScore.game_id == 'octile',
+            GameScore.game_id == "octile",
             GameScore.browser_uuid == browser_uuid,
             GameScore.user_id.isnot(None),
             GameScore.user_id != user_id,
@@ -1120,20 +1126,30 @@ def _backfill_scores_for_user(session, user_id: int, browser_uuid: str):
         return
 
     # Update game_scores (unified table)
-    updated_game = session.query(GameScore).filter(
-        GameScore.game_id == 'octile',
-        GameScore.browser_uuid == browser_uuid,
-        GameScore.user_id.is_(None),
-    ).update({"user_id": user_id})
+    updated_game = (
+        session.query(GameScore)
+        .filter(
+            GameScore.game_id == "octile",
+            GameScore.browser_uuid == browser_uuid,
+            GameScore.user_id.is_(None),
+        )
+        .update({"user_id": user_id})
+    )
 
     # Also update legacy table (for consistency during migration)
-    updated_legacy = session.query(OctileScore).filter(
-        OctileScore.browser_uuid == browser_uuid,
-        OctileScore.user_id.is_(None),
-    ).update({"user_id": user_id})
+    updated_legacy = (
+        session.query(OctileScore)
+        .filter(
+            OctileScore.browser_uuid == browser_uuid,
+            OctileScore.user_id.is_(None),
+        )
+        .update({"user_id": user_id})
+    )
 
     session.commit()
-    logger.info(f"[Backfill] Linked {updated_game} game_scores + {updated_legacy} octile_scores to user {user_id}")
+    logger.info(
+        f"[Backfill] Linked {updated_game} game_scores + {updated_legacy} octile_scores to user {user_id}"
+    )
 
 
 # OTP rate limiting: track attempts per email
@@ -1488,7 +1504,9 @@ def _game_score_to_score_response(gs: GameScore) -> ScoreResponse:
         resolve_time=time_seconds,
         browser_uuid=gs.browser_uuid,
         created_at=created,
-        timestamp_utc=gs.client_timestamp.isoformat() if gs.client_timestamp else created,
+        timestamp_utc=gs.client_timestamp.isoformat()
+        if gs.client_timestamp
+        else created,
         flagged=gs.flagged or 0,
         flagged_reason=gs.flagged_reason,
         coins=gs.coins or 0,
@@ -1602,9 +1620,9 @@ def _log_score_submission(
         "submission_id": body.submission_id,
         "game_id": body.game_id,
         "player_uuid": player_uuid_short,  # Truncated
-        "uuid_source": uuid_source,        # From worker header
+        "uuid_source": uuid_source,  # From worker header
         "user_id": user_id,
-        "client_ip": client_ip_masked,     # Masked to /24 or /48
+        "client_ip": client_ip_masked,  # Masked to /24 or /48
         "country": client_info.get("country", ""),
         "region": client_info.get("region", ""),
         # city: only log in debug mode or with sampling (comment out for production)
@@ -1759,7 +1777,9 @@ def _norm_enum(v: object) -> tuple[str, bool]:
     return v.strip().lower(), True
 
 
-def _validate_generic_contract(game_id: str, game_data: dict, score_value: float) -> tuple[bool, str]:
+def _validate_generic_contract(
+    game_id: str, game_data: dict, score_value: float
+) -> tuple[bool, str]:
     """Generic validator using contract schema (Phase 1: enum + range only).
 
     Validates:
@@ -1803,13 +1823,19 @@ def _validate_generic_contract(game_id: str, game_data: dict, score_value: float
 
             if not is_valid_type:
                 # Exists but wrong type (e.g., difficulty: 123)
-                return False, f"Invalid difficulty type: {type(difficulty_raw).__name__} (expected string)"
+                return (
+                    False,
+                    f"Invalid difficulty type: {type(difficulty_raw).__name__} (expected string)",
+                )
 
             # Valid type, check enum
             if difficulty_norm and difficulty_norm not in difficulties:
                 # Use sorted list for stable error message (not set)
                 allowed_list = sorted(difficulties)
-                return False, f"Invalid difficulty: '{difficulty_norm}'. Allowed: {allowed_list}"
+                return (
+                    False,
+                    f"Invalid difficulty: '{difficulty_norm}'. Allowed: {allowed_list}",
+                )
         # else: difficulty missing or null → allow (lenient for Phase 1)
 
     return True, ""
@@ -1838,7 +1864,7 @@ class GameValidator:
             # Log version mismatch but allow submission
             logger.info(
                 f"Score submitted with older data_version: {data_version} (current: {OCTILE_DATA_VERSION})",
-                extra={"puzzle_number": puzzle_num, "data_version": data_version}
+                extra={"puzzle_number": puzzle_num, "data_version": data_version},
             )
             # ACCEPT for now - only reject if breaking change required
             # return False, f"Outdated data_version (current: {OCTILE_DATA_VERSION})"
@@ -1894,7 +1920,12 @@ class GameValidator:
         rows = game_data.get("rows")
         cols = game_data.get("cols")
         if rows is not None and cols is not None:
-            if not isinstance(rows, int) or not isinstance(cols, int) or rows < 1 or cols < 1:
+            if (
+                not isinstance(rows, int)
+                or not isinstance(cols, int)
+                or rows < 1
+                or cols < 1
+            ):
                 return False, "Invalid grid dimensions"
 
             # Sanity check: mines < total cells (if mines provided)
@@ -2087,7 +2118,7 @@ async def submit_game_score(request: Request):
     if body.solution and len(body.solution) > 10000:
         logger.warning(
             f"Score rejected: solution too long ({len(body.solution)} chars)",
-            extra={"request_id": request_id, "game_id": body.game_id}
+            extra={"request_id": request_id, "game_id": body.game_id},
         )
         return JSONResponse(
             status_code=400,
@@ -2100,7 +2131,7 @@ async def submit_game_score(request: Request):
     if body.moves_data and len(body.moves_data) > 50000:
         logger.warning(
             f"Score rejected: moves_data too long ({len(body.moves_data)} chars)",
-            extra={"request_id": request_id, "game_id": body.game_id}
+            extra={"request_id": request_id, "game_id": body.game_id},
         )
         return JSONResponse(
             status_code=400,
@@ -2121,7 +2152,7 @@ async def submit_game_score(request: Request):
                 "game_id": body.game_id,
                 "client_uuid": body.browser_uuid[:8] if body.browser_uuid else None,
                 "has_worker_sig": bool(request.headers.get("X-Worker-Signature")),
-            }
+            },
         )
         return JSONResponse(
             status_code=400,
@@ -2141,7 +2172,11 @@ async def submit_game_score(request: Request):
     if not valid:
         # Structured validation failure logging (for observability)
         # Safe access: game_data might not be dict (already handled by validator)
-        difficulty_raw = body.game_data.get("difficulty") if isinstance(body.game_data, dict) else None
+        difficulty_raw = (
+            body.game_data.get("difficulty")
+            if isinstance(body.game_data, dict)
+            else None
+        )
         if difficulty_raw is not None:
             difficulty_norm, _ = _norm_enum(difficulty_raw)
         else:
@@ -2540,7 +2575,7 @@ async def submit_score(request: Request):
             recent_fast = (
                 session.query(func.count(GameScore.id))
                 .filter(
-                    GameScore.game_id == 'octile',
+                    GameScore.game_id == "octile",
                     GameScore.user_id == auth_user_id,
                     GameScore.time_seconds < 15,
                     GameScore.created_at
@@ -2563,9 +2598,9 @@ async def submit_score(request: Request):
         total_exp_val = (
             session.query(func.sum(GameScore.exp))
             .filter(
-                GameScore.game_id == 'octile',
+                GameScore.game_id == "octile",
                 GameScore.browser_uuid == body.browser_uuid,
-                GameScore.flagged == 0
+                GameScore.flagged == 0,
             )
             .scalar()
         ) or 0
@@ -2707,7 +2742,9 @@ def get_scoreboard(
     session = get_session()
     try:
         # Define puzzle_number extraction once (type-consistent casting)
-        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
+        puzzle_expr = cast(
+            func.json_extract(GameScore.game_data, "$.puzzle_number"), Integer
+        )
 
         if best:
             # Subquery: best time per (browser_uuid, puzzle_number) from game_scores
@@ -2715,7 +2752,7 @@ def get_scoreboard(
                 GameScore.browser_uuid.label("browser_uuid"),
                 puzzle_expr.label("puzzle_number"),
                 func.min(GameScore.time_seconds).label("best_time"),
-            ).filter(GameScore.game_id == 'octile')
+            ).filter(GameScore.game_id == "octile")
 
             if puzzle is not None:
                 subq = subq.filter(puzzle_expr == puzzle)
@@ -2725,20 +2762,26 @@ def get_scoreboard(
             subq = subq.group_by(GameScore.browser_uuid, puzzle_expr).subquery()
 
             # Join back to get all records with best_time (may have ties)
-            query = session.query(GameScore).join(
-                subq,
-                and_(
-                    GameScore.browser_uuid == subq.c.browser_uuid,
-                    puzzle_expr == subq.c.puzzle_number,
-                    GameScore.time_seconds == subq.c.best_time,
-                ),
-            ).filter(GameScore.game_id == 'octile')
+            query = (
+                session.query(GameScore)
+                .join(
+                    subq,
+                    and_(
+                        GameScore.browser_uuid == subq.c.browser_uuid,
+                        puzzle_expr == subq.c.puzzle_number,
+                        GameScore.time_seconds == subq.c.best_time,
+                    ),
+                )
+                .filter(GameScore.game_id == "octile")
+            )
 
             # Total = subquery count (before tie-break pagination)
             total = session.query(subq).count()
 
             # Pull all candidates for deduplication
-            scores_raw = query.order_by(GameScore.time_seconds.asc(), GameScore.id.asc()).all()
+            scores_raw = query.order_by(
+                GameScore.time_seconds.asc(), GameScore.id.asc()
+            ).all()
 
             # Python-side dedup: keep MIN(id) per (browser_uuid, puzzle_number)
             best_map = {}
@@ -2758,11 +2801,13 @@ def get_scoreboard(
                     best_map[key] = s
 
             scores = list(best_map.values())
-            scores.sort(key=lambda x: (x.time_seconds or 0, x.id))  # Defensive NULL handling
-            scores = scores[offset:offset + limit]
+            scores.sort(
+                key=lambda x: (x.time_seconds or 0, x.id)
+            )  # Defensive NULL handling
+            scores = scores[offset : offset + limit]
         else:
             # Non-best query: all scores from game_scores
-            query = session.query(GameScore).filter(GameScore.game_id == 'octile')
+            query = session.query(GameScore).filter(GameScore.game_id == "octile")
             if puzzle is not None:
                 query = query.filter(puzzle_expr == puzzle)
             if uuid is not None:
@@ -2808,10 +2853,16 @@ def get_scoreboard(
                 s.picture = u.picture
 
         # Temporary debug logging to verify migration
-        migrated_count = sum(1 for s in scores if hasattr(s, "legacy_score_id") and s.legacy_score_id)
+        migrated_count = sum(
+            1 for s in scores if hasattr(s, "legacy_score_id") and s.legacy_score_id
+        )
         logger.info(
             "[DEBUG] scoreboard query from game_scores",
-            extra={"count": len(resp_scores), "migrated_rows": migrated_count, "uuid": uuid}
+            extra={
+                "count": len(resp_scores),
+                "migrated_rows": migrated_count,
+                "uuid": uuid,
+            },
         )
 
         return ScoreboardResponse(
@@ -2847,10 +2898,7 @@ def get_leaderboard(limit: int = 50):
         # Also map from scores that have user_id set (now from GameScore)
         linked_scores = (
             session.query(GameScore.browser_uuid, GameScore.user_id)
-            .filter(
-                GameScore.game_id == 'octile',
-                GameScore.user_id.isnot(None)
-            )
+            .filter(GameScore.game_id == "octile", GameScore.user_id.isnot(None))
             .distinct()
             .all()
         )
@@ -2859,7 +2907,9 @@ def get_leaderboard(limit: int = 50):
                 uuid_to_user_id[row.browser_uuid] = row.user_id
 
         # Define puzzle_expr once for consistent type casting
-        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
+        puzzle_expr = cast(
+            func.json_extract(GameScore.game_data, "$.puzzle_number"), Integer
+        )
 
         # Query basic stats (without puzzle count in SQL - avoid SQLite version issues)
         stats_rows = (
@@ -2870,10 +2920,7 @@ def get_leaderboard(limit: int = 50):
                 func.sum(GameScore.time_seconds).label("time_sum"),
                 func.count(GameScore.id).label("score_count"),
             )
-            .filter(
-                GameScore.game_id == 'octile',
-                GameScore.flagged == 0
-            )
+            .filter(GameScore.game_id == "octile", GameScore.flagged == 0)
             .group_by(GameScore.browser_uuid)
             .all()
         )
@@ -2886,9 +2933,9 @@ def get_leaderboard(limit: int = 50):
                 puzzle_expr.label("puzzle_number"),
             )
             .filter(
-                GameScore.game_id == 'octile',
+                GameScore.game_id == "octile",
                 GameScore.browser_uuid.in_(all_uuids),
-                GameScore.flagged == 0
+                GameScore.flagged == 0,
             )
             .distinct()
             .all()
@@ -2896,6 +2943,7 @@ def get_leaderboard(limit: int = 50):
 
         # Count distinct puzzles per UUID in Python (SQLite-safe)
         from collections import defaultdict
+
         puzzle_counts = defaultdict(set)
         for row in puzzle_data:
             puzzle_counts[row.browser_uuid].add(row.puzzle_number)
@@ -2903,13 +2951,21 @@ def get_leaderboard(limit: int = 50):
         # Build all_rows with Python-computed puzzle count
         all_rows = []
         for r in stats_rows:
-            all_rows.append(type('Row', (), {
-                'browser_uuid': r.browser_uuid,
-                'total_exp': r.total_exp,
-                'total_diamonds': r.total_diamonds,
-                'puzzles': len(puzzle_counts.get(r.browser_uuid, set())),
-                'avg_time': r.time_sum / r.score_count if r.score_count > 0 else 0,
-            })())
+            all_rows.append(
+                type(
+                    "Row",
+                    (),
+                    {
+                        "browser_uuid": r.browser_uuid,
+                        "total_exp": r.total_exp,
+                        "total_diamonds": r.total_diamonds,
+                        "puzzles": len(puzzle_counts.get(r.browser_uuid, set())),
+                        "avg_time": r.time_sum / r.score_count
+                        if r.score_count > 0
+                        else 0,
+                    },
+                )()
+            )
 
         # Merge rows: authenticated users may have multiple browser_uuids
         user_agg: dict = {}  # user_id -> aggregated stats
@@ -2988,7 +3044,9 @@ def get_puzzles():
     """List puzzles that have scores, with stats."""
     session = get_session()
     try:
-        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
+        puzzle_expr = cast(
+            func.json_extract(GameScore.game_data, "$.puzzle_number"), Integer
+        )
         rows = (
             session.query(
                 puzzle_expr.label("puzzle_number"),
@@ -2998,7 +3056,7 @@ def get_puzzles():
                 ),
                 func.min(GameScore.time_seconds).label("best_time"),
             )
-            .filter(GameScore.game_id == 'octile')
+            .filter(GameScore.game_id == "octile")
             .group_by(puzzle_expr)
             .order_by(puzzle_expr.asc())
             .all()
@@ -3794,8 +3852,7 @@ def auth_delete_account(user: dict = Depends(require_octile_auth)):
         # Delete from both score tables (migration period)
         session.query(OctileScore).filter(OctileScore.user_id == user_id).delete()
         session.query(GameScore).filter(
-            GameScore.game_id == 'octile',
-            GameScore.user_id == user_id
+            GameScore.game_id == "octile", GameScore.user_id == user_id
         ).delete()
         session.query(OctileProgress).filter(OctileProgress.user_id == user_id).delete()
         session.query(OctileMagicLink).filter(
@@ -4264,9 +4321,9 @@ def sync_pull(user: dict = Depends(require_octile_auth)):
                 func.sum(GameScore.diamonds).label("total_diamonds"),
             )
             .filter(
-                GameScore.game_id == 'octile',
+                GameScore.game_id == "octile",
                 GameScore.user_id == user_id,
-                GameScore.flagged == 0
+                GameScore.flagged == 0,
             )
             .first()
         )
@@ -4317,7 +4374,9 @@ def get_player_stats(uuid: str):
     session = get_session()
     try:
         # Define puzzle_number extraction
-        puzzle_expr = cast(func.json_extract(GameScore.game_data, '$.puzzle_number'), Integer)
+        puzzle_expr = cast(
+            func.json_extract(GameScore.game_data, "$.puzzle_number"), Integer
+        )
 
         # Overall stats from game_scores
         overall = (
@@ -4329,9 +4388,9 @@ def get_player_stats(uuid: str):
                 func.count(GameScore.id).label("total_solves"),
             )
             .filter(
-                GameScore.game_id == 'octile',
+                GameScore.game_id == "octile",
                 GameScore.browser_uuid == uuid,
-                GameScore.flagged == 0
+                GameScore.flagged == 0,
             )
             .first()
         )
@@ -4340,17 +4399,25 @@ def get_player_stats(uuid: str):
             return {"status": "empty"}
 
         # Per-difficulty breakdown
-        by_diff_rows = session.query(GameScore).filter(
-            GameScore.game_id == 'octile',
-            GameScore.browser_uuid == uuid,
-            GameScore.flagged == 0
-        ).all()
+        by_diff_rows = (
+            session.query(GameScore)
+            .filter(
+                GameScore.game_id == "octile",
+                GameScore.browser_uuid == uuid,
+                GameScore.flagged == 0,
+            )
+            .all()
+        )
 
         by_difficulty = {}
         for gs in by_diff_rows:
             # Extract puzzle_number from game_data (defensive parsing)
-            game_data = json.loads(gs.game_data) if isinstance(gs.game_data, str) else (gs.game_data or {})
-            pn = game_data.get('puzzle_number', 0)
+            game_data = (
+                json.loads(gs.game_data)
+                if isinstance(gs.game_data, str)
+                else (gs.game_data or {})
+            )
+            pn = game_data.get("puzzle_number", 0)
             rt = gs.time_seconds or 0
             xp = gs.exp or 0
 
@@ -4374,8 +4441,12 @@ def get_player_stats(uuid: str):
         # Grade distribution (computed from scores)
         grades = {"S": 0, "A": 0, "B": 0}
         for gs in by_diff_rows:
-            game_data = json.loads(gs.game_data) if isinstance(gs.game_data, str) else (gs.game_data or {})
-            pn = game_data.get('puzzle_number', 0)
+            game_data = (
+                json.loads(gs.game_data)
+                if isinstance(gs.game_data, str)
+                else (gs.game_data or {})
+            )
+            pn = game_data.get("puzzle_number", 0)
             rt = gs.time_seconds or 0
 
             try:
@@ -4495,17 +4566,18 @@ def get_available_games():
     session = get_session()
     try:
         games = (
-            session.query(GameScore.game_id, func.count(GameScore.id).label("score_count"))
-            .filter(
-                GameScore.game_id.isnot(None),
-                GameScore.game_id != ""
+            session.query(
+                GameScore.game_id, func.count(GameScore.id).label("score_count")
             )
+            .filter(GameScore.game_id.isnot(None), GameScore.game_id != "")
             .group_by(GameScore.game_id)
             .order_by(GameScore.game_id.asc())
             .all()
         )
         return {
-            "games": [{"game_id": g.game_id, "score_count": g.score_count} for g in games]
+            "games": [
+                {"game_id": g.game_id, "score_count": g.score_count} for g in games
+            ]
         }
     finally:
         session.close()
@@ -4524,12 +4596,12 @@ def get_analytics(game_id: Optional[str] = None):
         # Normalize game_id (strip whitespace, lowercase 'ALL')
         if game_id:
             game_id = game_id.strip()
-            if game_id.upper() == 'ALL':
-                game_id = 'all'
+            if game_id.upper() == "ALL":
+                game_id = "all"
 
         # Build base query with optional game_id filter
         base_filter = []
-        if game_id and game_id != 'all':
+        if game_id and game_id != "all":
             base_filter.append(GameScore.game_id == game_id)
 
         # User agent subquery (limit to recent 90 days to prevent large result sets)
@@ -4538,7 +4610,7 @@ def get_analytics(game_id: Optional[str] = None):
         subq_filters = base_filter + [
             GameScore.user_agent.isnot(None),
             GameScore.user_agent != "",
-            GameScore.created_at >= cutoff_date
+            GameScore.created_at >= cutoff_date,
         ]
 
         # Stage 1: Get last_seen for each player
@@ -4579,8 +4651,9 @@ def get_analytics(game_id: Optional[str] = None):
                 last_seen_subq,
                 and_(
                     GameScore.browser_uuid == last_seen_subq.c.uuid,
-                    GameScore.created_at == last_seen_subq.c.last_seen,  # More precise join
-                )
+                    GameScore.created_at
+                    == last_seen_subq.c.last_seen,  # More precise join
+                ),
             )
             .filter(GameScore.id == max_id_subq)  # Tie-breaker for same timestamp
             .all()
@@ -4624,9 +4697,7 @@ def get_analytics(game_id: Optional[str] = None):
             return sorted(d.items(), key=lambda x: -x[1])
 
         # Total unique players (including those without UA) from game_scores
-        total_query = session.query(
-            func.count(func.distinct(GameScore.browser_uuid))
-        )
+        total_query = session.query(func.count(func.distinct(GameScore.browser_uuid)))
         if base_filter:
             total_query = total_query.filter(*base_filter)
         total_players = total_query.scalar()
