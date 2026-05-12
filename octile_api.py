@@ -1268,6 +1268,10 @@ def _migrate_db():
     index_migrations = [
         "CREATE INDEX IF NOT EXISTS idx_game_scores_country ON game_scores(country)",
         "CREATE INDEX IF NOT EXISTS idx_game_scores_city ON game_scores(city)",
+        # Daily challenge scoreboard optimization (prevents full scan on game_data JSON)
+        # SQLite: expression index on json_extract
+        "CREATE INDEX IF NOT EXISTS idx_game_scores_daily_challenge ON game_scores(json_extract(game_data, '$.daily_challenge'))",
+        "CREATE INDEX IF NOT EXISTS idx_game_scores_daily_date ON game_scores(json_extract(game_data, '$.daily_date'))",
     ]
 
     # Always try to create indexes
@@ -1365,6 +1369,8 @@ class ScoreSubmitRequest(BaseModel):
     moves: Optional[str] = None  # base-92 encoded move log (2 chars per placement)
     data_version: Optional[str] = None  # client puzzle data version for compat check
     timestamp_utc: Optional[str] = None  # legacy, default to server time
+    daily_challenge: Optional[bool] = None  # true if this is a daily challenge submission
+    daily_date: Optional[str] = None  # YYYY-MM-DD date of daily challenge
 
 
 class ScoreResponse(BaseModel):
@@ -2543,18 +2549,25 @@ async def submit_score(request: Request):
         session.refresh(score)
 
         # ALSO write to unified game_scores table (migration)
+        game_data_dict = {
+            "puzzle_number": body.puzzle_number,
+            "solution": body.solution,
+            "moves": body.moves,
+            "resolve_time": body.resolve_time,
+        }
+        # Preserve daily challenge metadata if present
+        if body.daily_challenge:
+            game_data_dict["daily_challenge"] = True
+        if body.daily_date:
+            game_data_dict["daily_date"] = body.daily_date
+
         game_score = GameScore(
             game_id="octile",
             browser_uuid=body.browser_uuid,
             submission_id=str(uuid.uuid4()),
             time_seconds=body.resolve_time,
             score_value=body.resolve_time,
-            game_data={
-                "puzzle_number": body.puzzle_number,
-                "solution": body.solution,
-                "moves": body.moves,
-                "resolve_time": body.resolve_time,
-            },
+            game_data=game_data_dict,
             solution=body.solution,
             exp=exp,
             coins=exp,
@@ -5440,6 +5453,10 @@ def get_daily_challenge_scoreboard(
 
         # Subquery: min score_value per player for this puzzle on this date
         # Use unified GameScore table (not legacy OctileScore)
+        # CRITICAL filters:
+        # 1. daily_challenge = true (not false/null/regular plays)
+        # 2. daily_date = requested date (prevent cross-date contamination)
+        # Use string comparison for boolean stability across SQLite/PostgreSQL
         best_sub = (
             session.query(
                 GameScore.browser_uuid,
@@ -5447,8 +5464,17 @@ def get_daily_challenge_scoreboard(
             )
             .filter(
                 GameScore.game_id == "octile",
-                GameScore.game_data["puzzle_number"].astext.cast(Integer)
+                func.json_extract(GameScore.game_data, "$.puzzle_number").cast(Integer)
                 == puzzle_number,
+                # Boolean: use string comparison for stability (handles true/"true"/1)
+                func.lower(
+                    func.coalesce(
+                        func.json_extract(GameScore.game_data, "$.daily_challenge"),
+                        "false"
+                    )
+                ) == "true",
+                # Date: prevent cross-date contamination
+                func.json_extract(GameScore.game_data, "$.daily_date") == date,
                 GameScore.created_at >= target_date,
                 GameScore.created_at < next_date,
                 GameScore.flagged == 0,
@@ -5464,12 +5490,21 @@ def get_daily_challenge_scoreboard(
                 (GameScore.browser_uuid == best_sub.c.browser_uuid)
                 & (GameScore.score_value == best_sub.c.best_time)
                 & (
-                    GameScore.game_data["puzzle_number"].astext.cast(Integer)
+                    func.json_extract(GameScore.game_data, "$.puzzle_number").cast(Integer)
                     == puzzle_number
                 ),
             )
             .filter(
                 GameScore.game_id == "octile",
+                # Boolean: use string comparison for stability
+                func.lower(
+                    func.coalesce(
+                        func.json_extract(GameScore.game_data, "$.daily_challenge"),
+                        "false"
+                    )
+                ) == "true",
+                # Date: prevent cross-date contamination
+                func.json_extract(GameScore.game_data, "$.daily_date") == date,
                 GameScore.created_at >= target_date,
                 GameScore.created_at < next_date,
                 GameScore.flagged == 0,
