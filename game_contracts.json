@@ -30,6 +30,56 @@
       "difficulties": ["easy", "medium", "hard", "hell"],
       "score_semantics": "lower_is_better",
       "score_range": [10, 86400]
+    },
+    "tpwa_bus": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_etf": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_rail": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_thsr": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_mrt": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_oil": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_earthquake": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_youbike": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_weather": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
+    },
+    "tpwa_stock": {
+      "difficulties": [],
+      "score_semantics": "higher_is_better",
+      "score_range": [0, 0]
     }
   }
 }

@@ -1972,6 +1972,19 @@ class GameValidator:
         return True, ""
 
     @staticmethod
+    def validate_tpwa(game_data: dict, score_value: float) -> tuple[bool, str]:
+        """Validate TPWA transport PWA metric event.
+
+        These are informational events (bus/etf/rail/thsr/mrt/oil/earthquake)
+        forwarded from transport PWA apps via the Cloudflare Worker. Score is
+        always 0 (metric event, not a game). Contract-level range [0,0] in
+        game_contracts.json handles the actual score validation.
+        """
+        # All substantive validation is done at contract level (score_range)
+        # and by the Worker before forwarding. No game-specific checks needed.
+        return True, ""
+
+    @staticmethod
     def validate(game_id: str, game_data: dict, score_value: float) -> tuple[bool, str]:
         """Validate game submission (single validation entry point).
 
@@ -1988,6 +2001,17 @@ class GameValidator:
             "mine": GameValidator.validate_mine,
             "map": GameValidator.validate_map,
             "mj5": GameValidator.validate_mj5,
+            # TPWA transport PWA metric events — all use the same generic validator
+            "tpwa_bus": GameValidator.validate_tpwa,
+            "tpwa_etf": GameValidator.validate_tpwa,
+            "tpwa_rail": GameValidator.validate_tpwa,
+            "tpwa_thsr": GameValidator.validate_tpwa,
+            "tpwa_mrt": GameValidator.validate_tpwa,
+            "tpwa_oil": GameValidator.validate_tpwa,
+            "tpwa_earthquake": GameValidator.validate_tpwa,
+            "tpwa_youbike": GameValidator.validate_tpwa,
+            "tpwa_weather": GameValidator.validate_tpwa,
+            "tpwa_stock": GameValidator.validate_tpwa,
         }
 
         validator = validators.get(game_id)
@@ -2027,6 +2051,10 @@ def calc_game_rewards(game_id: str, game_data: dict, score_value: float) -> dict
             base_exp = int(base_exp * 1.5)
 
         return {"exp": base_exp, "diamonds": 0, "coins": base_exp}
+
+    elif game_id.startswith("tpwa_"):
+        # TPWA events are informational metrics (not games), no rewards
+        return {"exp": 0, "diamonds": 0, "coins": 0}
 
     elif game_id == "2048":
         # EXP based on max tile achieved

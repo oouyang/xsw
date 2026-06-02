@@ -39,6 +39,8 @@ import threading
 from pathlib import Path
 import urllib3
 import logging
+import uvicorn
+from uvicorn.logging import AccessFormatter
 
 
 # Import OpenCC for Chinese conversion
@@ -74,6 +76,7 @@ from parser import (
 import email_sender
 from email_sender import init_email_sender
 from rate_limiter import RateLimiter
+from bot_protection import BotDetector
 from auth import (
     verify_google_token,
     create_jwt_token,
@@ -106,19 +109,39 @@ import logging.config
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Configure logging with timestamps using dictConfig
+
+class _ISO8601Formatter(logging.Formatter):
+    """Log formatter that produces proper ISO 8601 timestamps with milliseconds and timezone.
+
+    Python's time.strftime does not support %f (microseconds), so we custom-format
+    the timestamp to avoid literal "f" output.
+    """
+    def formatTime(self, record, datefmt=None):
+        ct = datetime.fromtimestamp(record.created)
+        base = ct.strftime("%Y-%m-%dT%H:%M:%S")
+        return f"{base}.{int(record.msecs):03d}{ct.strftime('%z')}"
+
+
+class _ISO8601AccessFormatter(uvicorn.logging.AccessFormatter):
+    """Access log formatter with ISO 8601 timestamps (same fix as _ISO8601Formatter)."""
+    def formatTime(self, record, datefmt=None):
+        ct = datetime.fromtimestamp(record.created)
+        base = ct.strftime("%Y-%m-%dT%H:%M:%S")
+        return f"{base}.{int(record.msecs):03d}{ct.strftime('%z')}"
+
+
+# Configure logging with ISO 8601 timestamps using dictConfig
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,  # Keep existing loggers
     "formatters": {
         "default": {
+            "()": _ISO8601Formatter,
             "format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-            "datefmt": "%Y-%m-%dT%H:%M:%S.%f%z",  # ISO8601 with timezone + microseconds
         },
         "access": {
-            "()": "uvicorn.logging.AccessFormatter",
-            "format": '%(asctime)s - %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',  # Use 'format', not 'fmt'
-            "datefmt": "%Y-%m-%dT%H:%M:%S.%f%z",  # ISO8601 with timezone + microseconds
+            "()": _ISO8601AccessFormatter,
+            "format": '%(asctime)s - %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
         },
     },
     "handlers": {
@@ -600,6 +623,50 @@ if _exception_notifier:
     )
 
 # -----------------------
+# Security Middleware (bot detection, path filtering)
+# -----------------------
+
+# Known probing paths that should be rejected early (avoids hitting app logic)
+_PROBE_PATTERNS = [
+    re.compile(p) for p in [
+        r"\.php$",          # WordPress / generic PHP probing
+        r"\.asp$",          # ASP probing
+        r"/phpmyadmin",
+        r"/\.env",
+        r"/\.git",
+        r"/(etc|passwd|shadow)",
+        r"\.\./\.\.",       # Path traversal
+        r"/xmlrpc",
+    ]
+]
+
+bot_detector = BotDetector()
+
+
+class SecurityMiddleware(BaseHTTPMiddleware):
+    """Early rejection of probing requests before they reach app logic."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        # Only check non-API paths (legitimate traffic uses /xsw/api/ or /octile/)
+        if not path.startswith("/xsw/api/") and not path.startswith("/octile/"):
+            # Check probing paths
+            for pattern in _PROBE_PATTERNS:
+                if pattern.search(path):
+                    logger.info("[Security] Blocked probe: %s - %s", request.client.host if request.client else "?", path)
+                    return Response(status_code=403, content="Forbidden")
+
+            # Check bad bot User-Agent
+            ua = request.headers.get("User-Agent", "")
+            if bot_detector.is_bad_bot(ua):
+                logger.info("[Security] Blocked bad bot: %s - UA: %.50s", request.client.host if request.client else "?", ua)
+                return Response(status_code=403, content="Forbidden")
+
+        return await call_next(request)
+
+
+# -----------------------
 # Rate Limiting Middleware
 # -----------------------
 # Initialize rate limiter
@@ -642,6 +709,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response
 
+
+# Security middleware runs before rate limiter (blocked probes don't count toward rate limits)
+app.add_middleware(SecurityMiddleware)
+logger.info("[App] Security middleware enabled (probing path + bad bot filtering)")
 
 # Add rate limiting middleware before CORS (so it runs first)
 if RATE_LIMIT_ENABLED:
