@@ -40,7 +40,6 @@ from pathlib import Path
 import urllib3
 import logging
 import uvicorn
-from uvicorn.logging import AccessFormatter
 
 
 # Import OpenCC for Chinese conversion
