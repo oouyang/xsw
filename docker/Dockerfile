@@ -53,9 +53,7 @@ RUN mkdir -p /app/data /app/dist/ubike && \
     pytest tests/ -v && \
     (pip config unset global.index-url 2>/dev/null || true) && \
     (pip config unset global.trusted-host 2>/dev/null || true) && \
-    sed -i s/https/http/g /etc/apk/repositories  && \
-    apk add tmux bash htop jq curl wget openssh-client git sqlite zip && \
-    sed -i s/http/https/g /etc/apk/repositories 
+    apk add tmux bash htop jq curl wget openssh-client git sqlite zip
 
 EXPOSE 8000
 CMD ["uvicorn", "main_optimized:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
