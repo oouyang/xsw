@@ -820,7 +820,7 @@ async def fetch_tpex() -> dict:
     return data
 
 
-def parse_etfs(data: dict) -> list[dict]:
+def parse_etfs(data: dict, etfOnly: bool) -> list[dict]:
     """Parse ETF rows from TPEX tables response.
 
     Row format: [code, name, close, change, open, high, low, avg,
@@ -835,7 +835,7 @@ def parse_etfs(data: dict) -> list[dict]:
             if not isinstance(row, list) or len(row) < 11:
                 continue
             code = row[0].strip() if row[0] else ""
-            if not code.startswith("00"):
+            if etfOnly and not code.startswith("00"):
                 continue
 
             etfs.append(
@@ -1057,7 +1057,7 @@ async def souvenir_stock():
 
 
 @app.get("/tpex/etf-list")
-async def tpex_etf_list():
+async def tpex_etf_list(etfOnly: bool = Query(True, description="If true, only return ETFs")):
     try:
         data = await fetch_tpex()
     except Exception as e:
@@ -1066,8 +1066,7 @@ async def tpex_etf_list():
             status_code=502,
             content={"error": "TPEX fetch failed", "message": str(e)},
         )
-
-    etfs = parse_etfs(data)
+    etfs = parse_etfs(data, etfOnly)
 
     return {
         "count": len(etfs),
