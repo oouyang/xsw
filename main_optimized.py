@@ -7,9 +7,11 @@ Strategy: Check DB → Fetch from web → Store to DB
 import asyncio
 import re
 import time
+import io
 from typing import Any, List, Optional
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from fastapi.responses import StreamingResponse
 
 import httpx
 from db_models import init_database
@@ -115,6 +117,7 @@ class _ISO8601Formatter(logging.Formatter):
     Python's time.strftime does not support %f (microseconds), so we custom-format
     the timestamp to avoid literal "f" output.
     """
+
     def formatTime(self, record, datefmt=None):
         ct = datetime.fromtimestamp(record.created)
         base = ct.strftime("%Y-%m-%dT%H:%M:%S")
@@ -123,6 +126,7 @@ class _ISO8601Formatter(logging.Formatter):
 
 class _ISO8601AccessFormatter(uvicorn.logging.AccessFormatter):
     """Access log formatter with ISO 8601 timestamps (same fix as _ISO8601Formatter)."""
+
     def formatTime(self, record, datefmt=None):
         ct = datetime.fromtimestamp(record.created)
         base = ct.strftime("%Y-%m-%dT%H:%M:%S")
@@ -627,14 +631,15 @@ if _exception_notifier:
 
 # Known probing paths that should be rejected early (avoids hitting app logic)
 _PROBE_PATTERNS = [
-    re.compile(p) for p in [
-        r"\.php$",          # WordPress / generic PHP probing
-        r"\.asp$",          # ASP probing
+    re.compile(p)
+    for p in [
+        r"\.php$",  # WordPress / generic PHP probing
+        r"\.asp$",  # ASP probing
         r"/phpmyadmin",
         r"/\.env",
         r"/\.git",
         r"/(etc|passwd|shadow)",
-        r"\.\./\.\.",       # Path traversal
+        r"\.\./\.\.",  # Path traversal
         r"/xmlrpc",
     ]
 ]
@@ -653,13 +658,21 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             # Check probing paths
             for pattern in _PROBE_PATTERNS:
                 if pattern.search(path):
-                    logger.info("[Security] Blocked probe: %s - %s", request.client.host if request.client else "?", path)
+                    logger.info(
+                        "[Security] Blocked probe: %s - %s",
+                        request.client.host if request.client else "?",
+                        path,
+                    )
                     return Response(status_code=403, content="Forbidden")
 
             # Check bad bot User-Agent
             ua = request.headers.get("User-Agent", "")
             if bot_detector.is_bad_bot(ua):
-                logger.info("[Security] Blocked bad bot: %s - UA: %.50s", request.client.host if request.client else "?", ua)
+                logger.info(
+                    "[Security] Blocked bad bot: %s - UA: %.50s",
+                    request.client.host if request.client else "?",
+                    ua,
+                )
                 return Response(status_code=403, content="Forbidden")
 
         return await call_next(request)
@@ -1056,7 +1069,9 @@ async def souvenir_stock():
 
 
 @app.get("/tpex/etf-list")
-async def tpex_etf_list(etfOnly: bool = Query(True, description="If true, only return ETFs")):
+async def tpex_etf_list(
+    etfOnly: bool = Query(True, description="If true, only return ETFs"),
+):
     try:
         data = await fetch_tpex()
     except Exception as e:
@@ -1067,11 +1082,21 @@ async def tpex_etf_list(etfOnly: bool = Query(True, description="If true, only r
         )
     etfs = parse_etfs(data, etfOnly)
 
-    return {
+    huge_data = {
         "count": len(etfs),
         "date": etfs[0]["date"] if etfs else "",
         "etfs": etfs,
     }
+
+    buffer = io.BytesIO()
+    buffer.write(json.dumps(huge_data).encode("utf-8"))
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=etf-list.json"},
+    )
 
 
 @api_router.get("/categories", response_model=List[Category])
